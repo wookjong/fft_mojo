@@ -230,6 +230,35 @@ what the launcher writes — scalars and pointers — and a vector is something
 a kernel produces rather than something it is handed. A scalable vector
 could not be placed there at all, its size not being known until run time.
 
+### No callee-saved registers, and a warning when it spills
+
+A kernel is launched, not called. Nothing resumes after it expecting its
+registers intact, so there is nothing to preserve: the callee-saved set is
+empty and the whole register file is available at no cost.
+
+That is not a small saving. On a kernel with enough live values to reach
+into the `s` registers:
+
+| | standard ABI | M2NDP |
+|---|---|---|
+| frame | 112 bytes | none |
+| save / reload pairs | 13 | 0 |
+| instructions | 102 | 74 |
+
+Those saves would also be DRAM accesses, since the stack lives there.
+
+With nothing left to preserve, a frame can only mean the register allocator
+ran out and started spilling — to DRAM, not to the scratchpad. A kernel can
+fall off that cliff silently: it still compiles and still computes the right
+answer, only slowly. So emitting a frame warns:
+
+```
+warning: M2NDP kernel spills to memory (176-byte frame); spills go to DRAM
+```
+
+A warning rather than an error, because spilling is expensive, not wrong.
+None of the six benchmarks trip it.
+
 ### How a kernel is recognised
 
 It is not: **every function in an M2NDP module is a kernel.** The ABI has no

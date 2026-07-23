@@ -38,7 +38,7 @@ Benchmarks ported from
 ### LLVM baseline
 
 `./scripts/build-llvm.sh check`, against the pinned submodule (LLVM 23.1.0,
-`release/23.x`, RISC-V only, assertions on): **3207/3207 RISC-V lit tests
+`release/23.x`, RISC-V only, assertions on): **3208/3208 RISC-V lit tests
 pass**, CodeGen and MC together.
 
 The CodeGen baseline before `FeatureVendorXM2ndp` was 2595/2595. Adding the
@@ -89,7 +89,10 @@ how much is blocked on each:
 
 Kernel arguments now come from the scratchpad rather than from registers,
 and every kernel is call-free and frame-free: across the six benchmarks,
-zero calls and zero stack frames. The benchmarks no longer define `main` --
+zero calls and zero stack frames. There are no callee-saved registers
+either — nothing resumes after a kernel — so the whole register file is
+free, and a frame appearing at all now warns, since it can only mean a
+spill to DRAM. The benchmarks no longer define `main` --
 it was Mojo scaffolding for building an executable, and dropping it took the
 `KGEN_CompilerRT_*` runtime calls out of the device modules with it.
 
