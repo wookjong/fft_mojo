@@ -12,10 +12,12 @@ on:
     tags: ['v*']
     paths:
       - Dockerfile
+      - scripts/setup.sh
       - .github/workflows/image.yml
   pull_request:
     paths:
       - Dockerfile
+      - scripts/setup.sh
       - .github/workflows/image.yml
   workflow_dispatch:
 

@@ -58,6 +58,10 @@ for d in "$WORK"/extracted/*.data/platlib/modular; do
 done
 [ "$found" = 1 ] || { echo "Unrecognized wheel layout"; exit 1; }
 
+# Restore the execute bit before looking for the binary: wheels are zips, and
+# python's zipfile drops mode bits on extraction, so everything lands 0644.
+chmod +x "$INSTALL_DIR"/bin/* 2>/dev/null || true
+
 # Locate the actual compiler binary.
 if [ -x "$INSTALL_DIR/bin/mojo.real" ]; then
     BIN="$INSTALL_DIR/bin/mojo.real"
@@ -66,7 +70,6 @@ elif [ -x "$INSTALL_DIR/bin/mojo" ]; then
 else
     echo "Install failed: no bin/mojo(.real)"; exit 1
 fi
-chmod +x "$INSTALL_DIR"/bin/* 2>/dev/null || true
 
 echo ""
 echo "[done] $BIN"
