@@ -166,12 +166,12 @@ arguments-first ordering.
 
 ### What the launcher needs
 
-Two things, and the linker script exports both:
+Two things, and the linker script exports the one it cannot know:
 
-| symbol | meaning |
+| | |
 |---|---|
 | `__m2ndp_spad_size` | size of the global area |
-| — | the launcher passes `base = region + __m2ndp_spad_size` and writes the task's arguments there |
+| — | pass `base = region + __m2ndp_spad_size` and write the task's arguments there |
 
 `scripts/m2ndp.lds` also declares the scratchpad as a 128 KiB memory region,
 so a task that asks for more fails at link time rather than overlapping
@@ -204,6 +204,48 @@ scope by assumption, so "per core" and "per launch group" cannot diverge.
 kernels over one shared scratchpad global, and would compute nothing if a
 launch reset the buffer. The backend must not treat a kernel boundary as
 the end of the buffer's live range.
+
+## Kernel arguments
+
+A kernel is launched, not called. Its arguments are written into the
+argument area by the launcher, so there are no argument registers: each one
+is a load at a small offset from the base.
+
+```asm
+vector_add:
+  ld a1, 0(a0)       # arg0        a0 = scratchpad base
+  ld a2, 8(a0)       # arg1
+  ld a0, 16(a0)      # arg2
+  ...
+  ret
+```
+
+One instruction each, and no address materialized — that is what the
+arguments-first layout buys. Narrow arguments still take a whole XLEN slot,
+as stack arguments do. The loads are marked invariant, since kernel
+arguments never change.
+
+**Vectors keep the ordinary register assignment.** The argument area holds
+what the launcher writes — scalars and pointers — and a vector is something
+a kernel produces rather than something it is handed. A scalable vector
+could not be placed there at all, its size not being known until run time.
+
+### How a kernel is recognised
+
+It is not: **every function in an M2NDP module is a kernel.** The ABI has no
+calls, so there is nothing else a function could be, and the extension alone
+decides the argument convention. No marker, no separate calling convention
+ID, no list passed to the compiler.
+
+What made this look untrue was `main` and its closures sharing the module.
+Those are Mojo scaffolding for building an executable and have no place in a
+device binary; the benchmarks no longer define `main`, and the modules now
+contain only kernels. That also removed the `KGEN_CompilerRT_*` calls that
+came with them.
+
+The one way a non-kernel could appear is a helper the frontend did not
+inline. That is already a violation — it would need a call — so the same
+diagnostic that enforces the call-free ABI catches it.
 
 ### Why not `stack_allocation`
 

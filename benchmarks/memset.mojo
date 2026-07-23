@@ -22,7 +22,3 @@ comptime W = 32   # uint8 lanes per chunk
 def memset(dst: UnsafePointer[UInt8, MutAnyOrigin], value: UInt8):
     var i = global_uthread_id() * W
     dst.store(i, SIMD[DType.uint8, W](value))
-
-
-def main():
-    pass

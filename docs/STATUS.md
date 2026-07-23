@@ -38,7 +38,7 @@ Benchmarks ported from
 ### LLVM baseline
 
 `./scripts/build-llvm.sh check`, against the pinned submodule (LLVM 23.1.0,
-`release/23.x`, RISC-V only, assertions on): **3206/3206 RISC-V lit tests
+`release/23.x`, RISC-V only, assertions on): **3207/3207 RISC-V lit tests
 pass**, CodeGen and MC together.
 
 The CodeGen baseline before `FeatureVendorXM2ndp` was 2595/2595. Adding the
@@ -86,6 +86,12 @@ how much is blocked on each:
    `famomax` at `.h`/`.w`/`.d` replace it with one instruction, 99 kernel
    instructions down to 89
 6. **Recovering `ADDR`/`OFFSET`** from `base[id * W]`
+
+Kernel arguments now come from the scratchpad rather than from registers,
+and every kernel is call-free and frame-free: across the six benchmarks,
+zero calls and zero stack frames. The benchmarks no longer define `main` --
+it was Mojo scaffolding for building an executable, and dropping it took the
+`KGEN_CompilerRT_*` runtime calls out of the device modules with it.
 
 The architecture questions that used to block this are settled and written
 up in INTERFACE.md: the scratchpad base is the same on every core, one

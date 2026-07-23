@@ -81,7 +81,3 @@ def histogram_final(out_hist: UnsafePointer[Int32, MutAnyOrigin]):
     while i < BINS:
         _ = atomic_add(out_hist + i, Histogram.bins[i])
         i += group_size()
-
-
-def main():
-    pass
