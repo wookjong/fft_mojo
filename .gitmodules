@@ -3,3 +3,8 @@
 	url = https://github.com/PSAL-POSTECH/llvm-project-m2ndp.git
 	branch = m2ndp/release-23.x
 	shallow = true
+[submodule "third_party/riscv-isa-sim"]
+	path = third_party/riscv-isa-sim
+	url = https://github.com/riscv-software-src/riscv-isa-sim.git
+	branch = master
+	shallow = true
