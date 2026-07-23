@@ -38,14 +38,19 @@ Benchmarks ported from
 ### LLVM baseline
 
 `./scripts/build-llvm.sh check`, against the pinned submodule (LLVM 23.1.0,
-`release/23.x`, RISC-V only, assertions on): **2597/2597 RISC-V CodeGen lit
-tests pass.**
+`release/23.x`, RISC-V only, assertions on): **3202/3202 RISC-V lit tests
+pass**, CodeGen and MC together.
 
-The baseline before `FeatureVendorXM2ndp` was 2595/2595. Adding the feature
-broke exactly one test — `features-info.ll`, which checks the full
+The CodeGen baseline before `FeatureVendorXM2ndp` was 2595/2595. Adding the
+feature broke exactly one test — `features-info.ll`, which checks the full
 `-mattr=help` listing — and the baseline is what made that immediately
-attributable rather than a mystery. Updated, plus a new
-`attributes-m2ndp.ll`, giving 2596.
+attributable rather than a mystery.
+
+Every failure seen at any point since has been a tool the suite needs and
+the build did not produce, never a codegen difference: 31 the first time
+(`llvm-objdump`, `llvm-readobj`, `llvm-readelf`, `llvm-dwarfdump`) and 7
+when MC was added (`yaml2obj`, `llvm-otool`, `split-file`, `llvm-nm`).
+`build-llvm.sh check` builds all of them now.
 
 The artifacts also round-trip through that build: `llc` accepts all six
 `out/*.ll` and `llvm-mc -filetype=obj` assembles what it produces. So the
@@ -69,7 +74,10 @@ how much is blocked on each:
    Not because LLVM lacks a vector `atomicrmw` — it has one — but because
    that one is contiguous, and what `histogram` needs is indexed. RVV's
    indexed vector AMOs were dropped before 1.0, so there is nothing
-   standard to lower to either. See INTERFACE.md
+   standard to lower to either. See INTERFACE.md.
+   The vector atomic is partly done: `llvm.riscv.m2ndp.vamoadd` and a
+   `m2ndp.vamoaddei32.v` instruction exist and assemble, but nothing selects
+   the one into the other yet
 4. **FP atomic add** — expands to an LR/SC retry loop today
 5. **Recovering `ADDR`/`OFFSET`** from `base[id * W]`
 

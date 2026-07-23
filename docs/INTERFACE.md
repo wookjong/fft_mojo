@@ -279,6 +279,27 @@ So an indexed vector atomic has no standard spelling at either layer, and
 defining one as a vendor intrinsic under `HasVendorXM2ndp` is the intended
 path rather than a workaround.
 
+#### What exists so far
+
+Encoding first, ISel second — the assembler has to accept an instruction
+before its selection can be checked.
+
+```asm
+m2ndp.vamoaddei32.v v8, (a0), v12, v8        # encoding: [0x2f,0x64,0xc5,0x06]
+m2ndp.vamoaddei32.v v8, (a0), v12, v8, v0.t  # masked
+```
+
+`vs2` carries per-lane byte offsets, `rs1` the base, and `vd` is both the
+addend and where the previous values come back. Assembler, disassembler and
+the `llvm.riscv.m2ndp.vamoadd` intrinsic are in place; **nothing selects the
+intrinsic into the instruction yet.** That needs the RVV pseudo machinery so
+VL and VTYPE get set up, and is the next piece.
+
+Both the operand shape and the encoding are **provisional**. They are taken
+from `vamoaddei32.v` as RVV 0.10 defined it, which is the instruction the
+reference kernels were written against. Since that draft was dropped, no
+standard claims those bits — and nothing blesses them either.
+
 **Mask register to bitmap.** `imdb_lt_int64`'s reference finishes with
 `vmv.x.s` + `sb`, because an RVV mask register already holds one bit per
 lane. `SIMD[bool, W]` has no conversion to an integer bitmask and `Int()`

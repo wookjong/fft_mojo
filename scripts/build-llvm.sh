@@ -56,6 +56,8 @@ TOOLS="llc llvm-mc opt llvm-as llvm-dis FileCheck count not"
 # failures seen without them was the tool missing, not a codegen difference.
 if [ "${1:-}" = "check" ]; then
     TOOLS="$TOOLS llvm-config llvm-objdump llvm-readobj llvm-readelf llvm-dwarfdump"
+    # The MC suite needs a few more on top of what CodeGen does.
+    TOOLS="$TOOLS llvm-nm yaml2obj split-file llvm-otool"
 fi
 
 # shellcheck disable=SC2086
@@ -68,5 +70,9 @@ echo "[done] tools in $BUILD/bin"
 if [ "${1:-}" = "check" ]; then
     echo ""
     echo "[check] RISC-V lit tests"
-    "$BUILD/bin/llvm-lit" -sv "$REPO/third_party/llvm-project/llvm/test/CodeGen/RISCV"
+    # MC as well as CodeGen: a vendor instruction is added encoding-first, and
+    # the assembler and disassembler tests live under MC.
+    "$BUILD/bin/llvm-lit" -sv \
+        "$REPO/third_party/llvm-project/llvm/test/CodeGen/RISCV" \
+        "$REPO/third_party/llvm-project/llvm/test/MC/RISCV"
 fi
