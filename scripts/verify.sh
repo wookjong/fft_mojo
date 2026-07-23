@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 생성된 산출물이 기대대로인지 검증한다. build.sh 이후 실행.
+# Check that the generated artifacts look the way they should.
+# Run after build.sh.
 #   ./scripts/verify.sh
 # =============================================================================
 set -uo pipefail
@@ -20,26 +21,44 @@ check() {
     fi
 }
 
-echo "[verify] 산출물 검증"
-[ -d out ] || { echo "out/ 없음. ./scripts/build.sh 먼저 실행"; exit 1; }
+echo "[verify] checking artifacts"
+[ -d out ] || { echo "no out/. Run ./scripts/build.sh first"; exit 1; }
 
-check "RISC-V 타깃" \
+check "RISC-V target" \
       "grep -h 'target triple' out/*.ll | sort -u | grep -c riscv64" "1"
-check "M2NDP 심볼 4종" \
+check "all 4 M2NDP symbols" \
       "grep -ho '@__m2ndp_[a-z_]*' out/*.ll | sort -u | wc -l | tr -d ' '" "4"
-check "스크래치패드 addrspace(3)" \
-      "test \$(grep -c 'addrspace(3)' out/spmv.ll) -ge 4 && echo yes" "yes"
+check "atomic combine, not a barrier" \
+      "grep -c 'atomicrmw fadd' out/spmv.ll | tr -d ' '" "1"
+check "relaxed ordering" \
+      "grep -q 'atomicrmw fadd .* monotonic' out/spmv.ll && echo yes" "yes"
+check "no barrier symbol" \
+      "grep -c '__m2ndp_barrier' out/*.ll | grep -v ':0' | wc -l | tr -d ' '" "0"
 check "RVV vsetivli" \
-      "grep -c 'vsetivli' out/vadd_simd.s | tr -d ' '" "1"
-check "RVV 벡터 load/add/store" \
-      "test \$(grep -cE 'vle32\.v|vfadd\.vv|vse32\.v' out/vadd_simd.s) -ge 3 && echo yes" "yes"
-check "그룹 배리어 호출" \
-      "grep -q 'call void @__m2ndp_barrier' out/spmv.ll && echo yes" "yes"
+      "test \$(grep -c 'vsetivli' out/vector_add.s) -ge 1 && echo yes" "yes"
+check "RVV vector load/add/store" \
+      "test \$(grep -cE 'vle32\.v|vadd\.vv|vse32\.v' out/vector_add.s) -ge 3 && echo yes" "yes"
+check "indirect access chain" \
+      "grep -q 'getelementptr inbounds float, ptr %2, i64' out/spmv.ll && echo yes" "yes"
+check "histogram: 3 phases in one module" \
+      "grep -c '^define dso_local void @histogram_' out/histogram.ll | tr -d ' '" "3"
+check "histogram: one shared scratchpad global" \
+      "grep -c 'addrspace(3) global' out/histogram.ll | tr -d ' '" "1"
+check "histogram: all phases hit that global" \
+      "test \$(grep -c 'memory_blob' out/histogram.ll) -ge 18 && echo yes" "yes"
+check "histogram: scratchpad atomic" \
+      "grep -q 'atomicrmw add ptr addrspace(3)' out/histogram.ll && echo yes" "yes"
+check "memcpy: one vector load + store" \
+      "test \$(grep -cE 'load <8 x i32>|store <8 x i32>' out/memcpy.ll) -eq 2 && echo yes" "yes"
+check "memset: splat via shufflevector" \
+      "grep -q 'shufflevector <32 x i8>' out/memset.ll && echo yes" "yes"
+check "imdb: predicate selects vmslt.vx" \
+      "grep -q 'vmslt.vx' out/imdb_lt_int64.s && echo yes" "yes"
 
 echo ""
 if [ "$FAIL" = 0 ]; then
-    echo "[verify] 전부 통과"
+    echo "[verify] all passed"
 else
-    echo "[verify] 실패 항목 있음"
+    echo "[verify] some checks failed"
     exit 1
 fi

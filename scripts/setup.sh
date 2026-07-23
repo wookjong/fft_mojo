@@ -1,27 +1,31 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Mojo 설치 (M²NDP PoC 환경 셋업)
+# Install Mojo (environment setup for the M²NDP PoC).
 #
-# Modular의 nightly wheel 3개를 받아 하나의 디렉토리로 병합한다.
-# 설치 후 `source scripts/env.sh` 로 환경변수를 잡으면 된다.
+# Downloads three of Modular's nightly wheels and merges them into a single
+# directory. After installing, `source scripts/env.sh` sets the environment.
 #
-# 사용법:
-#   ./scripts/setup.sh [설치경로]      # 기본: ./toolchain
+# Usage:
+#   ./scripts/setup.sh [install_dir]     # default: ./toolchain
+#
+# NOTE: not every nightly ships a RISC-V backend. If the build later fails
+# with "no compiler backend is registered for target 'riscv64-...'", pin a
+# known-good build via MOJO_VERSION (see README, "Toolchain requirement").
 # =============================================================================
 set -euo pipefail
 
 INSTALL_DIR="${1:-$(pwd)/toolchain}"
-MOJO_VERSION="${MOJO_VERSION:-}"   # 비우면 최신 nightly
+MOJO_VERSION="${MOJO_VERSION:-}"   # empty means latest nightly
 
-echo "[*] 설치 위치: $INSTALL_DIR"
+echo "[*] Install location: $INSTALL_DIR"
 
-command -v python3 >/dev/null || { echo "python3 필요"; exit 1; }
-python3 -c "import pip" 2>/dev/null || { echo "pip 필요"; exit 1; }
+command -v python3 >/dev/null || { echo "python3 required"; exit 1; }
+python3 -c "import pip" 2>/dev/null || { echo "pip required"; exit 1; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "[*] wheel 다운로드 중 (nightly 채널)..."
+echo "[*] Downloading wheels (nightly channel)..."
 PKGS="mojo mojo-compiler mojo-compiler-mojo-libs"
 if [ -n "$MOJO_VERSION" ]; then
     PKGS="mojo==$MOJO_VERSION mojo-compiler==$MOJO_VERSION mojo-compiler-mojo-libs==$MOJO_VERSION"
@@ -30,43 +34,81 @@ fi
 python3 -m pip download --pre --no-deps -d "$WORK" $PKGS \
     --extra-index-url https://whl.modular.com/nightly/simple/
 
-echo "[*] wheel 병합 중..."
+echo "[*] Merging wheels..."
 mkdir -p "$INSTALL_DIR"
 for whl in "$WORK"/*.whl; do
     echo "    - $(basename "$whl")"
-    unzip -q -o "$whl" -d "$WORK/extracted"
+    # Wheels are plain zips; use python so unzip is not a hard dependency.
+    python3 -c 'import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+        "$whl" "$WORK/extracted"
 done
 
-# wheel 안의 modular/ 디렉토리를 설치 경로로 병합
+# The modular/ tree lives either at the archive root or under
+# <pkg>.data/platlib/ depending on how the wheel was built. Handle both.
+found=0
 if [ -d "$WORK/extracted/modular" ]; then
     cp -r "$WORK/extracted/modular/." "$INSTALL_DIR/"
-else
-    # 레이아웃이 다르면 bin/ 을 가진 디렉토리를 찾아 병합
-    found=0
-    for d in "$WORK"/extracted/*/; do
-        if [ -d "$d/bin" ]; then
-            cp -r "$d/." "$INSTALL_DIR/"
-            found=1
-        fi
-    done
-    [ "$found" = 1 ] || { echo "wheel 레이아웃을 알 수 없음"; exit 1; }
+    found=1
 fi
+for d in "$WORK"/extracted/*.data/platlib/modular; do
+    if [ -d "$d" ]; then
+        cp -r "$d/." "$INSTALL_DIR/"
+        found=1
+    fi
+done
+[ "$found" = 1 ] || { echo "Unrecognized wheel layout"; exit 1; }
 
-# 실제 컴파일러 바이너리 확인
+# Locate the actual compiler binary.
 if [ -x "$INSTALL_DIR/bin/mojo.real" ]; then
     BIN="$INSTALL_DIR/bin/mojo.real"
 elif [ -x "$INSTALL_DIR/bin/mojo" ]; then
     BIN="$INSTALL_DIR/bin/mojo"
 else
-    echo "설치 실패: bin/mojo(.real) 없음"; exit 1
+    echo "Install failed: no bin/mojo(.real)"; exit 1
 fi
 chmod +x "$INSTALL_DIR"/bin/* 2>/dev/null || true
 
 echo ""
-echo "[완료] $BIN"
-"$BIN" --version 2>/dev/null || echo "(버전 확인 생략)"
+echo "[done] $BIN"
+"$BIN" --version 2>/dev/null || echo "(version check skipped)"
+
+# Fail early and loudly if this build cannot target RISC-V, rather than
+# letting the user discover it as an opaque build.sh failure. Compile a
+# throwaway kernel and look for the target-registration error: searching the
+# binary for "riscv" strings does not work, since builds that reject the
+# target still contain plenty of them.
+_probe="$(mktemp -d)"
+cat > "$_probe/probe.mojo" <<'PROBE'
+from std.gpu.host.compile import _compile_code
+def t() -> __mlir_type.`!kgen.target`:
+    return __mlir_attr[
+        `#kgen.target<triple = "riscv64-unknown-elf", `,
+        `arch = "generic-rv64", `,
+        `features = "+m,+a,+f,+d,+v,+zvl128b", `,
+        `data_layout = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128",`,
+        `index_bit_width = 64,`,
+        `simd_bit_width = 128`,
+        `> : !kgen.target`,
+    ]
+def k(p: UnsafePointer[Float32, MutAnyOrigin]):
+    p[0] = p[1] + 1.0
+def main():
+    comptime x = t()
+    print(_compile_code[k, emission_kind="llvm", target=x]().asm)
+PROBE
+if ! ( cd "$_probe" && MODULAR_MOJO_MAX_PACKAGE_ROOT="$INSTALL_DIR" \
+        MODULAR_MOJO_MAX_IMPORT_PATH="$INSTALL_DIR/lib/mojo" \
+        MODULAR_HOME="$INSTALL_DIR" LD_LIBRARY_PATH="$INSTALL_DIR/lib" \
+        "$BIN" run probe.mojo 2>/dev/null | grep -q riscv64 ); then
+    echo ""
+    echo "WARNING: this toolchain cannot target RISC-V; ./scripts/build.sh"
+    echo "         will fail. Pin a known-good build, e.g."
+    echo "         MOJO_VERSION=1.0.0b2.dev2026061203 ./scripts/setup.sh"
+fi
+rm -rf "$_probe"
+
 echo ""
-echo "다음 단계:"
+echo "Next steps:"
 echo "  export MOJO_ROOT=$INSTALL_DIR"
 echo "  source scripts/env.sh"
 echo "  ./scripts/build.sh"

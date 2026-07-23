@@ -1,6 +1,6 @@
-# Mojo 실행에 필요한 환경변수.
+# Environment variables needed to run Mojo.
 #   source scripts/env.sh
-# MOJO_ROOT를 미리 export 해두면 그것을 쓰고, 없으면 ./toolchain 을 쓴다.
+# If MOJO_ROOT is already exported it is used as-is; otherwise ./toolchain.
 
 if [ -z "${MOJO_ROOT:-}" ]; then
     _here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
@@ -8,7 +8,7 @@ if [ -z "${MOJO_ROOT:-}" ]; then
 fi
 
 if [ ! -d "$MOJO_ROOT" ]; then
-    echo "MOJO_ROOT($MOJO_ROOT)이 없습니다. ./scripts/setup.sh 를 먼저 실행하세요." >&2
+    echo "MOJO_ROOT($MOJO_ROOT) does not exist. Run ./scripts/setup.sh first." >&2
 fi
 
 export LD_LIBRARY_PATH="$MOJO_ROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -23,7 +23,7 @@ else
 fi
 export MODULAR_MOJO_MAX_DRIVER_PATH="$MOJO_BIN"
 
-# src/ 를 모듈 검색 경로에 추가 (m2ndp 라이브러리)
+# Put src/ on the module search path (the m2ndp library).
 _repo="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
-export MOJO_PYTHON_LIBRARY="" # 미사용
+export MOJO_PYTHON_LIBRARY="" # unused
 export M2NDP_SRC="$_repo/src"
