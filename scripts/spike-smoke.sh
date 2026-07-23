@@ -13,6 +13,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
 SPIKE="${SPIKE:-$REPO/build/spike/install/bin/spike}"
+LLC="${LLC:-$REPO/build/llvm/bin/llc}"
 EXTLIB="${EXTLIB:-$REPO/build/spike/libm2ndp_ext.so}"
 # libriscv.so is not on the default search path.
 export LD_LIBRARY_PATH="$REPO/build/spike/install/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -83,8 +84,47 @@ if [ -f "$EXTLIB" ]; then
     python3 sim/gen-tests.py > "$OUT/generated.s" || fail "generating tests"
     TEST_ISA="$ISA_FP16" run_test "all 64 instructions" "$OUT/generated.s" \
         "$FEATURES_FP16,+xm2ndp" --extlib="$EXTLIB" --extension=m2ndp || FAILED=1
-else
-    echo "  indexed vector atomic       SKIP ($EXTLIB not built)"
+
+
+    # Compiled kernels, not hand-written assembly: the launcher half of the
+    # contract -- scratchpad region, base pointer, identity registers -- is in
+    # sim/gen-kernel-test.py.
+    for bench in vector_add histogram; do
+        if [ ! -f "out/$bench.ll" ]; then
+            echo "  $bench                     SKIP (run ./scripts/build.sh)"
+            continue
+        fi
+        printf "  %-28s " "$bench (compiled)"
+        if ! "$LLC" -mtriple=riscv64-unknown-elf \
+                -mattr=+m,+a,+f,+d,+v,+zvl128b,+xm2ndp -filetype=obj \
+                "out/$bench.ll" -o "$OUT/k.o" 2>"$OUT/err"; then
+            echo "FAIL (llc)"; sed 's/^/    /' "$OUT/err"; FAILED=1; continue
+        fi
+        if ! python3 sim/gen-kernel-test.py "$bench" > "$OUT/l.s" 2>"$OUT/err"; then
+            echo "FAIL (generating the launcher)"; sed 's/^/    /' "$OUT/err"
+            FAILED=1; continue
+        fi
+        if ! "$LLVM_MC" -triple=riscv64 -mattr="$FEATURES,+xm2ndp" \
+                -filetype=obj "$OUT/l.s" -o "$OUT/l.o" 2>"$OUT/err"; then
+            echo "FAIL (assembling the launcher)"; sed 's/^/    /' "$OUT/err"
+            FAILED=1; continue
+        fi
+        if ! "$LD" -T scripts/m2ndp.lds -e _start "$OUT/l.o" "$OUT/k.o" \
+                -o "$OUT/k.elf" 2>"$OUT/err"; then
+            echo "FAIL (link)"; sed 's/^/    /' "$OUT/err"; FAILED=1; continue
+        fi
+        timeout 120 "$SPIKE" $MEM --extlib="$EXTLIB" --extension=m2ndp \
+            --isa="$ISA" "$OUT/k.elf" > "$OUT/log" 2>&1
+        rc=$?
+        if [ "$rc" -eq 124 ]; then
+            echo "FAIL (timed out)"; FAILED=1
+        elif [ "$rc" -ne 0 ]; then
+            echo "FAIL (wrong result, target reported $rc)"
+            sed 's/^/    /' "$OUT/log"; FAILED=1
+        else
+            echo "OK"
+        fi
+    done
 fi
 
 echo ""

@@ -19,6 +19,18 @@
  * negative offsets the compiler already emitted.
  */
 
+PHDRS {
+  /* One loadable segment, and .spad is deliberately not in it.
+   *
+   * Without this the linker wraps .spad in a segment of its own at address 0,
+   * because the section is allocatable and has to go somewhere. A loader then
+   * tries to honour that address and fails -- there is no memory at 0, and
+   * there was never meant to be: the region is the launcher's to provide. The
+   * section reserves a size and nothing else.
+   */
+  dram PT_LOAD;
+}
+
 MEMORY {
   /* Per-core scratchpad. Overflowing it is a link error rather than a silent
    * overlap at run time. */
@@ -40,8 +52,8 @@ SECTIONS {
   /* What the launcher reads to place the base pointer. */
   __m2ndp_spad_size = SIZEOF(.spad);
 
-  .text   : { *(.text .text.*) }     > dram
-  .rodata : { *(.rodata .rodata.*) } > dram
-  .data   : { *(.data .data.*) }     > dram
-  .bss (NOLOAD) : { *(.bss .bss.* COMMON) } > dram
+  .text   : { *(.text .text.*) }     > dram :dram
+  .rodata : { *(.rodata .rodata.*) } > dram :dram
+  .data   : { *(.data .data.*) }     > dram :dram
+  .bss (NOLOAD) : { *(.bss .bss.* COMMON) } > dram :dram
 }

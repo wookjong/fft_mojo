@@ -22,6 +22,8 @@ apt-get install -y device-tree-compiler binutils-riscv64-unknown-elf
   RVV through the pipeline     OK
   indexed vector atomic        OK
   all 64 instructions          OK
+  vector_add (compiled)        OK
+  histogram (compiled)         OK
 ```
 
 The split is deliberate. The first uses no M²NDP instruction at all — it
@@ -39,6 +41,31 @@ expected results in Python — writing 64 of these by hand would be 64 chances
 to work the answer out the same wrong way the simulator does. **The exit code
 is the first test that disagreed**, so a failure names the instruction rather
 than saying only that something is wrong.
+
+The last two are the ones that matter: compiled kernels, launched the way
+the contract says a task is launched, checked against results computed in
+Python. `histogram` exercises the whole set at once — scratchpad globals at
+compiler-assigned offsets, an indexed vector atomic, and three phases sharing
+one scratchpad across kernel launches.
+
+That last property had been agreed and written down but never tested. It is
+now.
+
+## The launcher
+
+`sim/gen-kernel-test.py` implements the launcher half of the contract:
+
+- **the scratchpad region is the launcher's to provide.** `.spad` only
+  reserves a size; `__m2ndp_spad_size` says how much, and the base pointer
+  goes at `region + __m2ndp_spad_size` with the arguments written upwards
+  from there. The globals sit below at the negative offsets the compiler
+  already emitted.
+- **the identity values arrive in registers**, one per value. The assignment
+  is provisional and lives in `RISCVM2ndpArgInfo.h`; the generator is the
+  only other place that knows it, so settling the hardware ABI changes two
+  files.
+- **microthreads run one at a time**, and the loop counter lives in memory
+  rather than a register, because a kernel preserves nothing.
 
 ## The extension is loadable, not a fork
 
@@ -70,6 +97,14 @@ silently traps as illegal. Derive it: `match = encoding & mask`.
 **Bare metal starts with the vector unit off.** `mstatus.VS` and `mstatus.FS`
 are zero out of reset, so the first vector or floating-point instruction
 traps. Whatever the M²NDP runtime turns out to be, it has to set them.
+
+**`.spad` must not end up in a segment.** It is allocatable, so the linker
+gives it one of its own at address 0, and a loader then tries to honour that
+address. There is no memory at 0 and there was never meant to be — the region
+is the launcher's to provide. `scripts/m2ndp.lds` declares a single `PHDRS`
+segment and leaves `.spad` out of it. Marking the section non-allocatable
+also works but turns it into `PROGBITS`, which puts the whole reservation in
+the file as zeros.
 
 **Spike has to be told where memory is.** `scripts/m2ndp.lds` puts code at
 `0x10000`; Spike's default region starts at `0x80000000`, so it needs
