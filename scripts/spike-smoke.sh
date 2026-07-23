@@ -18,7 +18,10 @@ EXTLIB="${EXTLIB:-$REPO/build/spike/libm2ndp_ext.so}"
 # libriscv.so is not on the default search path.
 export LD_LIBRARY_PATH="$REPO/build/spike/install/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 LLVM_MC="${LLVM_MC:-$REPO/build/llvm/bin/llvm-mc}"
-LD="${RISCV_LD:-riscv64-unknown-elf-ld}"
+# lld, not a distribution binutils: the linker has to understand the ISA
+# string this LLVM emits, and ours rejects `zmmul` the moment two toolchains'
+# objects are merged.
+LD="${RISCV_LD:-$REPO/build/llvm/bin/ld.lld}"
 
 # Matches m2ndp_target() in src/m2ndp.mojo, minus the vendor extension, which
 # Spike does not know about yet.
@@ -37,8 +40,7 @@ fail() { echo "  FAIL $*"; exit 1; }
 for t in "$SPIKE" "$LLVM_MC"; do
     [ -x "$t" ] || fail "$t not found. Run ./scripts/build-spike.sh and ./scripts/build-llvm.sh"
 done
-command -v "$LD" >/dev/null || \
-    fail "$LD not found. apt-get install -y binutils-riscv64-unknown-elf"
+[ -x "$LD" ] || fail "$LD not found. Run ./scripts/build-llvm.sh"
 
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT

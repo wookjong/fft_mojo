@@ -5,8 +5,8 @@
 #   ./scripts/build-llvm.sh           # configure + build
 #   ./scripts/build-llvm.sh check     # build, then run the RISC-V lit tests
 #
-# Only what backend work needs: the RISC-V target, and the tools that consume
-# the .ll that `./scripts/build.sh` produces. No clang, no other targets —
+# Only what backend work needs: the RISC-V target, the tools that consume the
+# .ll that `./scripts/build.sh` produces, and lld. No clang, no other targets —
 # that keeps a from-scratch build in the tens of minutes rather than hours.
 # `check` additionally builds the tools the lit suite inspects object files
 # with; see the tool list below.
@@ -34,7 +34,7 @@ cmake -G Ninja -S "$SRC" -B "$BUILD" \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_ENABLE_ASSERTIONS=ON \
     -DLLVM_TARGETS_TO_BUILD=RISCV \
-    -DLLVM_ENABLE_PROJECTS="" \
+    -DLLVM_ENABLE_PROJECTS="lld" \
     -DLLVM_INCLUDE_BENCHMARKS=OFF \
     -DLLVM_INCLUDE_EXAMPLES=OFF \
     -DLLVM_INCLUDE_DOCS=OFF \
@@ -44,9 +44,16 @@ cmake -G Ninja -S "$SRC" -B "$BUILD" \
 # Assertions are ON deliberately. Backend bugs surface as ISel and MachineInstr
 # verifier assertions; without them the same bugs turn into silent miscompiles.
 
+# lld is the one project built, and it earns its place: the linker has to
+# understand the ISA string this LLVM emits. A distribution binutils does not
+# -- ours rejects `zmmul` outright -- and that only shows up once objects from
+# two toolchains are linked together, because merging the RISC-V attributes is
+# what triggers the check. Discarding the section in the link script does not
+# help; the merge happens first.
+
 # llvm-lit is not in this list: cmake generates it as a script at configure
 # time, so asking ninja for it fails with "unknown target".
-TOOLS="llc llvm-mc opt llvm-as llvm-dis FileCheck count not"
+TOOLS="llc llvm-mc opt llvm-as llvm-dis FileCheck count not lld"
 
 # The lit suite needs more than backend work does, so these are built only for
 # `check` -- the default build stays as small as the comment at the top claims.

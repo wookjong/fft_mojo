@@ -9,7 +9,8 @@ Spike, the RISC-V ISA simulator, is the vehicle:
 
 ```bash
 git submodule update --init --depth 1 third_party/riscv-isa-sim
-apt-get install -y device-tree-compiler binutils-riscv64-unknown-elf
+apt-get install -y device-tree-compiler
+./scripts/build-llvm.sh          # lld comes from here
 ./scripts/build-spike.sh check
 ```
 
@@ -98,13 +99,23 @@ silently traps as illegal. Derive it: `match = encoding & mask`.
 are zero out of reset, so the first vector or floating-point instruction
 traps. Whatever the M²NDP runtime turns out to be, it has to set them.
 
-**`.spad` must not end up in a segment.** It is allocatable, so the linker
-gives it one of its own at address 0, and a loader then tries to honour that
-address. There is no memory at 0 and there was never meant to be — the region
-is the launcher's to provide. `scripts/m2ndp.lds` declares a single `PHDRS`
-segment and leaves `.spad` out of it. Marking the section non-allocatable
-also works but turns it into `PROGBITS`, which puts the whole reservation in
-the file as zeros.
+**`.spad` must be assigned to no segment, and saying nothing is not the
+same as saying none.** The section is allocatable, so it ends up somewhere:
+GNU ld gives it a segment of its own at address 0, and lld folds it into the
+neighbouring one and drags that down to 0. Either way a loader honours the
+address and fails, because there is no memory at 0 and there was never meant
+to be — the region is the launcher's to provide. `scripts/m2ndp.lds` says
+`:NONE` outright. Leaving the assignment off works under GNU ld and not
+under lld, which inherits the neighbouring segment.
+
+Marking the section non-allocatable also avoids the segment, but turns it
+into `PROGBITS` and puts the whole reservation in the file as zeros.
+
+**The linker has to be lld.** A distribution binutils is older than this
+LLVM and rejects the ISA string it emits — ours stops at `zmmul`. It only
+shows up once objects from two toolchains are linked together, because
+merging the RISC-V attributes is what triggers the check, and discarding the
+section in the link script does not help: the merge happens first.
 
 **Spike has to be told where memory is.** `scripts/m2ndp.lds` puts code at
 `0x10000`; Spike's default region starts at `0x80000000`, so it needs

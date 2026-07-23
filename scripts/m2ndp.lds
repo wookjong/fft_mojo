@@ -20,13 +20,18 @@
  */
 
 PHDRS {
-  /* One loadable segment, and .spad is deliberately not in it.
+  /* One loadable segment, and .spad is explicitly in none of them.
    *
-   * Without this the linker wraps .spad in a segment of its own at address 0,
-   * because the section is allocatable and has to go somewhere. A loader then
-   * tries to honour that address and fails -- there is no memory at 0, and
-   * there was never meant to be: the region is the launcher's to provide. The
-   * section reserves a size and nothing else.
+   * Left alone, .spad ends up in a segment because the section is
+   * allocatable and has to go somewhere -- GNU ld gives it one of its own at
+   * address 0, lld folds it into the following one and drags that down to 0.
+   * Either way a loader honours the address and fails: there is no memory at
+   * 0 and there was never meant to be. The region is the launcher's to
+   * provide and the section reserves a size, nothing more.
+   *
+   * ":NONE" says so outright. Leaving the assignment off is not the same
+   * thing -- lld then inherits the neighbouring segment, which is how the
+   * second half of that failure happens.
    */
   dram PT_LOAD;
 }
@@ -47,7 +52,7 @@ SECTIONS {
    * instructions -- so this only reserves space. */
   .spad (NOLOAD) : {
     *(.spad)
-  } > spad
+  } > spad :NONE
 
   /* What the launcher reads to place the base pointer. */
   __m2ndp_spad_size = SIZEOF(.spad);
