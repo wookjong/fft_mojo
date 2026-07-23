@@ -8,6 +8,8 @@
 # Only what backend work needs: the RISC-V target, and the tools that consume
 # the .ll that `./scripts/build.sh` produces. No clang, no other targets —
 # that keeps a from-scratch build in the tens of minutes rather than hours.
+# `check` additionally builds the tools the lit suite inspects object files
+# with; see the tool list below.
 # =============================================================================
 set -euo pipefail
 
@@ -44,7 +46,20 @@ cmake -G Ninja -S "$SRC" -B "$BUILD" \
 
 # llvm-lit is not in this list: cmake generates it as a script at configure
 # time, so asking ninja for it fails with "unknown target".
-ninja -C "$BUILD" -j "$JOBS" llc llvm-mc opt llvm-as llvm-dis FileCheck count not
+TOOLS="llc llvm-mc opt llvm-as llvm-dis FileCheck count not"
+
+# The lit suite needs more than backend work does, so these are built only for
+# `check` -- the default build stays as small as the comment at the top claims.
+# llvm-config is not optional: lit's configuration runs it to read the build
+# mode, and without it the whole suite dies before running a single test. The
+# rest are what the RISC-V tests inspect object files with; every one of the 31
+# failures seen without them was the tool missing, not a codegen difference.
+if [ "${1:-}" = "check" ]; then
+    TOOLS="$TOOLS llvm-config llvm-objdump llvm-readobj llvm-readelf llvm-dwarfdump"
+fi
+
+# shellcheck disable=SC2086
+ninja -C "$BUILD" -j "$JOBS" $TOOLS
 
 echo ""
 echo "[done] tools in $BUILD/bin"

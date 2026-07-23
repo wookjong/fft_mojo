@@ -35,6 +35,18 @@ Benchmarks ported from
 | `spmv` | indirect access, atomic combine |
 | `histogram` | scratchpad shared across INIT/BODY/FINAL phases |
 
+### LLVM baseline
+
+`./scripts/build-llvm.sh check`, against the pinned submodule (LLVM 23.1.0,
+`release/23.x`, RISC-V only, assertions on): **2595/2595 RISC-V CodeGen lit
+tests pass.** That is the number to diff against once `FeatureVendorXM2ndp`
+lands — anything failing afterwards is ours.
+
+The artifacts also round-trip through that build: `llc` accepts all six
+`out/*.ll` and `llvm-mc -filetype=obj` assembles what it produces. So the
+frontend and backend LLVM versions are compatible in practice, not only by
+version number.
+
 ---
 
 ## 2. What the backend has to support
