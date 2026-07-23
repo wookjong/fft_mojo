@@ -61,4 +61,17 @@ SECTIONS {
   .rodata : { *(.rodata .rodata.*) } > dram :dram
   .data   : { *(.data .data.*) }     > dram :dram
   .bss (NOLOAD) : { *(.bss .bss.* COMMON) } > dram :dram
+
+  /* HTIF's mailbox. The host finds these by symbol name, so the section only
+   * has to exist and be loaded; where it sits does not matter. */
+  .tohost : { *(.tohost) } > dram :dram
+
+  /* A launcher runs on a stack; a kernel does not have one to speak of. Kept
+   * here rather than in the launcher so that the size is one thing to change
+   * when a task needs more. */
+  .stack (NOLOAD) : {
+    . = ALIGN(16);
+    . += 64K;
+    __stack_top = .;
+  } > dram :dram
 }
