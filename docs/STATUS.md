@@ -17,7 +17,7 @@ Last updated: 2026-07-23, against Mojo `1.0.0b2.dev2026061203`.
 |---|---|
 | RISC-V/RVV codegen | `target triple = "riscv64-unknown-unknown-elf"`, `vsetvli` / `vle32.v` / `vadd.vv` / `vse32.v` selected from ordinary Mojo `SIMD` |
 | Custom target | `#kgen.target<...>` written by hand, bypassing `std.gpu`'s closed vendor detection |
-| Scratchpad | named `internal addrspace(3) global`, shared across kernels when declared as a comptime struct member |
+| Scratchpad | `internal addrspace(3) global` — an untyped byte blob named `memory_blob_<hash>`, not the `name=` argument — shared across kernels when declared as a comptime struct member |
 | Atomics | `atomicrmw add` / `fadd`, on ordinary memory and on `addrspace(3)`, at `monotonic` ordering |
 | Indirect access | plain load → sext → GEP → load; no special construct needed |
 | Predicate scan | `v.lt(x)` selects `vmslt.vx` |

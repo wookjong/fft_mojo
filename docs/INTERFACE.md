@@ -47,20 +47,32 @@ the backend to make placement and addressing decisions.
 
 ### What the compiler emits
 
-Each `scratchpad[count, T, name=...]()` in a kernel becomes one named global
-in address space 3. The compiler assigns storage, so no offsets appear in
+Each `scratchpad[count, T, name=...]()` in a kernel becomes one global in
+address space 3. The compiler assigns storage, so no offsets appear in
 source:
 
 ```mojo
-var tile = scratchpad[MAX_GROUP, Float32, name="spmv_tile"]()
+comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()   # BINS = 256
 ```
 ```llvm
-@spmv_tile._gpu_shared_mem = internal addrspace(3) global [64 x float] undef, align 4
+@memory_blob_de5f15ab6daf7941 = internal addrspace(3) global [1024 x i8] zeroinitializer, align 4
 
-%40 = getelementptr inbounds float, ptr addrspace(3) @spmv_tile._gpu_shared_mem, i64 %7
-      store float %39, ptr addrspace(3) %40, align 4
-%60 = load float, ptr addrspace(3) %40, align 4
+%8 = getelementptr inbounds i32, ptr addrspace(3) @memory_blob_de5f15ab6daf7941, i64 %7
+%9 = atomicrmw add ptr addrspace(3) %8, i32 1 monotonic, align 4
 ```
+
+Two properties of that global the backend cannot assume away:
+
+- **The `name=` argument does not reach the symbol.** It is spelled
+  `memory_blob_<hash>`, so a scratchpad buffer cannot be identified by name
+  in the IR or the object file. Anything that has to recognise these must
+  key off the address space, not the symbol name.
+- **The global is an untyped byte blob**, `[1024 x i8]`, not `[256 x i32]`.
+  The element type appears only on the GEPs and the accesses.
+
+`histogram` is the only one of the six benchmarks that allocates a
+scratchpad — it is where all 37 `addrspace(3)` references live. `spmv`
+combines through atomics on ordinary memory and has none.
 
 Address space 3 follows the GPU shared-memory convention. If M²NDP wants a
 different number, change it in `src/m2ndp.mojo`; ordinary memory stays in
@@ -72,12 +84,12 @@ This is the part that needs backend work. Today the global lowers to an
 ordinary common symbol:
 
 ```asm
-.type  spmv_tile._gpu_shared_mem,@object
-.local spmv_tile._gpu_shared_mem
-.comm  spmv_tile._gpu_shared_mem,256,4
+.type  memory_blob_de5f15ab6daf7941,@object
+.local memory_blob_de5f15ab6daf7941
+.comm  memory_blob_de5f15ab6daf7941,1024,4
 
-lui    a0, %hi(spmv_tile._gpu_shared_mem)
-flw    fa5, %lo(spmv_tile._gpu_shared_mem)(a0)
+auipc  s1, %pcrel_hi(memory_blob_de5f15ab6daf7941)
+addi   s1, s1, %pcrel_lo(.Lpcrel_hi0)
 ```
 
 `.comm` puts the buffer in `.bss` — ordinary memory. The addrspace(3)
@@ -88,9 +100,12 @@ annotation survives only as far as LLVM IR; nothing in the object file says
 
 1. **Placement.** Emit addrspace(3) globals into scratchpad memory rather
    than `.bss`.
-2. **Addressing.** Accesses are currently absolute `%hi`/`%lo` relocations.
-   If the scratchpad base differs per core or per launch group, absolute
-   addressing cannot work and these must become base-register-relative.
+2. **Addressing.** Accesses are currently PC-relative: the address is
+   materialized with an `auipc`/`addi` pair against `%pcrel_hi`/`%pcrel_lo`
+   (there is no `%hi`/`%lo` form in the output). PC-relative or not, the
+   symbol resolves to one link-time address shared by every core. If the
+   scratchpad base differs per core or per launch group, this cannot work
+   and the accesses must become relative to a scratchpad base register.
 3. **Instance scope.** One instance per NDP core, shared by every µthread on
    it (Table 1 of the M²NDP paper). Whether a buffer is also distinct per
    launch group is an architecture decision the IR does not express.
@@ -241,5 +256,5 @@ Benchmark code (`benchmarks/*.mojo`) does not change.
 ```bash
 ./scripts/build.sh
 grep -h "declare.*__m2ndp" out/*.ll | sort -u   # symbol list
-grep -c "addrspace(3)" out/spmv.ll               # scratchpad usage
+grep -c "addrspace(3)" out/histogram.ll          # scratchpad usage (the only one)
 ```
