@@ -310,6 +310,39 @@ nothing standard occupies those bits and nothing standard blesses them. The
 floating-point `funct5` values are ours outright, picked from what the
 integer operations leave free.
 
+### Scalar floating-point atomics
+
+RISC-V has no floating-point AMO at all — the A extension is integer-only —
+so `atomicrmw fadd` becomes a cmpxchg loop. `famoadd`, `famoswap`, `famomin`
+and `famomax` at `.h`, `.w` and `.d`, with the usual `.aq`/`.rl`/`.aqrl`
+forms, and `atomicrmw` selects into them directly.
+
+`spmv`'s accumulation, which is what pays for that loop today:
+
+```asm
+.LBB0_7:                                  ; without +xm2ndp
+    lr.w  a2, (s0)
+    bne   a2, a1, .LBB0_8
+    sc.w  a3, a0, (s0)
+    bnez  a3, .LBB0_6
+```
+```asm
+    m2ndp.famoadd.w fa5, fs0, (s0)        ; with it
+```
+
+99 instructions to 89 for the kernel.
+
+`fsub` is deliberately not covered — it is not one of the four operations, so
+it still expands. Neither is `xchg`: `ATOMIC_SWAP`'s node profile is
+integer-only and an `atomicrmw xchg` on a float reaches the DAG bitcast to an
+integer, so there is nothing floating-point left to match. `famoswap` exists
+for the assembler and an intrinsic could reach it later.
+
+The floating-point `funct5` values are shared between the vector and scalar
+forms of an operation. They had to be chosen to be free in the scalar AMO
+space as well: `0b00010` and `0b00011` would have been the obvious
+neighbours of add and swap, but they are `lr` and `sc`.
+
 ### Reaching it from Mojo
 
 The frontend cannot emit `llvm.riscv.m2ndp.*` -- Mojo's own LLVM has never

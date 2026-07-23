@@ -18,7 +18,7 @@ Last updated: 2026-07-23, against Mojo `1.0.0b2.dev2026061203`.
 | RISC-V/RVV codegen | `target triple = "riscv64-unknown-unknown-elf"`, `vsetvli` / `vle32.v` / `vadd.vv` / `vse32.v` selected from ordinary Mojo `SIMD` |
 | Custom target | `#kgen.target<...>` written by hand, bypassing `std.gpu`'s closed vendor detection |
 | Scratchpad | `internal addrspace(3) global` — an untyped byte blob named `memory_blob_<hash>`, not the `name=` argument — shared across kernels when declared as a comptime struct member |
-| Atomics | `atomicrmw add` / `fadd`, on ordinary memory and on `addrspace(3)`, at `monotonic` ordering |
+| Atomics | `atomicrmw add` / `fadd`, on ordinary memory and on `addrspace(3)`, at `monotonic` ordering; `fadd` selects a real instruction with `+xm2ndp` rather than a cmpxchg loop |
 | Indirect access | plain load → sext → GEP → load; no special construct needed |
 | Predicate scan | `v.lt(x)` selects `vmslt.vx` |
 | Multi-kernel modules | `mojo build --emit llvm` with `@export`; several kernels per file |
@@ -38,7 +38,7 @@ Benchmarks ported from
 ### LLVM baseline
 
 `./scripts/build-llvm.sh check`, against the pinned submodule (LLVM 23.1.0,
-`release/23.x`, RISC-V only, assertions on): **3204/3204 RISC-V lit tests
+`release/23.x`, RISC-V only, assertions on): **3205/3205 RISC-V lit tests
 pass**, CodeGen and MC together.
 
 The CodeGen baseline before `FeatureVendorXM2ndp` was 2595/2595. Adding the
@@ -77,9 +77,10 @@ how much is blocked on each:
    from Mojo through an external symbol. `histogram`'s body is one
    instruction where it was sixteen. See INTERFACE.md
 4. **Mask-to-bitmap** — still needs its own intrinsic; untouched
-5. **FP atomic add** — `spmv`'s `atomicrmw fadd` still expands to an LR/SC
-   retry loop. The vector form now exists (`vfamoadd`); the scalar one does
-   not, and RISC-V has no standard floating-point atomic add either
+5. **FP atomic add — done.** RISC-V has no floating-point AMO at all, so
+   `spmv`'s `atomicrmw fadd` was a cmpxchg loop; `famoadd`/`famomin`/
+   `famomax` at `.h`/`.w`/`.d` replace it with one instruction, 99 kernel
+   instructions down to 89
 6. **Recovering `ADDR`/`OFFSET`** from `base[id * W]`
 
 The architecture questions that used to block this are settled and written
