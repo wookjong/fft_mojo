@@ -23,6 +23,10 @@ LD="${RISCV_LD:-riscv64-unknown-elf-ld}"
 # Spike does not know about yet.
 FEATURES="+m,+a,+f,+d,+c,+v,+zvl128b"
 ISA="rv64gcv_zvl128b"
+# scripts/m2ndp.lds puts code at 0x10000, which is below where Spike puts
+# memory by default, so it has to be told. The region stops short of
+# 0x2000000, where Spike's CLINT lives -- overlapping it is a startup error.
+MEM="-m0x10000:0x1ff0000"
 # The generated tests reach f16, which the benchmarks do not.
 FEATURES_FP16="$FEATURES,+zfh"
 ISA_FP16="${ISA}_zfh"
@@ -49,10 +53,13 @@ run_test() {
             "$src" -o "$OUT/t.o" 2>"$OUT/err"; then
         echo "FAIL (assembly)"; sed 's/^/    /' "$OUT/err"; return 1
     fi
-    if ! "$LD" -T sim/m2ndp.ld "$OUT/t.o" -o "$OUT/t.elf" 2>"$OUT/err"; then
+    # The task's own link script, not a simulator-specific one: the layout
+    # under test should be the layout the compiler was built against.
+    if ! "$LD" -T scripts/m2ndp.lds -e _start "$OUT/t.o" -o "$OUT/t.elf" \
+            2>"$OUT/err"; then
         echo "FAIL (link)"; sed 's/^/    /' "$OUT/err"; return 1
     fi
-    timeout 120 "$SPIKE" "$@" --isa="$TEST_ISA" "$OUT/t.elf" > "$OUT/log" 2>&1
+    timeout 120 "$SPIKE" $MEM "$@" --isa="$TEST_ISA" "$OUT/t.elf" > "$OUT/log" 2>&1
     local rc=$?
     if [ "$rc" -eq 124 ]; then
         echo "FAIL (timed out -- tohost was never written)"; return 1

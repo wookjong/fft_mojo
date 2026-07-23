@@ -71,10 +71,11 @@ silently traps as illegal. Derive it: `match = encoding & mask`.
 are zero out of reset, so the first vector or floating-point instruction
 traps. Whatever the M²NDP runtime turns out to be, it has to set them.
 
-**The ELF headers must not be placed below `.text`.** Left to itself the
-linker starts the first `LOAD` segment a page below the text address to make
-room for the headers, and Spike refuses to load below its memory base. That
-is what `sim/m2ndp.ld` is for.
+**Spike has to be told where memory is.** `scripts/m2ndp.lds` puts code at
+`0x10000`; Spike's default region starts at `0x80000000`, so it needs
+`-m0x10000:0x1ff0000`. The size is not arbitrary — the region has to stop
+short of `0x2000000`, where Spike's CLINT lives, or startup fails with a
+device overlap.
 
 **Spike's release tags are stale** — v1.1.0 is from 2021. The submodule is
 pinned to a recent `master` commit instead, the same way the LLVM submodule
@@ -84,12 +85,22 @@ follows `release/23.x` rather than a tag.
 
 ## Where the scratchpad lives
 
-`sim/m2ndp.ld` gives `.spad` an address — `0x88000000`, with 64 KiB of room.
-The compiler emits scratchpad globals into that section but deliberately says
-nothing about where it is (see [`INTERFACE.md`](INTERFACE.md)); this is the
-simulator's answer, and it is the first time the question has had one.
+Nowhere, as far as the link is concerned, and that is the point.
 
-One instance, because one core is modelled.
+An earlier version of this file had the simulator answer the question by
+giving `.spad` an absolute address. The calling convention work answered it
+differently and better: the compiler assigns every scratchpad variable a
+constant offset from a base pointer the hardware supplies, `.spad` only
+reserves the space, and `__m2ndp_spad_size` tells a launcher how far above
+its region to put the base. See `scripts/m2ndp.lds` and
+[`INTERFACE.md`](INTERFACE.md).
+
+So the tests link with the task's own script rather than a simulator-specific
+one. The layout being exercised should be the layout the compiler was built
+against; a second script would only be a second thing to get out of step.
+
+Nothing here sets the base register yet — the tests are hand-written assembly
+that does not use compiler-assigned scratchpad. That is the next piece.
 
 ## What this cannot check
 
