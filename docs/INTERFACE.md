@@ -68,8 +68,8 @@ comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()   # BINS = 256
 ```llvm
 @memory_blob_de5f15ab6daf7941 = internal addrspace(3) global [1024 x i8] zeroinitializer, align 4
 
-%8 = getelementptr inbounds i32, ptr addrspace(3) @memory_blob_de5f15ab6daf7941, i64 %7
-%9 = atomicrmw add ptr addrspace(3) %8, i32 1 monotonic, align 4
+%9 = getelementptr inbounds i32, ptr addrspace(3) @memory_blob_de5f15ab6daf7941, i64 %4
+     store i32 0, ptr addrspace(3) %9, align 4
 ```
 
 Two properties of that global the backend cannot assume away:
@@ -82,8 +82,7 @@ Two properties of that global the backend cannot assume away:
   The element type appears only on the GEPs and the accesses.
 
 `histogram` is the only one of the six benchmarks that allocates a
-scratchpad — it is where all 37 `addrspace(3)` references live. `spmv`
-combines through atomics on ordinary memory and has none.
+scratchpad. `spmv` combines through atomics on ordinary memory and has none.
 
 Address space 3 follows the GPU shared-memory convention. If M²NDP wants a
 different number, change it in `src/m2ndp.mojo`; ordinary memory stays in
@@ -281,8 +280,8 @@ path rather than a workaround.
 
 #### What exists so far
 
-Encoding first, ISel second — the assembler has to accept an instruction
-before its selection can be checked.
+The whole indexed-AMO set the RVV 0.10 draft defined -- swap, add, xor, and,
+or, min, max, minu, maxu -- at index element widths 8, 16, 32 and 64:
 
 ```asm
 m2ndp.vamoaddei32.v v8, (a0), v12, v8        # encoding: [0x2f,0x64,0xc5,0x06]
@@ -290,15 +289,60 @@ m2ndp.vamoaddei32.v v8, (a0), v12, v8, v0.t  # masked
 ```
 
 `vs2` carries per-lane byte offsets, `rs1` the base, and `vd` is both the
-addend and where the previous values come back. Assembler, disassembler and
-the `llvm.riscv.m2ndp.vamoadd` intrinsic are in place; **nothing selects the
-intrinsic into the instruction yet.** That needs the RVV pseudo machinery so
-VL and VTYPE get set up, and is the next piece.
+operand and where the previous values come back. The index element width is
+the only type information in the encoding; the data SEW comes from `vtype`,
+exactly as it does for the indexed loads and stores.
 
-Both the operand shape and the encoding are **provisional**. They are taken
-from `vamoaddei32.v` as RVV 0.10 defined it, which is the instruction the
-reference kernels were written against. Since that draft was dropped, no
-standard claims those bits — and nothing blesses them either.
+Plus floating-point forms, which the draft never had: `vfamoadd`,
+`vfamoswap`, `vfamomin`, `vfamomax`. Only the operations that mean anything
+for floats, so no `xor`/`and`/`or` and no signed/unsigned split. These matter
+because RISC-V has **no** floating-point atomic add anywhere, scalar or
+vector -- which is why `spmv`'s `atomicrmw fadd` becomes an LR/SC retry loop
+today.
+
+52 instructions in total. `llvm.riscv.m2ndp.*` intrinsics select into them,
+one intrinsic to one instruction with a `vsetvli` in front.
+
+**The encoding and the operand shape are provisional.** They follow
+`vamoaddei32.v` as RVV 0.10 defined it, that being the instruction the
+reference kernels were written against; the draft was dropped before 1.0, so
+nothing standard occupies those bits and nothing standard blesses them. The
+floating-point `funct5` values are ours outright, picked from what the
+integer operations leave free.
+
+### Reaching it from Mojo
+
+The frontend cannot emit `llvm.riscv.m2ndp.*` -- Mojo's own LLVM has never
+heard of it. So these follow the same contract as the µthread ID symbols: an
+external call, rewritten by a backend pass.
+
+```mojo
+_ = atomic_add_indexed(Histogram.bins, chunk * 4, SIMD[DType.int32, 16](1))
+```
+```llvm
+%8 = call <16 x i32> @__m2ndp_vamoadd_i32(ptr addrspace(3) @memory_blob_...,
+                                          <16 x i32> %7, <16 x i32> splat (i32 1))
+```
+
+The symbol carries the element type (`_i32`, `_i64`, `_f32`, `_f64`) because
+the frontend has no way to overload on vector type; the lane count is left to
+the argument types.
+
+`RISCVM2ndpLowerExternalOps` turns that into the intrinsic, widening the
+fixed vectors into a scalable container and setting `vl` to the lane count.
+Unlike scratchpad placement, it is gated on the **function's**
+`target-features` rather than on `-mattr`: this happens inside a function, so
+the per-function subtarget is available.
+
+`histogram`'s body is now what the reference kernel is:
+
+```asm
+vle32.v v12, (a0)                          ; load 16 samples
+vsll.vi v12, v12, 2                        ; sample -> byte offset
+m2ndp.vamoaddei32.v v8, (a1), v12, v8      ; 16 bins, one instruction
+```
+
+Sixteen scalar `amoadd`s before.
 
 **Mask register to bitmap.** `imdb_lt_int64`'s reference finishes with
 `vmv.x.s` + `sb`, because an RVV mask register already holds one bit per

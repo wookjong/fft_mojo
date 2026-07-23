@@ -38,7 +38,7 @@ Benchmarks ported from
 ### LLVM baseline
 
 `./scripts/build-llvm.sh check`, against the pinned submodule (LLVM 23.1.0,
-`release/23.x`, RISC-V only, assertions on): **3202/3202 RISC-V lit tests
+`release/23.x`, RISC-V only, assertions on): **3204/3204 RISC-V lit tests
 pass**, CodeGen and MC together.
 
 The CodeGen baseline before `FeatureVendorXM2ndp` was 2595/2595. Adding the
@@ -70,16 +70,17 @@ how much is blocked on each:
 2. **Scratchpad placement** — the section is done: with `+xm2ndp`,
    addrspace(3) globals land in `.spad` instead of `.comm`/`.bss`. Packing
    several of them into one per-core window, AMDGPU-LDS style, is not done
-3. **Vector atomic** and **mask-to-bitmap** — each needs its own intrinsic.
-   Not because LLVM lacks a vector `atomicrmw` — it has one — but because
-   that one is contiguous, and what `histogram` needs is indexed. RVV's
-   indexed vector AMOs were dropped before 1.0, so there is nothing
-   standard to lower to either. See INTERFACE.md.
-   The vector atomic is partly done: `llvm.riscv.m2ndp.vamoadd` and a
-   `m2ndp.vamoaddei32.v` instruction exist and assemble, but nothing selects
-   the one into the other yet
-4. **FP atomic add** — expands to an LR/SC retry loop today
-5. **Recovering `ADDR`/`OFFSET`** from `base[id * W]`
+3. **Vector atomic — done.** Neither layer could express an *indexed* one:
+   LLVM's vector `atomicrmw` is contiguous, and RVV's indexed AMOs were
+   dropped before 1.0, so there was nothing standard to lower to either.
+   Now there is `llvm.riscv.m2ndp.*` and 52 instructions behind it, reached
+   from Mojo through an external symbol. `histogram`'s body is one
+   instruction where it was sixteen. See INTERFACE.md
+4. **Mask-to-bitmap** — still needs its own intrinsic; untouched
+5. **FP atomic add** — `spmv`'s `atomicrmw fadd` still expands to an LR/SC
+   retry loop. The vector form now exists (`vfamoadd`); the scalar one does
+   not, and RISC-V has no standard floating-point atomic add either
+6. **Recovering `ADDR`/`OFFSET`** from `base[id * W]`
 
 The architecture questions that used to block this are settled and written
 up in INTERFACE.md: the scratchpad base is the same on every core, one

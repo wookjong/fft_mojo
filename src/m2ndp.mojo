@@ -89,17 +89,14 @@ def group_id() -> Int:
 # Ordering is RELAXED: accumulation does not need the `seq_cst` the stdlib
 # defaults to, and a weaker ordering leaves the backend fewer fences to emit.
 #
-# NOTE (vector atomics): there is no vector form, and it cannot be added as a
-# wrapper. `pop.atomic.rmw` rejects a vector operand outright —
+# NOTE (vector atomics): `pop.atomic.rmw` rejects a vector operand outright —
 #
 #   error: 'pop.atomic.rmw' op operand #0 must be pointer to whose type is an
 #   arithmetic dtype, but got '!kgen.pointer<...SIMD<f32, 4>>'
 #
-# — and LLVM's `atomicrmw` likewise takes only scalars. Both layers agree, so
-# `atomic_add_lanes` below falls back to one scalar atomic per lane. If M²NDP
-# has vector-atomic hardware, this path cannot reach it: it needs a dedicated
-# intrinsic, expressed here as an `external_call` the way the indexing
-# symbols are. Until then the fallback is the only spelling.
+# — so `atomic_add_lanes` below is one scalar atomic per lane. That covers the
+# contiguous case. What it cannot express is the *indexed* one, where each
+# lane has its own address; see `atomic_add_indexed`.
 
 @always_inline
 def atomic_add[
@@ -133,6 +130,57 @@ def atomic_add_lanes[
     @parameter
     for i in range(width):
         _ = atomic_add(ptr + i, val[i])
+
+
+@always_inline
+def atomic_add_indexed[
+    dtype: DType, width: Int, address_space: AddressSpace, //
+](
+    base: UnsafePointer[Scalar[dtype], MutAnyOrigin, address_space=address_space],
+    byte_offsets: SIMD[DType.int32, width],
+    val: SIMD[dtype, width],
+) -> SIMD[dtype, width]:
+    """Atomically add each lane of `val` at `base + byte_offsets[lane]`.
+
+    Indexed, so every lane has its own address — unlike `atomic_add_lanes`,
+    which walks consecutive elements from one pointer. This is the operation
+    `histogram` needs, where the lanes are bin indices.
+
+    Offsets are in bytes, matching the reference kernel, which scales sample
+    values with `vmul.vi v, v, 4` before the atomic.
+
+    Returns the previous values, one per lane.
+
+    Emitted as an external symbol rather than an intrinsic: Mojo's own LLVM
+    has never heard of `llvm.riscv.m2ndp.*` and cannot be made to emit it.
+    Our backend rewrites the call in RISCVM2ndpLowerExternalOps. So the same
+    mechanism as the µthread ID symbols, and for the same reason.
+    """
+    return external_call[
+        "__m2ndp_vamoadd_" + _amo_type_suffix[dtype](), SIMD[dtype, width]
+    ](base, byte_offsets, val)
+
+
+@always_inline
+def _amo_type_suffix[dtype: DType]() -> StaticString:
+    """The element type as it appears in the vector-atomic symbol names.
+
+    The symbol carries the element type because the frontend cannot overload
+    on vector type; the lane count is left to the argument types.
+    """
+    comptime if dtype == DType.int32 or dtype == DType.uint32:
+        return "i32"
+    elif dtype == DType.int64 or dtype == DType.uint64:
+        return "i64"
+    elif dtype == DType.float32:
+        return "f32"
+    elif dtype == DType.float64:
+        return "f64"
+    else:
+        # Anything else has no M2NDP vector atomic. Returning an empty suffix
+        # produces an unresolved `__m2ndp_vamoadd_`, which is a worse error
+        # than a compile-time one but is the only spelling available here.
+        return ""
 
 
 # ---------------------------------------------------------------- scratchpad

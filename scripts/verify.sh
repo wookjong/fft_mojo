@@ -26,8 +26,13 @@ echo "[verify] checking artifacts"
 
 check "RISC-V target" \
       "grep -h 'target triple' out/*.ll | sort -u | grep -c riscv64" "1"
-check "all 4 M2NDP symbols" \
-      "grep -ho '@__m2ndp_[a-z_]*' out/*.ll | sort -u | wc -l | tr -d ' '" "4"
+check "all 4 M2NDP ID symbols" \
+      "grep -ho '@__m2ndp_[a-z]*_*uthread_id\\|@__m2ndp_group_[a-z]*' out/*.ll | sort -u | wc -l | tr -d ' '" "4"
+# The operation symbols are the other half of the contract; unlike the ID
+# symbols these carry an element type, since the frontend cannot overload on
+# vector type.
+check "indexed vector atomic symbol" \
+      "grep -c '@__m2ndp_vamoadd_i32' out/histogram.ll | tr -d ' '" "2"
 # Mojo's own LLVM does not know xm2ndp and warns while dropping it from its
 # subtarget, but it copies the feature string into target-features verbatim.
 # That is how the marker reaches our llc, so check every module carries it.
@@ -49,10 +54,17 @@ check "histogram: 3 phases in one module" \
       "grep -c '^define dso_local void @histogram_' out/histogram.ll | tr -d ' '" "3"
 check "histogram: one shared scratchpad global" \
       "grep -c 'addrspace(3) global' out/histogram.ll | tr -d ' '" "1"
+# One use per phase, on top of the definition. Counting uses rather than
+# occurrences: the body used to unroll into sixteen of them and now needs
+# exactly one, so a threshold would have hidden the change either way.
 check "histogram: all phases hit that global" \
-      "test \$(grep -c 'memory_blob' out/histogram.ll) -ge 18 && echo yes" "yes"
+      "grep -c 'memory_blob' out/histogram.ll | tr -d ' '" "4"
+# INIT/FINAL still combine with scalar atomics; BODY is the vector one, and
+# it keeps the scratchpad address space through the call.
 check "histogram: scratchpad atomic" \
-      "grep -q 'atomicrmw add ptr addrspace(3)' out/histogram.ll && echo yes" "yes"
+      "grep -q '@__m2ndp_vamoadd_i32(ptr addrspace(3)' out/histogram.ll && echo yes" "yes"
+check "histogram: one vector atomic, not 16 scalar" \
+      "grep -c 'atomicrmw add ptr addrspace(3)' out/histogram.ll | tr -d ' '" "0"
 check "memcpy: one vector load + store" \
       "test \$(grep -cE 'load <8 x i32>|store <8 x i32>' out/memcpy.ll) -eq 2 && echo yes" "yes"
 check "memset: splat via shufflevector" \

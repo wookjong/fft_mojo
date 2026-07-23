@@ -37,6 +37,7 @@ from m2ndp import (
     local_uthread_id,
     group_size,
     atomic_add,
+    atomic_add_indexed,
     scratchpad,
 )
 
@@ -60,12 +61,17 @@ def histogram_init():
 
 @export
 def histogram_body(samples: UnsafePointer[Int32, MutAnyOrigin]):
-    """KERNELBODY: tally this µthread's samples into the core-local bins."""
-    var base = global_uthread_id() * UNROLL
+    """KERNELBODY: tally this µthread's samples into the core-local bins.
 
-    comptime for u in range(UNROLL):
-        var bin = Int(samples[base + u])
-        _ = atomic_add(Histogram.bins + bin, Int32(1))
+    One indexed vector atomic over the whole chunk, as in the reference:
+    load the samples, scale them to byte offsets, and let every lane hit its
+    own bin.
+    """
+    var base = global_uthread_id() * UNROLL
+    var chunk = (samples + base).load[width=UNROLL]()
+    _ = atomic_add_indexed(
+        Histogram.bins, chunk * 4, SIMD[DType.int32, UNROLL](1)
+    )
 
 
 @export
