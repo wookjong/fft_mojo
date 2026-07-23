@@ -1,0 +1,16 @@
+# The build context is copied into the image, so keep out anything large that
+# the image builds for itself.
+#
+# Git metadata is excluded too, the submodules' included: it is most of a
+# gigabyte, and the image is for building and running rather than for history.
+# Mount a checkout if you need git.
+build/
+out/
+toolchain/
+.git
+**/.git
+.github/
+**/__pycache__/
+**/*.pyc
+.mojo_cache/
+.claude/
