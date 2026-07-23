@@ -38,7 +38,7 @@ Benchmarks ported from
 ### LLVM baseline
 
 `./scripts/build-llvm.sh check`, against the pinned submodule (LLVM 23.1.0,
-`release/23.x`, RISC-V only, assertions on): **2596/2596 RISC-V CodeGen lit
+`release/23.x`, RISC-V only, assertions on): **2597/2597 RISC-V CodeGen lit
 tests pass.**
 
 The baseline before `FeatureVendorXM2ndp` was 2595/2595. Adding the feature
@@ -62,9 +62,9 @@ spelling at this level, and recovering the mapped address. In rough order of
 how much is blocked on each:
 
 1. **The four ID symbols** → register reads, marked `readnone` so they hoist
-2. **Scratchpad placement** — addrspace(3) globals currently lower to
-   `.comm` (ordinary `.bss`); the annotation does not survive to the object
-   file
+2. **Scratchpad placement** — the section is done: with `+xm2ndp`,
+   addrspace(3) globals land in `.spad` instead of `.comm`/`.bss`. Packing
+   several of them into one per-core window, AMDGPU-LDS style, is not done
 3. **Vector atomic** and **mask-to-bitmap** — no spelling exists; each needs
    its own intrinsic
 4. **FP atomic add** — expands to an LR/SC retry loop today

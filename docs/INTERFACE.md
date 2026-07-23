@@ -89,10 +89,37 @@ Address space 3 follows the GPU shared-memory convention. If M²NDP wants a
 different number, change it in `src/m2ndp.mojo`; ordinary memory stays in
 address space 0 as a plain `ptr`.
 
-### What is lost by the time it reaches the object file
+### Placement: `.spad`
 
-This is the part that needs backend work. Today the global lowers to an
-ordinary common symbol:
+With `+xm2ndp` on, an addrspace(3) global is emitted into a `.spad` section
+rather than into `.bss`:
+
+```asm
+.section .spad,"aw",@nobits
+```
+
+`.spad` is `SHT_NOBITS` with `SHF_ALLOC | SHF_WRITE` — on-chip memory that
+is uninitialized at load and occupies nothing in the object file, the same
+shape as `.bss`.
+
+Implemented as a `SelectSectionForGlobal` override in
+`RISCVELFTargetObjectFile`, which is the hook LLVM provides for exactly
+this. Returning a section other than `getBSSSection()` also steers
+`AsmPrinter` off its BSS-local path — otherwise the global would become
+`.local`/`.comm` before the section ever mattered.
+
+**The gate is `-mattr`, not the function attribute.** Globals are emitted
+outside any function, so there is no per-function subtarget to consult and
+the module-level one decides. `llc` therefore needs `-mattr=+xm2ndp` on the
+command line; the `+xm2ndp` that `m2ndp_target()` puts in `target-features`
+is not enough on its own. This is ordinary LLVM behaviour — function
+attributes are per-function overrides, the module target comes from the
+command line — and not something specific to this extension.
+
+Without the extension nothing changes: the address space keeps whatever it
+meant before, and the global still lowers to a common symbol.
+
+### What this looked like before
 
 ```asm
 .type  memory_blob_de5f15ab6daf7941,@object
@@ -103,15 +130,21 @@ auipc  s1, %pcrel_hi(memory_blob_de5f15ab6daf7941)
 addi   s1, s1, %pcrel_lo(.Lpcrel_hi0)
 ```
 
-`.comm` puts the buffer in `.bss` — ordinary memory. The addrspace(3)
-annotation survives only as far as LLVM IR; nothing in the object file says
-"scratchpad". Compare NVPTX, which emits `.shared .align 4 .b8 name[256]`.
+`.comm` put the buffer in `.bss` — ordinary memory. The addrspace(3)
+annotation survived only as far as LLVM IR; nothing in the object file said
+"scratchpad". This is still what a build without `+xm2ndp` produces, and
+what the addressing example further down shows.
 
 ### Decisions the backend has to make
 
-**1. Placement.** Emit addrspace(3) globals into scratchpad memory rather
-than `.bss`. This is the implementation task; the three terms below are the
-architecture decisions it depends on, and they are now settled.
+**1. Placement — done.** addrspace(3) globals reach a `.spad` section; see
+above. What is *not* done is assigning offsets within a per-core window, so
+several scratchpad globals in one module still each get their own symbol
+rather than being packed into one buffer. That is the AMDGPU LDS model
+(`AMDGPULowerModuleLDSPass.cpp`) and it is the next piece of this.
+
+The three terms below are the architecture decisions the placement work
+depends on, and they are now settled.
 
 **2. Addressing — one address, identical on every core.** The scratchpad
 base does not vary per core. So the form already in the output stands: the
