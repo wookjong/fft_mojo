@@ -21,13 +21,13 @@ Every symbol comes out as a C-ABI function taking no arguments.
 The IDs are `i32` and get sign-extended to `i64` at every use site, since
 the index type is 64-bit (`index_bit_width = 64`).
 
-### Loop invariance
+### Loop invariance — fixed
 
-These are opaque external calls today, so LLVM cannot hoist them out of
-loops — `__m2ndp_group_size` is re-called on every iteration of the SpMV
-accumulation loop. When the backend replaces them with intrinsics, mark
-them `readnone`/`speculatable` (or the intrinsic equivalent) so that stops
-happening. See EXAMPLES.md §3.3 for the concrete code.
+These used to be opaque external calls, which LLVM cannot hoist out of a
+loop: `__m2ndp_group_size` was re-called on every iteration of the SpMV
+accumulation loop. The intrinsics they now become are `IntrNoMem` and
+speculatable, so the read happens once before the loop and the loop body
+just uses the value.
 
 ### Group index
 
@@ -39,16 +39,37 @@ one across all cores, one within a core. Both come from the hardware — a
 resident on one NDP core. `local_uthread_id()` indexes into it,
 `group_size()` is its size, `group_id()` says which one it is.
 
-### Open: which registers carry the IDs
+### How the IDs arrive — live-in registers
 
-Because the values arrive in registers rather than being computed, the four
-symbols should lower to reads of reserved registers — `getReservedRegs` in
-`RISCVRegisterInfo.cpp` — rather than to new instructions. **Which four
-registers is still undecided**, and that blocks the lowering: there is
-nothing to read from until the ABI names them.
+The values are placed in registers when the microthread is spawned, so the
+four symbols lower to reads of those registers. They are **not reserved**:
+each is copied into a virtual register at function entry, after which the
+physical register goes back into the allocation pool. A kernel that never
+reads a value produces no copy at all.
 
-Nothing else waits on this. Registering the vendor feature so `-mattr=
-+xm2ndp` parses does not need it, and neither does the scratchpad work.
+The copy is anchored to function entry rather than to the point of the
+call, so a read from inside a loop still takes the value as it was on
+entry. That is what makes it safe for the hardware to write the register
+once and for anything to reuse it afterwards.
+
+What this replaced is worth stating, since it was the single largest cost
+in the generated code. A call in a leaf kernel needs a return address
+saved, argument registers evacuated, callee-saved registers to evacuate
+them into, and a frame to spill those. Measured across the benchmarks that
+use identity values:
+
+| | calls before | calls after | kernel frames before | after |
+|---|---|---|---|---|
+| `vector_add` | 1 | 0 | 1 | 0 |
+| `spmv` | 3 | 0 | 1 | 0 |
+| `histogram` | 5 | 0 | 3 | 0 |
+
+**Which register carries which value is provisional.** The assignment lives
+in `RISCVM2ndpArgInfo.h` and nowhere else, so settling the hardware ABI
+changes one table. The descriptor there also allows a value to arrive in
+memory, or in a bitfield of a register shared with another value — AMDGPU
+needs all three forms for the same problem, and being ready for them costs
+nothing.
 
 ## Scratchpad
 

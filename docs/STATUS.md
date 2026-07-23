@@ -38,7 +38,7 @@ Benchmarks ported from
 ### LLVM baseline
 
 `./scripts/build-llvm.sh check`, against the pinned submodule (LLVM 23.1.0,
-`release/23.x`, RISC-V only, assertions on): **3205/3205 RISC-V lit tests
+`release/23.x`, RISC-V only, assertions on): **3206/3206 RISC-V lit tests
 pass**, CodeGen and MC together.
 
 The CodeGen baseline before `FeatureVendorXM2ndp` was 2595/2595. Adding the
@@ -66,7 +66,10 @@ placement and addressing, synchronization, the two operations that have no
 spelling at this level, and recovering the mapped address. In rough order of
 how much is blocked on each:
 
-1. **The four ID symbols** → register reads, marked `readnone` so they hoist
+1. **The four ID symbols — done.** They lower to reads of live-in registers,
+   not to calls. Every kernel that used one lost its stack frame with the
+   call; the loop-invariance problem went with it. The register assignment
+   is provisional and lives in `RISCVM2ndpArgInfo.h`
 2. **Scratchpad placement** — the section is done: with `+xm2ndp`,
    addrspace(3) globals land in `.spad` instead of `.comm`/`.bss`. Packing
    several of them into one per-core window, AMDGPU-LDS style, is not done
@@ -89,9 +92,11 @@ launch group is resident on a core at a time, and the contents survive
 kernel launches within a task. Together those mean the scratchpad keeps a
 fixed address and needs one offset per global — AMDGPU's LDS model.
 
-One question is still open, and only item 1 waits on it: **which four
-registers carry the µthread IDs.** Registering the vendor feature and the
-scratchpad work can both start without it.
+No question blocks the remaining work. Which registers carry which values
+is still unsettled, but it stopped being a blocker once the assignment was
+confined to one table: a provisional choice can be measured now and
+corrected in one place later, the same bargain taken for the AMO
+encodings.
 
 ## 3. Toolchain constraint
 
