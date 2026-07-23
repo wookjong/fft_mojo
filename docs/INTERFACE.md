@@ -109,82 +109,95 @@ Address space 3 follows the GPU shared-memory convention. If M²NDP wants a
 different number, change it in `src/m2ndp.mojo`; ordinary memory stays in
 address space 0 as a plain `ptr`.
 
-### Placement: `.spad`
+### Placement and layout
 
-With `+xm2ndp` on, an addrspace(3) global is emitted into a `.spad` section
-rather than into `.bss`:
-
-```asm
-.section .spad,"aw",@nobits
-```
-
-`.spad` is `SHT_NOBITS` with `SHF_ALLOC | SHF_WRITE` — on-chip memory that
-is uninitialized at load and occupies nothing in the object file, the same
-shape as `.bss`.
-
-Implemented as a `SelectSectionForGlobal` override in
-`RISCVELFTargetObjectFile`, which is the hook LLVM provides for exactly
-this. Returning a section other than `getBSSSection()` also steers
-`AsmPrinter` off its BSS-local path — otherwise the global would become
-`.local`/`.comm` before the section ever mattered.
-
-**The gate is `-mattr`, not the function attribute.** Globals are emitted
-outside any function, so there is no per-function subtarget to consult and
-the module-level one decides. `llc` therefore needs `-mattr=+xm2ndp` on the
-command line; the `+xm2ndp` that `m2ndp_target()` puts in `target-features`
-is not enough on its own. This is ordinary LLVM behaviour — function
-attributes are per-function overrides, the module target comes from the
-command line — and not something specific to this extension.
-
-Without the extension nothing changes: the address space keeps whatever it
-meant before, and the global still lowers to a common symbol.
-
-### What this looked like before
+The scratchpad belongs to a task, so there is no fixed address to name. Each
+global becomes a constant offset from a base pointer the hardware hands the
+microthread at spawn:
 
 ```asm
-.type  memory_blob_de5f15ab6daf7941,@object
-.local memory_blob_de5f15ab6daf7941
-.comm  memory_blob_de5f15ab6daf7941,1024,4
-
-auipc  s1, %pcrel_hi(memory_blob_de5f15ab6daf7941)
-addi   s1, s1, %pcrel_lo(.Lpcrel_hi0)
+sw zero, -1024(a0)        # a0 = scratchpad base
 ```
 
-`.comm` put the buffer in `.bss` — ordinary memory. The addrspace(3)
-annotation survived only as far as LLVM IR; nothing in the object file said
-"scratchpad". This is still what a build without `+xm2ndp` produces, and
-what the addressing example further down shows.
+No address materialization at all — the offset lands in the access itself.
+
+The layout around the base is
+
+```
+[ globals ][ arguments ]
+           ^ base
+```
+
+Arguments come first from the base because every kernel reads them at its
+top and small positive offsets fit in a load's immediate. The globals sit
+below at negative offsets; they are reached inside loops, where an address
+computation would hoist out anyway.
+
+That ordering is also what keeps a global in the same place in every phase.
+`histogram_init` takes no arguments, `histogram_body` takes one — so
+anything placed *after* the arguments would sit at a different offset in
+each phase, and the phases would stop sharing it. Placing them before the
+base makes the offset depend only on the task.
+
+### Who decides the offsets, and why it is the compiler
+
+`RISCVM2ndpLowerScratchpad` assigns them, ordered by name so the result does
+not depend on the order globals happen to appear. The globals then collapse
+into one opaque block in `.spad`, which reserves the space and gives the
+section a size.
+
+Leaving this to the linker was the obvious alternative and does not work.
+Expressing "1024 bytes below the base" needs the size of the global area,
+and only whole-module code knows it — a symbol difference is not a
+relocatable expression, so the linker cannot be asked for it:
+
+```
+error: expected relocatable expression
+    lw a1, %lo(bins - __spad_arg_base)(a0)
+```
+
+Deciding in the compiler also removes relocations entirely. The offsets are
+plain constants.
+
+**This holds because one task is one module.** If a task were ever linked
+from several objects, no single compilation would see all the globals and
+the layout would have to move back to the linker — at the cost of the
+arguments-first ordering.
+
+### What the launcher needs
+
+Two things, and the linker script exports both:
+
+| symbol | meaning |
+|---|---|
+| `__m2ndp_spad_size` | size of the global area |
+| — | the launcher passes `base = region + __m2ndp_spad_size` and writes the task's arguments there |
+
+`scripts/m2ndp.lds` also declares the scratchpad as a 128 KiB memory region,
+so a task that asks for more fails at link time rather than overlapping
+something at run time:
+
+```
+lld: error: section '.spad' will not fit in region 'spad': overflowed by 1024 bytes
+```
 
 ### Decisions the backend has to make
 
-**1. Placement — done.** addrspace(3) globals reach a `.spad` section; see
-above. What is *not* done is assigning offsets within a per-core window, so
-several scratchpad globals in one module still each get their own symbol
-rather than being packed into one buffer. That is the AMDGPU LDS model
-(`AMDGPULowerModuleLDSPass.cpp`) and it is the next piece of this.
+**1. Placement — done.** addrspace(3) globals are laid out by the compiler
+and reach `.spad`; see above.
 
-The three terms below are the architecture decisions the placement work
-depends on, and they are now settled.
-
-**2. Addressing — one address, identical on every core.** The scratchpad
-base does not vary per core. So the form already in the output stands: the
-symbol keeps a single link-time address and accesses stay PC-relative, an
-`auipc`/`addi` pair against `%pcrel_hi`/`%pcrel_lo`. No scratchpad base
-register is needed, and no relocation work beyond point 1 — what has to
-change is where that address lands, not how it is computed.
+**2. Addressing — done, and not the way this document first recorded it.**
+It said the scratchpad base was the same on every core, so a single
+link-time address would do and no base register was needed. That followed
+from an earlier reading of the architecture. The scratchpad is per task and
+its base arrives in a register, so accesses are base-relative after all —
+which the note under point 3 had already flagged as the consequence if the
+assumption moved.
 
 **3. Instance scope — one instance per core, one launch group per core.**
 The scratchpad belongs to the NDP core and is shared by every µthread on it
 (Table 1 of the M²NDP paper). Concurrent programs on one core are out of
-scope by assumption, so "per core" and "per launch group" cannot diverge:
-the backend assigns exactly one offset per addrspace(3) global within the
-per-core window. That is AMDGPU's LDS model — see
-`AMDGPULowerModuleLDSPass.cpp`, not NVPTX.
-
-If that assumption is ever relaxed, point 2 falls with it. A base that
-differs per launch group defeats a fixed address even when it is uniform
-across cores, and accesses would have to become base-register-relative
-after all.
+scope by assumption, so "per core" and "per launch group" cannot diverge.
 
 **4. Lifetime — contents survive kernel launches within a task.**
 `histogram` already relies on this. It splits INIT/BODY/FINAL into three

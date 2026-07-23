@@ -70,9 +70,10 @@ how much is blocked on each:
    not to calls. Every kernel that used one lost its stack frame with the
    call; the loop-invariance problem went with it. The register assignment
    is provisional and lives in `RISCVM2ndpArgInfo.h`
-2. **Scratchpad placement** — the section is done: with `+xm2ndp`,
-   addrspace(3) globals land in `.spad` instead of `.comm`/`.bss`. Packing
-   several of them into one per-core window, AMDGPU-LDS style, is not done
+2. **Scratchpad — done.** Globals are laid out by the compiler into one
+   block in `.spad`, and each becomes a constant offset from the base
+   pointer the hardware supplies. An access is a single instruction with no
+   address materialization
 3. **Vector atomic — done.** Neither layer could express an *indexed* one:
    LLVM's vector `atomicrmw` is contiguous, and RVV's indexed AMOs were
    dropped before 1.0, so there was nothing standard to lower to either.
