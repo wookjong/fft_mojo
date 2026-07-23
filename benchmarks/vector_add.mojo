@@ -30,7 +30,3 @@ def vector_add(a: UnsafePointer[Int32, MutAnyOrigin],
                c: UnsafePointer[Int32, MutAnyOrigin]):
     var i = global_uthread_id() * W
     c.store(i, a.load[width=W](i) + b.load[width=W](i))
-
-
-def main():
-    pass

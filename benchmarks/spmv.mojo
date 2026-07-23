@@ -37,7 +37,3 @@ def spmv_row(values: UnsafePointer[Float32, MutAnyOrigin],
 
     # Combine without synchronizing.
     _ = atomic_add(y + row, acc)
-
-
-def main():
-    pass

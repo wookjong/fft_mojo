@@ -24,7 +24,3 @@ def memcpy(src: UnsafePointer[Int32, MutAnyOrigin],
            dst: UnsafePointer[Int32, MutAnyOrigin]):
     var i = global_uthread_id() * W
     dst.store(i, src.load[width=W](i))
-
-
-def main():
-    pass

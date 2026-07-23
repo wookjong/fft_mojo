@@ -54,7 +54,3 @@ def imdb_lt_int64(column: UnsafePointer[Int64, MutAnyOrigin],
         if mask[lane]:
             bits |= UInt8(1 << lane)
     bitmap[i] = bits
-
-
-def main():
-    pass
