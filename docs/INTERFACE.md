@@ -230,6 +230,28 @@ what the launcher writes — scalars and pointers — and a vector is something
 a kernel produces rather than something it is handed. A scalable vector
 could not be placed there at all, its size not being known until run time.
 
+### No calls, enforced
+
+The ABI has no calls, and that is now checked rather than merely observed.
+The ones worth catching are the ones nobody wrote — the compiler emits
+`memcpy` for a copy too large to expand, `__atomic_*` for an operation the
+hardware lacks, soft-float helpers for arithmetic it cannot do:
+
+```
+error: in function big_copy: M2NDP has no calls, but this requires 'memcpy'
+error: in function vec_atomic: M2NDP has no calls, but this requires '__atomic_load'
+```
+
+The callee is named because for a compiler-emitted call it is the only thing
+that explains why a kernel with no calls in it suddenly has one.
+
+An error, unlike the spill warning: a spill is expensive, but calling a
+function that is not on the device cannot work at all.
+
+This is the check the `softmax` and `layerNorm` ports will run into first.
+STATUS.md records that whether `exp`/`sqrt` route to the Sleef RVV library is
+unverified — if they do, it is as a call, and this will say so.
+
 ### No callee-saved registers, and a warning when it spills
 
 A kernel is launched, not called. Nothing resumes after it expecting its
