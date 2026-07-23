@@ -21,16 +21,24 @@ apt-get install -y device-tree-compiler binutils-riscv64-unknown-elf
 [smoke] checking
   RVV through the pipeline     OK
   indexed vector atomic        OK
+  all 64 instructions          OK
 ```
 
-Two things, and the split is deliberate. The first uses no M²NDP instruction
-at all — it exists so the pipeline (assemble → link → load → execute →
-report) is known good on its own, and a later failure means the extension
-rather than the plumbing.
+The split is deliberate. The first uses no M²NDP instruction at all — it
+exists so the pipeline (assemble → link → load → execute → report) is known
+good on its own, and a later failure means the extension rather than the
+plumbing.
 
-The second runs `m2ndp.vamoaddei32.v` for real. Four lanes hit bins 1, 1, 3
+The second runs `m2ndp.vamoaddei32.v` by hand. Four lanes hit bins 1, 1, 3
 and 0, so the array must come out `{1, 2, 0, 1}`; two lanes deliberately
-collide, which is the case a broken indexed atomic would get wrong.
+collide, which is what a broken indexed atomic gets wrong.
+
+The third is every instruction: 52 indexed vector atomics and 12 scalar
+floating-point ones, 188 checks. `sim/gen-tests.py` emits it, computing the
+expected results in Python — writing 64 of these by hand would be 64 chances
+to work the answer out the same wrong way the simulator does. **The exit code
+is the first test that disagreed**, so a failure names the instruction rather
+than saying only that something is wrong.
 
 ## The extension is loadable, not a fork
 
@@ -39,8 +47,8 @@ This was the open question, and the answer is better than expected.
 Spike's `extension_t` interface looked scalar-oriented — the bundled examples
 are a RoCC accelerator and a cache-flush instruction. But `processor_t::VU`
 is public and `vectorUnit_t::elt<T>()` gives element access, so an extension
-can implement a full indexed vector atomic without patching the simulator.
-`sim/ext/m2ndp_ext.cc` does exactly that in about eighty lines.
+can implement the whole set without patching the simulator.
+`sim/ext/m2ndp_ext.cc` does exactly that.
 
 So the submodule stays pristine and there is no rebase burden as Spike moves.
 
@@ -97,13 +105,27 @@ is.
   compiler does. This checks that the two halves agree with each other, not
   that either matches the architecture. That has to wait for a spec.
 
+## What the instructions do here
+
+The extension decides an instruction by (operation, index width) from the
+encoding and takes the *data* width from `vtype` at run time — the same split
+the indexed loads and stores use, and the reason 52 vector instructions need
+only 52 entries rather than 52 × 4.
+
+Floating-point arithmetic goes through softfloat rather than the host's
+`float`, so NaN propagation, signed zero and the exception flags agree with
+the rest of Spike instead of with whatever the host happens to do.
+
+`aq` and `rl` are decoded but have no effect. Nothing here reorders anything,
+so the four ordering variants of a scalar atomic are one entry.
+
 ## Next
 
 - Run a compiled kernel rather than hand-written assembly. Needs the loader
   to place arguments and set up microthread identity, which depends on the
   calling convention still being settled.
-- The other 65 instructions. They follow the shape in `m2ndp_ext.cc`; what
-  makes it mechanical is that `llvm-objdump` already disassembles all of
-  them, so its output is the oracle for the decoder.
 - A per-benchmark harness: generate inputs, run, compare against a reference
   computed on the host.
+- Disassembly. `get_disasms` returns nothing, so a trace prints raw bits for
+  these; `llvm-objdump` is what they get read with, but a trace is easier to
+  follow when it is all in one place.

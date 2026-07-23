@@ -57,10 +57,14 @@ make install
 # which m2ndp_ext.cc does.
 echo ""
 echo "[build] m2ndp extension"
+# The source tree is on the include path as well as the installed headers:
+# decode_macros.h, which has the floating-point conversions and NaN boxing,
+# is used internally by Spike and does not get installed.
 g++ -std=gnu++20 -shared -fPIC -O2 \
     -o "$BUILD/libm2ndp_ext.so" "$REPO/sim/ext/m2ndp_ext.cc" \
     -I"$PREFIX/include" -I"$PREFIX/include/riscv" \
     -I"$PREFIX/include/fesvr" -I"$PREFIX/include/softfloat" \
+    -I"$SRC/riscv" -I"$SRC/softfloat" -I"$SRC/fesvr" -I"$BUILD" \
     -L"$PREFIX/lib" -lriscv
 
 echo ""

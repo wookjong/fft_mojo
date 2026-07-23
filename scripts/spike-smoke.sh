@@ -23,6 +23,9 @@ LD="${RISCV_LD:-riscv64-unknown-elf-ld}"
 # Spike does not know about yet.
 FEATURES="+m,+a,+f,+d,+c,+v,+zvl128b"
 ISA="rv64gcv_zvl128b"
+# The generated tests reach f16, which the benchmarks do not.
+FEATURES_FP16="$FEATURES,+zfh"
+ISA_FP16="${ISA}_zfh"
 
 fail() { echo "  FAIL $*"; exit 1; }
 
@@ -40,6 +43,7 @@ trap 'rm -rf "$OUT"' EXIT
 # still illegal.
 run_test() {
     local name="$1" src="$2" feat="$3"; shift 3
+    local TEST_ISA="${TEST_ISA:-$ISA}"
     printf "  %-28s " "$name"
     if ! "$LLVM_MC" -triple=riscv64 -mattr="$feat" -filetype=obj \
             "$src" -o "$OUT/t.o" 2>"$OUT/err"; then
@@ -48,7 +52,7 @@ run_test() {
     if ! "$LD" -T sim/m2ndp.ld "$OUT/t.o" -o "$OUT/t.elf" 2>"$OUT/err"; then
         echo "FAIL (link)"; sed 's/^/    /' "$OUT/err"; return 1
     fi
-    timeout 60 "$SPIKE" "$@" --isa="$ISA" "$OUT/t.elf" > "$OUT/log" 2>&1
+    timeout 120 "$SPIKE" "$@" --isa="$TEST_ISA" "$OUT/t.elf" > "$OUT/log" 2>&1
     local rc=$?
     if [ "$rc" -eq 124 ]; then
         echo "FAIL (timed out -- tohost was never written)"; return 1
@@ -65,6 +69,13 @@ run_test "RVV through the pipeline" sim/smoke.s "$FEATURES" || FAILED=1
 if [ -f "$EXTLIB" ]; then
     run_test "indexed vector atomic" sim/smoke-vamo.s "$FEATURES,+xm2ndp" \
         --extlib="$EXTLIB" --extension=m2ndp || FAILED=1
+
+    # Every instruction, against values computed in Python rather than
+    # restated by hand. The exit code is the first test that disagreed, so a
+    # failure names the instruction instead of just saying something is wrong.
+    python3 sim/gen-tests.py > "$OUT/generated.s" || fail "generating tests"
+    TEST_ISA="$ISA_FP16" run_test "all 64 instructions" "$OUT/generated.s" \
+        "$FEATURES_FP16,+xm2ndp" --extlib="$EXTLIB" --extension=m2ndp || FAILED=1
 else
     echo "  indexed vector atomic       SKIP ($EXTLIB not built)"
 fi
