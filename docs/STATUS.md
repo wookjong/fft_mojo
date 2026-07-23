@@ -65,6 +65,16 @@ how much is blocked on each:
 4. **FP atomic add** — expands to an LR/SC retry loop today
 5. **Recovering `ADDR`/`OFFSET`** from `base[id * W]`
 
+The architecture questions that used to block this are settled and written
+up in INTERFACE.md: the scratchpad base is the same on every core, one
+launch group is resident on a core at a time, and the contents survive
+kernel launches within a task. Together those mean the scratchpad keeps a
+fixed address and needs one offset per global — AMDGPU's LDS model.
+
+One question is still open, and only item 1 waits on it: **which four
+registers carry the µthread IDs.** Registering the vendor feature and the
+scratchpad work can both start without it.
+
 ## 3. Toolchain constraint
 
 | Version | RISC-V backend | `stdlib_plugin` target field |

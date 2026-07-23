@@ -39,6 +39,17 @@ one across all cores, one within a core. Both come from the hardware — a
 resident on one NDP core. `local_uthread_id()` indexes into it,
 `group_size()` is its size, `group_id()` says which one it is.
 
+### Open: which registers carry the IDs
+
+Because the values arrive in registers rather than being computed, the four
+symbols should lower to reads of reserved registers — `getReservedRegs` in
+`RISCVRegisterInfo.cpp` — rather than to new instructions. **Which four
+registers is still undecided**, and that blocks the lowering: there is
+nothing to read from until the ABI names them.
+
+Nothing else waits on this. Registering the vendor feature so `-mattr=
++xm2ndp` parses does not need it, and neither does the scratchpad work.
+
 ## Scratchpad
 
 Unlike the symbols above, this one is not a mechanical substitution. The
@@ -98,22 +109,35 @@ annotation survives only as far as LLVM IR; nothing in the object file says
 
 ### Decisions the backend has to make
 
-1. **Placement.** Emit addrspace(3) globals into scratchpad memory rather
-   than `.bss`.
-2. **Addressing.** Accesses are currently PC-relative: the address is
-   materialized with an `auipc`/`addi` pair against `%pcrel_hi`/`%pcrel_lo`
-   (there is no `%hi`/`%lo` form in the output). PC-relative or not, the
-   symbol resolves to one link-time address shared by every core. If the
-   scratchpad base differs per core or per launch group, this cannot work
-   and the accesses must become relative to a scratchpad base register.
-3. **Instance scope.** One instance per NDP core, shared by every µthread on
-   it (Table 1 of the M²NDP paper). Whether a buffer is also distinct per
-   launch group is an architecture decision the IR does not express.
-4. **Lifetime.** Whether the contents survive across kernel launches within a
-   task. Nothing in the IR constrains this either way.
+**1. Placement.** Emit addrspace(3) globals into scratchpad memory rather
+than `.bss`. This is the implementation task; the three terms below are the
+architecture decisions it depends on, and they are now settled.
 
-Points 2–4 cannot be expressed from the workload side; they are contract
-terms that have to be agreed and then documented here.
+**2. Addressing — one address, identical on every core.** The scratchpad
+base does not vary per core. So the form already in the output stands: the
+symbol keeps a single link-time address and accesses stay PC-relative, an
+`auipc`/`addi` pair against `%pcrel_hi`/`%pcrel_lo`. No scratchpad base
+register is needed, and no relocation work beyond point 1 — what has to
+change is where that address lands, not how it is computed.
+
+**3. Instance scope — one instance per core, one launch group per core.**
+The scratchpad belongs to the NDP core and is shared by every µthread on it
+(Table 1 of the M²NDP paper). Concurrent programs on one core are out of
+scope by assumption, so "per core" and "per launch group" cannot diverge:
+the backend assigns exactly one offset per addrspace(3) global within the
+per-core window. That is AMDGPU's LDS model — see
+`AMDGPULowerModuleLDSPass.cpp`, not NVPTX.
+
+If that assumption is ever relaxed, point 2 falls with it. A base that
+differs per launch group defeats a fixed address even when it is uniform
+across cores, and accesses would have to become base-register-relative
+after all.
+
+**4. Lifetime — contents survive kernel launches within a task.**
+`histogram` already relies on this. It splits INIT/BODY/FINAL into three
+kernels over one shared scratchpad global, and would compute nothing if a
+launch reset the buffer. The backend must not treat a kernel boundary as
+the end of the buffer's live range.
 
 ### Why not `stack_allocation`
 
