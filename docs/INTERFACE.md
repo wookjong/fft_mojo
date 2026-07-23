@@ -248,7 +248,7 @@ Current settings (`m2ndp_target()` in `src/m2ndp.mojo`):
 ```
 triple          = "riscv64-unknown-elf"
 arch            = "generic-rv64"
-features        = "+m,+a,+f,+d,+v,+zvl128b"
+features        = "+m,+a,+f,+d,+v,+zvl128b,+xm2ndp"
 data_layout     = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128"
 index_bit_width = 64
 simd_bit_width  = 128
@@ -257,6 +257,34 @@ simd_bit_width  = 128
 Replace `arch`/`features`/`data_layout` once the real M²NDP architecture is
 settled. `+v` in `features` enables RVV and `+zvl128b` sets the minimum
 vector register length.
+
+### `+xm2ndp`
+
+`FeatureVendorXM2ndp` in our LLVM fork, following the `FeatureVendorXTHead*`
+pattern in `RISCVFeatures.td`. It carries no instructions yet; it exists so
+the name parses and later work has a predicate to gate on.
+
+Two toolchains see this string and they do not agree, which is worth being
+precise about:
+
+- **Mojo's LLVM does not know it** and says so on every build — `'+xm2ndp'
+  is not a recognized feature for this target (ignoring feature)`. Expected.
+  It drops the feature from its own subtarget but copies the string into the
+  `target-features` function attribute unchanged.
+- **Our llc does know it.** It builds the per-function subtarget from that
+  attribute, so the extension is live in codegen with no `-mattr` on the
+  command line. `+xbogusfeat` in the same position warns; `+xm2ndp` does
+  not — that difference is what shows the name is really being recognised.
+
+`verify.sh` checks that all six modules carry the marker, so a Mojo upgrade
+that stopped passing unknown features through would be caught rather than
+silently producing plain RISC-V.
+
+One thing it does *not* do: the `.attribute 5` ISA string in the assembly
+still reads `rv64i2p1`, because that directive comes from the command-line
+subtarget rather than from function attributes. That is pre-existing LLVM
+behaviour and not specific to this extension — `+m`/`+a`/`+v` are missing
+from it too. Pass `-mattr` to llc if the ISA string matters.
 
 ## Switching over once the backend exists
 

@@ -38,9 +38,14 @@ Benchmarks ported from
 ### LLVM baseline
 
 `./scripts/build-llvm.sh check`, against the pinned submodule (LLVM 23.1.0,
-`release/23.x`, RISC-V only, assertions on): **2595/2595 RISC-V CodeGen lit
-tests pass.** That is the number to diff against once `FeatureVendorXM2ndp`
-lands — anything failing afterwards is ours.
+`release/23.x`, RISC-V only, assertions on): **2596/2596 RISC-V CodeGen lit
+tests pass.**
+
+The baseline before `FeatureVendorXM2ndp` was 2595/2595. Adding the feature
+broke exactly one test — `features-info.ll`, which checks the full
+`-mattr=help` listing — and the baseline is what made that immediately
+attributable rather than a mystery. Updated, plus a new
+`attributes-m2ndp.ll`, giving 2596.
 
 The artifacts also round-trip through that build: `llc` accepts all six
 `out/*.ll` and `llvm-mc -filetype=obj` assembles what it produces. So the

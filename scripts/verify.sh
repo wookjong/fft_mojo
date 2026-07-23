@@ -28,6 +28,11 @@ check "RISC-V target" \
       "grep -h 'target triple' out/*.ll | sort -u | grep -c riscv64" "1"
 check "all 4 M2NDP symbols" \
       "grep -ho '@__m2ndp_[a-z_]*' out/*.ll | sort -u | wc -l | tr -d ' '" "4"
+# Mojo's own LLVM does not know xm2ndp and warns while dropping it from its
+# subtarget, but it copies the feature string into target-features verbatim.
+# That is how the marker reaches our llc, so check every module carries it.
+check "xm2ndp in target-features" \
+      "grep -lc 'target-features\"=\"[^\"]*+xm2ndp' out/*.ll | wc -l | tr -d ' '" "6"
 check "atomic combine, not a barrier" \
       "grep -c 'atomicrmw fadd' out/spmv.ll | tr -d ' '" "1"
 check "relaxed ordering" \

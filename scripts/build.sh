@@ -34,7 +34,7 @@ EMISSIONS="${EMISSION:-llvm asm}"
 # Target, matching m2ndp_target() in src/m2ndp.mojo.
 TRIPLE="riscv64-unknown-elf"
 CPU="generic-rv64"
-FEATURES="+m,+a,+f,+d,+v,+zvl128b"
+FEATURES="+m,+a,+f,+d,+v,+zvl128b,+xm2ndp"
 
 # Stage the benchmarks next to src/ in a temp dir so that `m2ndp` is on the
 # module search path.

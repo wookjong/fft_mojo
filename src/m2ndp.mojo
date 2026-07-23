@@ -204,11 +204,21 @@ def m2ndp_target() -> __mlir_type.`!kgen.target`:
     Builds the MLIR target attribute directly rather than going through
     std.sys.info's GPU vendor detection. Once the backend exists, swap
     arch/features for the real M²NDP ones.
+
+    `+xm2ndp` is the vendor extension registered in our LLVM fork. Mojo's
+    own LLVM does not know it and says so on every build:
+
+        '+xm2ndp' is not a recognized feature for this target (ignoring feature)
+
+    That warning is expected and harmless. The feature string is passed
+    through verbatim into the `target-features` function attribute, so the
+    marker survives into the IR and our llc — which does know it — picks it
+    up without needing -mattr on the command line.
     """
     return __mlir_attr[
         `#kgen.target<triple = "riscv64-unknown-elf", `,
         `arch = "generic-rv64", `,
-        `features = "+m,+a,+f,+d,+v,+zvl128b", `,
+        `features = "+m,+a,+f,+d,+v,+zvl128b,+xm2ndp", `,
         `data_layout = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128",`,
         `index_bit_width = 64,`,
         `simd_bit_width = 128`,
