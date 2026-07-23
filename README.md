@@ -17,6 +17,20 @@ git clone <this-repo> && cd mojo-m2ndp
 ./scripts/verify.sh         # check the artifacts
 ```
 
+Or take the development image, which carries both toolchains already built,
+and skip the setup entirely:
+
+```bash
+docker run --rm -it ghcr.io/psal-postech/mojo-m2ndp:main
+./scripts/build.sh && ./scripts/verify.sh
+./scripts/spike-smoke.sh    # run what came out — see docs/SIMULATION.md
+```
+
+Do not mount over `/work`: the toolchains live there and a mount hides them.
+The LLVM source is not in the image either — 2.6 GB that nothing above reads,
+since the compiler is already built. Rebuilding LLVM or running its lit suite
+needs a checkout.
+
 If Mojo is already installed, skip setup and point at it:
 
 ```bash

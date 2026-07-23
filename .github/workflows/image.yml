@@ -5,21 +5,58 @@ name: image
 # Pull requests build the image but do not push, so a broken Dockerfile is
 # caught without publishing anything. Pushes to main publish :main and :<sha>;
 # tags publish the tag name and :latest.
+#
+# Runs on a self-hosted runner. The image builds both toolchains, and LLVM
+# alone is around 25 minutes on 30 cores -- on a 4-core hosted runner that is
+# hours, and the source and build trees together want more disk than one has
+# free. A self-hosted runner also keeps the checkout and the layer cache
+# between runs, so the submodules are not re-cloned every time.
+#
+# The LLVM submodule is a private repository, so checkout needs SUBMODULE_TOKEN
+# -- a PAT with read access. Without it the job fails at checkout.
 
 on:
   push:
     branches: [main]
     tags: ['v*']
     paths:
+      # What goes into the image, not just what builds it. The toolchains are
+      # baked in, so what decides them belongs here too -- the build scripts,
+      # the Spike extension, and the submodule pointers. Leaving those out
+      # publishes an image whose compiler is not main's, which is worse than
+      # having no image at all.
       - Dockerfile
-      - scripts/setup.sh
+      - .dockerignore
       - .github/workflows/image.yml
+      - scripts/setup.sh
+      - scripts/build-llvm.sh
+      - scripts/build-spike.sh
+      - sim/ext/**
+      - third_party
   pull_request:
     paths:
+      # What goes into the image, not just what builds it. The toolchains are
+      # baked in, so what decides them belongs here too -- the build scripts,
+      # the Spike extension, and the submodule pointers. Leaving those out
+      # publishes an image whose compiler is not main's, which is worse than
+      # having no image at all.
       - Dockerfile
-      - scripts/setup.sh
+      - .dockerignore
       - .github/workflows/image.yml
+      - scripts/setup.sh
+      - scripts/build-llvm.sh
+      - scripts/build-spike.sh
+      - sim/ext/**
+      - third_party
   workflow_dispatch:
+    inputs:
+      build_toolchains:
+        description: >-
+          Build LLVM and Spike into the image. Off is for checking that the
+          Dockerfile itself is sound without waiting ~25 minutes; the image it
+          produces has no compiler in it.
+        type: boolean
+        default: true
 
 env:
   REGISTRY: ghcr.io
@@ -27,13 +64,18 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     permissions:
       contents: read
       packages: write
 
     steps:
+      # Both submodules have to be in the build context: the image cannot clone
+      # the private one without carrying a token in a layer.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -66,3 +108,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_TOOLCHAINS=${{ inputs.build_toolchains == false && '0' || '1' }}
