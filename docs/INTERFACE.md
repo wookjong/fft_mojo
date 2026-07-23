@@ -228,23 +228,56 @@ on a GPU is split into two kernels here.
 
 ## Operations with no spelling at this level
 
-Two operations in the reference kernels cannot be expressed from Mojo or
-from LLVM IR. Both were confirmed by a verifier rejecting them, not
-inferred, and neither can be fixed with a library wrapper — each needs a
-dedicated intrinsic, expressed as an `external_call` the way the ID symbols
-are.
+Two operations in the reference kernels have no usable spelling here.
+Neither can be fixed with a library wrapper — each needs a dedicated
+intrinsic, expressed as an `external_call` the way the ID symbols are.
+
+"No usable spelling" rather than "rejected": the mask-to-bitmap case really
+is missing, but the vector atomic is subtler than that and is the one worth
+reading carefully.
 
 **Vector atomic.** `histogram`'s reference kernel tallies 16 samples with a
 single `vamoaddei32.v` (indexed vector atomic); ours emits 16 scalar
-atomics. `pop.atomic.rmw` rejects a vector operand:
+atomics. This is the core operation of that benchmark.
+
+On the Mojo side `pop.atomic.rmw` rejects a vector operand:
 
 ```
 error: 'pop.atomic.rmw' op operand #0 must be pointer to whose type is an
 arithmetic dtype, but got '!kgen.pointer<...SIMD<f32, 4>>'
 ```
 
-and LLVM's `atomicrmw` likewise takes only scalars, so both layers agree.
-This is the core operation of that benchmark.
+LLVM IR is the more interesting half, and the reason it blocks is not the
+one you would guess. `atomicrmw` is *not* scalar-only — LLVM 23 takes a
+fixed vector under an `elementwise` flag, and the RISC-V backend compiles
+it:
+
+```llvm
+%old = atomicrmw elementwise add ptr %p, <4 x i32> %v monotonic, align 4
+```
+
+Two things make it the wrong tool anyway.
+
+- **It is contiguous, not indexed.** One pointer and one vector value: every
+  lane goes to the same buffer at consecutive offsets. `vamoaddei32.v`
+  sends each lane to its own address, which is the whole point when the
+  lanes are histogram bin indices. Nothing in LLVM IR expresses an atomic
+  scatter — `llvm.masked.scatter` carries no atomicity and there is no
+  atomic VP intrinsic.
+- **What it lowers to is not an atomic instruction.** On RISC-V it becomes
+  `__atomic_load` followed by a `__atomic_compare_exchange` retry loop over
+  the whole 16-byte vector — correct, but two libcalls and a runtime
+  dependency.
+
+The hardware side is empty too: RVV's vector AMOs were the draft `Zvamo`
+extension and were dropped before RVV 1.0 was ratified. There is no trace
+of `Zvamo` or `vamo*` anywhere in LLVM 23, and no vendor extension supplies
+them either — every ratified RISC-V atomic extension (`A`, `Zaamo`,
+`Zalrsc`, `Zabha`, `Zacas`) is scalar.
+
+So an indexed vector atomic has no standard spelling at either layer, and
+defining one as a vendor intrinsic under `HasVendorXM2ndp` is the intended
+path rather than a workaround.
 
 **Mask register to bitmap.** `imdb_lt_int64`'s reference finishes with
 `vmv.x.s` + `sb`, because an RVV mask register already holds one bit per

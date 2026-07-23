@@ -65,8 +65,11 @@ how much is blocked on each:
 2. **Scratchpad placement** — the section is done: with `+xm2ndp`,
    addrspace(3) globals land in `.spad` instead of `.comm`/`.bss`. Packing
    several of them into one per-core window, AMDGPU-LDS style, is not done
-3. **Vector atomic** and **mask-to-bitmap** — no spelling exists; each needs
-   its own intrinsic
+3. **Vector atomic** and **mask-to-bitmap** — each needs its own intrinsic.
+   Not because LLVM lacks a vector `atomicrmw` — it has one — but because
+   that one is contiguous, and what `histogram` needs is indexed. RVV's
+   indexed vector AMOs were dropped before 1.0, so there is nothing
+   standard to lower to either. See INTERFACE.md
 4. **FP atomic add** — expands to an LR/SC retry loop today
 5. **Recovering `ADDR`/`OFFSET`** from `base[id * W]`
 
