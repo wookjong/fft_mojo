@@ -57,10 +57,14 @@ SECTIONS {
   /* What the launcher reads to place the base pointer. */
   __m2ndp_spad_size = SIZEOF(.spad);
 
-  .text   : { *(.text .text.*) }     > dram :dram
-  .rodata : { *(.rodata .rodata.*) } > dram :dram
-  .data   : { *(.data .data.*) }     > dram :dram
-  .bss (NOLOAD) : { *(.bss .bss.* COMMON) } > dram :dram
+  .text   : { *(.text.init) *(.text .text.*) } > dram :dram
+  .rodata : { *(.rodata .rodata.*) *(.srodata .srodata.*) } > dram :dram
+  .data   : { *(.data .data.*) *(.sdata .sdata.*) } > dram :dram
+  /* The small-data sections belong here too. Left uncollected they become
+   * orphans and the linker puts them where it likes -- which was directly
+   * after .spad, at an address nothing loads, and only for the tasks whose
+   * .spad is non-empty. The other tasks worked by luck. */
+  .bss (NOLOAD) : { *(.bss .bss.* .sbss .sbss.* COMMON) } > dram :dram
 
   /* HTIF's mailbox. The host finds these by symbol name, so the section only
    * has to exist and be loaded; where it sits does not matter. */
