@@ -1,54 +1,210 @@
-# 백엔드 인터페이스 계약
+# Backend interface contract
 
-이 문서는 `src/m2ndp.mojo`가 생성하는 LLVM 레벨 인터페이스를 정의한다.
-백엔드 팀은 이 심볼들과 주소공간만 처리하면 되며, 워크로드 코드를 볼
-필요가 없다.
+This document defines the LLVM-level interface that `src/m2ndp.mojo`
+generates. The backend team only has to handle these symbols and this
+address space — they never need to read the workload code.
 
-## 심볼
+For what each of these looks like in context, see
+[`EXAMPLES.md`](EXAMPLES.md).
 
-모든 심볼은 인자 없는 C ABI 함수로 나온다.
+## Symbols
 
-| 심볼 | LLVM 시그니처 | 반환 | 의미 |
-|------|---------------|------|------|
-| `__m2ndp_uthread_id` | `declare i32 @__m2ndp_uthread_id()` | `i32` | 그룹 내 µthread 로컬 인덱스, `[0, group_size)` |
-| `__m2ndp_group_id` | `declare i32 @__m2ndp_group_id()` | `i32` | launch group 인덱스, `[0, grid_size)` |
-| `__m2ndp_group_size` | `declare i32 @__m2ndp_group_size()` | `i32` | 그룹당 µthread 수 |
-| `__m2ndp_grid_size` | `declare i32 @__m2ndp_grid_size()` | `i32` | 전체 그룹 수 (현재 워크로드 미사용) |
-| `__m2ndp_barrier` | `declare void @__m2ndp_barrier()` | `void` | 그룹 내 모든 µthread가 도달할 때까지 대기 |
+Every symbol comes out as a C-ABI function taking no arguments.
 
-### 전역 인덱스
+| Symbol | LLVM signature | Returns | Meaning |
+|--------|----------------|---------|---------|
+| `__m2ndp_local_uthread_id` | `declare i32 @__m2ndp_local_uthread_id()` | `i32` | index within the group, `[0, group_size)`; also the scratchpad slot |
+| `__m2ndp_global_uthread_id` | `declare i32 @__m2ndp_global_uthread_id()` | `i32` | index across all cores; identifies the mapped data |
+| `__m2ndp_group_size` | `declare i32 @__m2ndp_group_size()` | `i32` | µthreads sharing one scratchpad |
+| `__m2ndp_group_id` | `declare i32 @__m2ndp_group_id()` | `i32` | which group this µthread belongs to |
 
-`global_uthread_id()`는 별도 심볼이 아니라 다음으로 전개된다:
+The IDs are `i32` and get sign-extended to `i64` at every use site, since
+the index type is 64-bit (`index_bit_width = 64`).
 
+### Loop invariance
+
+These are opaque external calls today, so LLVM cannot hoist them out of
+loops — `__m2ndp_group_size` is re-called on every iteration of the SpMV
+accumulation loop. When the backend replaces them with intrinsics, mark
+them `readnone`/`speculatable` (or the intrinsic equivalent) so that stops
+happening. See EXAMPLES.md §3.3 for the concrete code.
+
+### Group index
+
+The two µthread IDs follow Arachne's `GlobalUThreadID()` / `LocalUThreadID()`:
+one across all cores, one within a core. Both come from the hardware — a
+µthread is handed its identity in scalar registers when spawned.
+
+"Group" means the set of µthreads sharing one scratchpad, i.e. those
+resident on one NDP core. `local_uthread_id()` indexes into it,
+`group_size()` is its size, `group_id()` says which one it is.
+
+## Scratchpad
+
+Unlike the symbols above, this one is not a mechanical substitution. The
+symbols say "replace this call with that instruction"; the scratchpad asks
+the backend to make placement and addressing decisions.
+
+### What the compiler emits
+
+Each `scratchpad[count, T, name=...]()` in a kernel becomes one named global
+in address space 3. The compiler assigns storage, so no offsets appear in
+source:
+
+```mojo
+var tile = scratchpad[MAX_GROUP, Float32, name="spmv_tile"]()
 ```
-group_id() * group_size() + uthread_id()
-```
-
-LLVM IR에서는 세 번의 call + `mul`/`add`로 나타난다. 백엔드가 전용
-명령을 갖고 있다면 `src/m2ndp.mojo`에서 단일 심볼로 바꿔도 된다.
-
-## 주소공간
-
-| 번호 | 용도 | 생성 형태 |
-|------|------|-----------|
-| `3` | 스크래치패드 (그룹 공유 메모리) | `@extern_ptr_syml = external addrspace(3) global [0 x T]` |
-| `0` | 일반 메모리 (기본) | 평범한 `ptr` |
-
-스크래치패드 접근은 `getelementptr` + `load`/`store`로 나온다:
-
 ```llvm
-%40 = getelementptr float, ptr addrspace(3) @extern_ptr_syml, i64 %7
+@spmv_tile._gpu_shared_mem = internal addrspace(3) global [64 x float] undef, align 4
+
+%40 = getelementptr inbounds float, ptr addrspace(3) @spmv_tile._gpu_shared_mem, i64 %7
       store float %39, ptr addrspace(3) %40, align 4
 %60 = load float, ptr addrspace(3) %40, align 4
 ```
 
-주소공간 3은 GPU shared memory 관례를 그대로 쓴 것이다. M²NDP 백엔드가
-다른 번호를 요구하면 `src/m2ndp.mojo`의 `scratchpad()`에서 `address_space`
-인자만 바꾸면 된다.
+Address space 3 follows the GPU shared-memory convention. If M²NDP wants a
+different number, change it in `src/m2ndp.mojo`; ordinary memory stays in
+address space 0 as a plain `ptr`.
 
-## 컴파일 타깃
+### What is lost by the time it reaches the object file
 
-현재 설정 (`src/m2ndp.mojo`의 `m2ndp_target()`):
+This is the part that needs backend work. Today the global lowers to an
+ordinary common symbol:
+
+```asm
+.type  spmv_tile._gpu_shared_mem,@object
+.local spmv_tile._gpu_shared_mem
+.comm  spmv_tile._gpu_shared_mem,256,4
+
+lui    a0, %hi(spmv_tile._gpu_shared_mem)
+flw    fa5, %lo(spmv_tile._gpu_shared_mem)(a0)
+```
+
+`.comm` puts the buffer in `.bss` — ordinary memory. The addrspace(3)
+annotation survives only as far as LLVM IR; nothing in the object file says
+"scratchpad". Compare NVPTX, which emits `.shared .align 4 .b8 name[256]`.
+
+### Decisions the backend has to make
+
+1. **Placement.** Emit addrspace(3) globals into scratchpad memory rather
+   than `.bss`.
+2. **Addressing.** Accesses are currently absolute `%hi`/`%lo` relocations.
+   If the scratchpad base differs per core or per launch group, absolute
+   addressing cannot work and these must become base-register-relative.
+3. **Instance scope.** One instance per NDP core, shared by every µthread on
+   it (Table 1 of the M²NDP paper). Whether a buffer is also distinct per
+   launch group is an architecture decision the IR does not express.
+4. **Lifetime.** Whether the contents survive across kernel launches within a
+   task. Nothing in the IR constrains this either way.
+
+Points 2–4 cannot be expressed from the workload side; they are contract
+terms that have to be agreed and then documented here.
+
+### Why not `stack_allocation`
+
+`std.memory.stack_allocation[N, T, address_space=SHARED]()` looks like the
+obvious spelling and **silently produces wrong code on this target.** Its
+promotion to an addrspace(3) global is gated on `is_gpu()`; on a RISC-V
+triple it falls through to a plain `alloca`, the address space is dropped
+during codegen, and the buffer ends up on the stack — private to each
+µthread, so nothing is shared and cross-µthread reductions read garbage.
+Observed: the frame grows by the buffer size (`addi sp, sp, -336`) and no
+scratchpad symbol appears in the assembly at all.
+
+`src/m2ndp.mojo` therefore open-codes the same `pop.global_alloc` operation
+that `stack_allocation` uses on GPU targets, bypassing the vendor check. Its
+signature deliberately matches `std._plugin`'s `stack_allocation_fn` hook so
+the body can move into a plugin overlay once a toolchain ships both a RISC-V
+backend and the plugin selector.
+
+## Synchronization
+
+There is none to map: the library has no barrier. µthreads are created and
+retired by hardware FGMT, so there is no well-defined set to synchronize.
+Two mechanisms take its place.
+
+**Atomics**, for combining within a kernel. These lower to LLVM `atomicrmw`
+rather than to an M²NDP symbol, so the backend sees a standard instruction:
+
+```llvm
+%40 = atomicrmw fadd ptr %39, float %38 monotonic, align 4
+%9  = atomicrmw add ptr addrspace(3) %8, i32 1 monotonic, align 4
+```
+
+`monotonic` is `Ordering.RELAXED` — accumulation does not need `seq_cst`,
+and the weaker ordering leaves fewer fences to emit.
+
+RISC-V's `+a` has integer AMOs but no floating-point atomic add, so
+`atomicrmw fadd` expands to an LR/SC retry loop:
+
+```asm
+.LBB0_5:
+	lr.w	a2, (s0)
+	bne	a2, a1, .LBB0_7
+	sc.w	a3, a0, (s0)
+	bnez	a3, .LBB0_5
+```
+
+Contended rows in SpMV pay for that. If M²NDP has a native FP atomic add,
+this is the pattern to match.
+
+There is no vector atomic; see "Operations with no spelling at this level".
+
+**Kernel boundaries**, for ordering between phases. Launches from
+`device_main` are synchronous, so anything that would need `__syncthreads()`
+on a GPU is split into two kernels here.
+
+## Operations with no spelling at this level
+
+Two operations in the reference kernels cannot be expressed from Mojo or
+from LLVM IR. Both were confirmed by a verifier rejecting them, not
+inferred, and neither can be fixed with a library wrapper — each needs a
+dedicated intrinsic, expressed as an `external_call` the way the ID symbols
+are.
+
+**Vector atomic.** `histogram`'s reference kernel tallies 16 samples with a
+single `vamoaddei32.v` (indexed vector atomic); ours emits 16 scalar
+atomics. `pop.atomic.rmw` rejects a vector operand:
+
+```
+error: 'pop.atomic.rmw' op operand #0 must be pointer to whose type is an
+arithmetic dtype, but got '!kgen.pointer<...SIMD<f32, 4>>'
+```
+
+and LLVM's `atomicrmw` likewise takes only scalars, so both layers agree.
+This is the core operation of that benchmark.
+
+**Mask register to bitmap.** `imdb_lt_int64`'s reference finishes with
+`vmv.x.s` + `sb`, because an RVV mask register already holds one bit per
+lane. `SIMD[bool, W]` has no conversion to an integer bitmask and `Int()`
+only instantiates at width 1, so the lanes must be tested and OR'd back one
+at a time. The compiler still produces the mask register, then spends ~15
+and/or instructions rebuilding the bit pattern it already had.
+
+## Recovering the mapped address
+
+Benchmarks index ordinary parameters:
+
+```llvm
+%4 = call i32 @__m2ndp_global_uthread_id()
+%6 = mul i64 %5, 8
+%7 = getelementptr inbounds i32, ptr %0, i64 %6
+```
+
+The hardware already handed the µthread the address it was mapped to
+(`ADDR`) and its byte offset within the pool (`OFFSET`), and kernel
+arguments arrive through the scratchpad. Turning `base[id * W]` back into
+that form is a backend optimization, and it is where the Arachne paper's
+22.2% static instruction reduction comes from.
+
+This is deliberately not surfaced in the source: the mapping is a calling
+convention, and putting it in benchmark code would bake the convention into
+every kernel and break the rule that `benchmarks/` survives the backend
+switchover unchanged.
+
+## Compile target
+
+Current settings (`m2ndp_target()` in `src/m2ndp.mojo`):
 
 ```
 triple          = "riscv64-unknown-elf"
@@ -59,30 +215,31 @@ index_bit_width = 64
 simd_bit_width  = 128
 ```
 
-실제 M²NDP 아키텍처가 정해지면 `arch`/`features`/`data_layout`을 교체한다.
-`features`의 `+v`가 RVV를, `+zvl128b`가 최소 벡터 레지스터 길이를 지정한다.
+Replace `arch`/`features`/`data_layout` once the real M²NDP architecture is
+settled. `+v` in `features` enables RVV and `+zvl128b` sets the minimum
+vector register length.
 
-## 백엔드 준비 후 전환
+## Switching over once the backend exists
 
-`external_call` → 실제 intrinsic으로 바꾸는 지점은 `src/m2ndp.mojo`
-한 파일이다. 예:
+`src/m2ndp.mojo` is the single file where `external_call` becomes a real
+intrinsic. For example:
 
 ```mojo
-# 현재 (백엔드 없음)
-def uthread_id() -> Int:
-    return Int(external_call["__m2ndp_uthread_id", Int32]())
+# now (no backend)
+def local_uthread_id() -> Int:
+    return Int(external_call["__m2ndp_local_uthread_id", Int32]())
 
-# 백엔드 준비 후
-def uthread_id() -> Int:
-    return Int(llvm_intrinsic["llvm.m2ndp.uthread.id", Int32]())
+# once the backend is ready
+def local_uthread_id() -> Int:
+    return Int(llvm_intrinsic["llvm.m2ndp.local.uthread.id", Int32]())
 ```
 
-워크로드 코드(`workloads/*.mojo`)는 수정하지 않는다.
+Benchmark code (`benchmarks/*.mojo`) does not change.
 
-## 생성물 확인
+## Inspecting the artifacts
 
 ```bash
 ./scripts/build.sh
-grep -h "declare.*__m2ndp" out/*.ll | sort -u   # 심볼 목록
-grep -c "addrspace(3)" out/spmv.ll               # 스크래치패드 사용
+grep -h "declare.*__m2ndp" out/*.ll | sort -u   # symbol list
+grep -c "addrspace(3)" out/spmv.ll               # scratchpad usage
 ```

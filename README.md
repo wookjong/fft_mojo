@@ -1,133 +1,208 @@
 # mojo-m2ndp
 
-Mojo로 M²NDP(RISC-V Vector 기반 µthread GPNDP) 워크로드를 작성하고,
-RISC-V/RVV 타깃으로 컴파일해 LLVM IR과 어셈블리를 얻는 PoC.
+A PoC for writing M²NDP (RISC-V Vector based µthread GPNDP) workloads in
+Mojo and compiling them for a RISC-V/RVV target to get LLVM IR and assembly.
 
-**백엔드 없이 동작한다.** M²NDP 고유 연산은 external symbol로 표현하므로,
-컴파일러 백엔드 작업과 워크로드/라이브러리 작업을 병렬로 진행할 수 있다.
-여기서 확정된 심볼 집합이 양쪽의 인터페이스 계약이다.
+**It works without a backend.** M²NDP-specific operations are expressed as
+external symbols, so compiler-backend work and workload/library work can
+proceed in parallel. The symbol set fixed here is the interface contract
+between the two.
 
 ## Quick start
 
 ```bash
 git clone <this-repo> && cd mojo-m2ndp
-./scripts/setup.sh          # Mojo 툴체인 설치 (./toolchain)
-./scripts/build.sh          # 워크로드 -> out/*.ll, out/*.s
-./scripts/verify.sh         # 산출물 검증
+./scripts/setup.sh          # install the Mojo toolchain (./toolchain)
+./scripts/build.sh          # benchmarks -> out/*.ll, out/*.s
+./scripts/verify.sh         # check the artifacts
 ```
 
-이미 Mojo가 설치돼 있다면 setup을 건너뛰고 경로만 지정한다:
+If Mojo is already installed, skip setup and point at it:
 
 ```bash
-export MOJO_ROOT=/path/to/modular    # bin/, lib/ 을 가진 디렉토리
+export MOJO_ROOT=/path/to/modular    # the directory holding bin/ and lib/
 ./scripts/build.sh
 ```
 
-## 무엇이 나오는가
+### Toolchain requirement
 
-`out/vadd_simd.s` (RISC-V 어셈블리):
+The toolchain must have a **RISC-V backend registered**. Not every Mojo
+nightly does — a build without it fails with:
+
+```
+error: no compiler backend is registered for target 'riscv64-unknown-unknown-elf';
+this target is not supported by this build
+```
+
+Pin a known-good build with `MOJO_VERSION=<version> ./scripts/setup.sh`;
+the repo targets `1.0.0b2.dev2026061203`. Which nightlies work, and why no
+current one is ideal, is in [`docs/STATUS.md`](docs/STATUS.md).
+
+## What comes out
+
+The benchmarks are ports of
+[M2NDP-public](https://github.com/PSAL-POSTECH/M2NDP-public)'s hand-written
+kernels, so each one can be read against the assembly it came from. Full
+annotated walkthrough in [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
+
+### vector_add — RVV vectorization
+
+`out/vector_add.s`:
 
 ```asm
 .attribute 5, "rv64i2p1_..._v1p0_..._zve32f1p0_zve64d1p0_zvl128b1p0..."
 
-call      __m2ndp_group_id            # M²NDP 인터페이스 심볼
-call      __m2ndp_group_size
-call      __m2ndp_uthread_id
-vsetivli  zero, 4, e32, m1, ta, ma    # RVV: VL=4, SEW=32, LMUL=1
-vle32.v   v8, (s2)                    # 벡터 로드
-vfadd.vv  v8, v8, v9                  # 벡터 FP 덧셈
-vse32.v   v8, (a0)                    # 벡터 스토어
+call      __m2ndp_global_uthread_id   # M²NDP interface symbol
+vsetvli   zero, a0, e32, m2, ta, ma   # RVV
+vle32.v   v8, (a1)                    # vector load
+vadd.vv   v8, v8, v10                 # vector add
+vse32.v   v8, (a2)                    # vector store
 ```
 
-`out/spmv.ll` (LLVM IR):
+The RVV backend inside the Mojo compiler is real and reachable purely
+through a hand-written target attribute. No backend work needed.
+
+### spmv — indirect access, atomic combine
+
+One group per row; its µthreads take a strided slice of the nonzeros.
+Indirect access (`x[col_idx[k]]`) is just a dependent load chain — no
+special construct needed:
 
 ```llvm
-target triple = "riscv64-unknown-unknown-elf"
-@extern_ptr_syml = external addrspace(3) global [0 x float], align 4
-
-%6  = call i32 @__m2ndp_uthread_id()
-      store float %39, ptr addrspace(3) %40      ; 스크래치패드 쓰기
-      call void @__m2ndp_barrier()                ; 그룹 배리어
-%60 = load float, ptr addrspace(3) %40           ; 스크래치패드 읽기
+%28 = load i32, ptr %27, align 4                     ; col_idx[k]
+%29 = sext i32 %28 to i64
+%30 = getelementptr inbounds float, ptr %2, i64 %29  ; &x[col_idx[k]]
+%32 = load float, ptr %30, align 4                   ; x[col_idx[k]]
+%33 = fmul contract float %31, %32
+%34 = fadd contract float %20, %33                   ; -> fmadd.s in asm
 ```
 
-## 구성
+The partial sums are combined with an atomic, not a barrier:
 
-```
-src/m2ndp.mojo        M²NDP primitive 라이브러리 + 컴파일 타깃 정의
-workloads/
-  vadd.mojo           µthread 인덱싱만 쓰는 최소 워크로드
-  vadd_simd.mojo      SIMD 연산 (RVV 벡터화 확인)
-  spmv.mojo           CSR SpMV — indirect access + 스크래치패드 + 배리어 + reduce
-scripts/
-  setup.sh            Mojo 툴체인 설치
-  env.sh              환경변수 (source 해서 사용)
-  build.sh            워크로드 컴파일 -> out/
-  verify.sh           산출물 검증
-docs/INTERFACE.md     백엔드 인터페이스 계약 상세
-out/                  생성물 (git 추적 안 함)
+```llvm
+%40 = atomicrmw fadd ptr %39, float %38 monotonic, align 4
 ```
 
-## 워크로드 작성 방식
+**M²NDP has no barrier.** µthreads are created and retired by hardware FGMT,
+so there is no well-defined set to synchronize; atomics combine within a
+kernel and kernel boundaries synchronize between them.
+
+Note `__m2ndp_group_size` is re-called on **every** loop iteration: an
+opaque external call cannot be proven loop-invariant. That is the real cost
+of the external-symbol approach, and it disappears once the symbols become
+intrinsics.
+
+### histogram — scratchpad across three phases
+
+Three phases of one kernel share a per-core bin array. Declaring the
+scratchpad at struct level is what keeps them on the same storage:
 
 ```mojo
-from m2ndp import uthread_id, group_id, group_size, group_barrier, scratchpad
+struct Histogram:
+    comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
+```
+```llvm
+@memory_blob_de5f15ab6daf7941 = internal addrspace(3) global [1024 x i8] zeroinitializer
 
-def spmv_row(values, col_idx, x, row_ptr, y):
-    var tile = scratchpad[DType.float32]()   # 그룹 공유 스크래치패드
-    var tid = uthread_id()
-    var row = group_id()                      # 그룹 하나가 행 하나 담당
-
-    var acc = Float32(0)
-    var k = Int(row_ptr[row]) + tid
-    while k < Int(row_ptr[row + 1]):
-        acc += values[k] * x[Int(col_idx[k])]  # indirect access
-        k += group_size()
-    tile[tid] = acc
-    group_barrier()
-
-    var stride = group_size() // 2             # 스크래치패드 tree reduction
-    while stride > 0:
-        if tid < stride:
-            tile[tid] = tile[tid] + tile[tid + stride]
-        group_barrier()
-        stride //= 2
-
-    if tid == 0:
-        y[row] = tile[0]
+; init:  store i32 0, ptr addrspace(3) %9
+; body:  %9  = atomicrmw add ptr addrspace(3) %8, i32 1 monotonic
+; final: %13 = atomicrmw add ptr %10, i32 %12 monotonic
 ```
 
-GPU 커널과 문법이 거의 같다. `std.gpu` 대신 `m2ndp`를 import하고,
-warp shuffle 대신 스크래치패드 기반 reduction을 쓴다.
+One global, all three functions indexing off it. Calling `scratchpad()`
+separately in each function would mint a fresh symbol per call site and the
+phases would silently use different memory.
 
-## 백엔드 인터페이스 계약
+## Layout
 
-워크로드 전체가 요구하는 것은 **심볼 4개 + 주소공간 1개**가 전부다.
-상세는 [`docs/INTERFACE.md`](docs/INTERFACE.md) 참조.
+```
+src/m2ndp.mojo        M²NDP primitive library + compile target definition
+benchmarks/           ports of M2NDP-public/examples/benchmarks
+  memcpy.mojo         vector load + store, nothing else
+  memset.mojo         scalar splat to a vector store
+  vector_add.mojo     confirms RVV vectorization
+  imdb_lt_int64.mojo  predicate scan -> bitmap (vmslt.vx)
+  spmv.mojo           CSR SpMV — indirect access + atomic combine
+  histogram.mojo      scratchpad shared across INIT/BODY/FINAL phases
+scripts/
+  setup.sh            install the Mojo toolchain
+  env.sh              environment variables (source it)
+  build.sh            compile benchmarks -> out/
+  verify.sh           check the artifacts
+docs/INTERFACE.md     the backend contract in detail
+docs/EXAMPLES.md      annotated source -> LLVM IR -> assembly walkthrough
+docs/STATUS.md        what works, what the backend must supply, open work
+out/                  generated artifacts (not tracked by git)
+```
 
-| 심볼 | 시그니처 | 의미 |
-|------|----------|------|
-| `__m2ndp_uthread_id` | `i32 ()` | 그룹 내 µthread 로컬 ID |
-| `__m2ndp_group_id` | `i32 ()` | launch group ID |
-| `__m2ndp_group_size` | `i32 ()` | 그룹당 µthread 수 |
-| `__m2ndp_barrier` | `void ()` | 그룹 내 µthread 배리어 |
+## Writing a benchmark
 
-| 주소공간 | 용도 |
-|----------|------|
-| `addrspace(3)` | 스크래치패드 (그룹 공유 메모리) |
+```mojo
+from m2ndp import global_uthread_id, atomic_add, scratchpad
 
-백엔드가 준비되면 `src/m2ndp.mojo`의 **함수 본체만** 실제 intrinsic으로
-교체한다. **워크로드 코드는 수정하지 않는다.**
+comptime BINS = 256
 
-## 동작 원리
+struct Histogram:
+    # Declared once at struct level so every phase shares one allocation.
+    comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
 
-두 가지가 이 PoC를 가능하게 한다.
+@export                               # kernels are entry points, not called
+def histogram_body(samples: UnsafePointer[Int32, MutAnyOrigin]):
+    var bin = Int(samples[global_uthread_id()])
+    _ = atomic_add(Histogram.bins + bin, Int32(1))
+```
 
-**1. 커스텀 컴파일 타깃을 직접 구성한다.**
-`std.gpu`의 하드웨어 판정(`is_nvidia_gpu()` 등)은 비공개 `std.sys.info`에
-묶여 있어 새 하드웨어를 그 체계에 등록할 수 없다. 그러나 커널 컴파일
-진입점이 받는 타깃 파라미터는 `!kgen.target` MLIR attribute이고, 이것은
-직접 작성할 수 있다. 판정 체계를 통째로 우회한다.
+Kernels take ordinary parameters and index them; recovering the hardware's
+mapped-address form is the compiler's job. `@export` is required — nothing
+in the module calls a kernel, so it would otherwise be eliminated as dead
+code.
+
+## Backend interface contract
+
+The entire benchmark set needs **4 symbols and 1 address space**. Details in
+[`docs/INTERFACE.md`](docs/INTERFACE.md).
+
+| Symbol | Signature | Meaning |
+|--------|-----------|---------|
+| `__m2ndp_local_uthread_id` | `i32 ()` | index within the group; also the scratchpad slot |
+| `__m2ndp_global_uthread_id` | `i32 ()` | index across all cores; identifies the mapped data |
+| `__m2ndp_group_size` | `i32 ()` | µthreads sharing one scratchpad |
+| `__m2ndp_group_id` | `i32 ()` | which group this µthread belongs to |
+
+| Address space | Use |
+|---------------|-----|
+| `addrspace(3)` | scratchpad (group-shared memory) |
+
+When the backend is ready, replace **only the function bodies** in
+`src/m2ndp.mojo` with real intrinsics. **Benchmark code does not change.**
+
+Beyond these symbols the backend also has to decide how addrspace(3) globals
+are placed and addressed, and two operations have no spelling at this level
+at all (vector atomic, mask-to-bitmap). See
+[`docs/INTERFACE.md`](docs/INTERFACE.md) for the contract and
+[`docs/STATUS.md`](docs/STATUS.md) for what is left to do.
+
+## How it works
+
+Two things make this PoC possible.
+
+**1. The compile target can be constructed by hand.**
+`std.gpu`'s hardware detection (`is_nvidia_gpu()` and friends) is locked
+inside the closed-source `std.sys.info`, so new hardware cannot be
+registered in that scheme. But the target parameter the kernel-compilation
+entry point takes is a `!kgen.target` MLIR attribute, and that can be
+written directly — bypassing the detection scheme entirely.
+
+The same trick covers stdlib routines that branch on the vendor check: where
+a routine takes a different path for GPUs, the library open-codes the MLIR
+operation that path emits. `scratchpad()` does exactly this with
+`pop.global_alloc`.
+
+(Newer stdlib releases add `std/_plugin`, a supported hook interface for
+registering a backend, selected by a `stdlib_plugin` field on the target
+attribute. No nightly yet ships it *and* a RISC-V backend — see the
+toolchain table above — but it is where this should eventually move, and the
+library's `scratchpad()` signature already matches the corresponding hook.)
 
 ```mojo
 def m2ndp_target() -> __mlir_type.`!kgen.target`:
@@ -139,26 +214,14 @@ def m2ndp_target() -> __mlir_type.`!kgen.target`:
     ]
 ```
 
-`features`의 `+v,+zvl128b`가 RVV를 켠다.
+`+v,+zvl128b` in `features` is what turns RVV on.
 
-**2. M²NDP 연산은 external symbol로 표현한다.**
-Mojo의 `llvm_intrinsic[...]`은 LLVM이 이미 아는 intrinsic만 받는다
-(없는 이름은 translation 단계에서 거부). 그래서 백엔드 이전 단계에서는
-`external_call`을 쓴다. LLVM IR에 `declare` + `call`로 남아 백엔드
-매핑 지점이 명확하다.
+**2. M²NDP operations are expressed as external symbols.**
+Mojo's `llvm_intrinsic[...]` only accepts intrinsics LLVM already knows;
+unknown names are rejected during translation. So before the backend
+exists, use `external_call`. It survives into the LLVM IR as `declare` +
+`call`, which makes the backend mapping points explicit.
 
-## 한계
+## Requirements
 
-1. 스크래치패드가 GPU shared와 같은 `addrspace(3)`. 백엔드가 다른 번호를
-   쓰면 `src/m2ndp.mojo`의 `scratchpad()`에서 바꾼다.
-2. `arch`가 `generic-rv64`. 실제 M²NDP 아키텍처 이름/features/벡터 길이로
-   교체 필요.
-3. µthread launch는 범위 밖. 이 PoC는 커널 본체만 다룬다. launch
-   (그리드/그룹 구성, 디스패치)는 M²NDP 런타임 또는 상위 DSL 담당.
-4. `external_call`은 실제 함수 호출로 나간다. 백엔드에서 intrinsic으로
-   바꾸면 인라인된 레지스터 읽기가 되어 사라진다.
-5. Sleef RVV 초월함수(`exp`/`sqrt` 등) 연결은 미검증.
-
-## 요구 사항
-
-`python3` + `pip`, `unzip`. Linux x86-64에서 검증됨.
+`python3` + `pip`. Verified on Linux x86-64.
