@@ -102,7 +102,7 @@ placement and addressing, synchronization, the two operations that have no
 spelling at this level, and recovering the mapped address. In rough order of
 how much is blocked on each:
 
-1. **The four ID symbols — done.** They lower to reads of live-in registers,
+1. **The ID symbols — done.** They lower to reads of live-in registers,
    not to calls. Every kernel that used one lost its stack frame with the
    call; the loop-invariance problem went with it. The register assignment
    is provisional and lives in `RISCVM2ndpArgInfo.h`
@@ -221,9 +221,9 @@ is no well-defined set to synchronize. An earlier version had a
 within a kernel; kernel boundaries order phases, since `device_main`
 launches synchronously.
 
-**IDs are primitives, not derived.** `global_uthread_id()` was computed as
-`group_id() * group_size() + uthread_id()`, a CUDA transliteration. The
-hardware hands a µthread its identity in scalar registers at spawn.
+**IDs are primitives, not derived.** `global_uthread_id()` was computed
+from a group index and a size, a CUDA transliteration. The hardware hands a
+µthread its identity in scalar registers at spawn.
 
 **Kernels take ordinary parameters.** Surfacing the calling convention
 (`kernel_arg(0)`, raw byte offsets) would bake it into every benchmark and

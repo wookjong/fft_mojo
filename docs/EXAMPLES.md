@@ -209,7 +209,6 @@ intrinsic, expressed the way the indexing symbols are.
 |---|---|---|
 | `local_uthread_id()` | `call i32 @__m2ndp_local_uthread_id()` | → ID read (must be hoistable) |
 | `global_uthread_id()` | `call i32 @__m2ndp_global_uthread_id()` | → ID read (must be hoistable) |
-| `group_size()` | `call i32 @__m2ndp_group_size()` | → ID read (**must** be hoistable; see 2.1) |
 | `group_id()` | `call i32 @__m2ndp_group_id()` | → ID read (must be hoistable) |
 | `scratchpad[N, T, name=...]()` | `@<name> = internal addrspace(3) global` | → place in scratchpad memory, not `.bss`; decide absolute vs. per-group base register |
 | `atomic_add()` | `atomicrmw ... monotonic` | → native atomic; `+a` has no FP AMO, which is what `famoadd` is for |
@@ -218,5 +217,5 @@ intrinsic, expressed the way the indexing symbols are.
 | index arithmetic | `base[id * W]` | → recover `ADDR`/`OFFSET` (see 1) |
 | *(missing)* vector atomic | — | needs its own intrinsic; unreachable from LLVM IR (3.3) |
 
-The four ID symbols are the entire calling-convention surface. Everything
+The three ID symbols are the entire calling-convention surface. Everything
 else is either a standard LLVM construct or an address-space annotation.

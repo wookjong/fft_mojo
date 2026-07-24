@@ -59,8 +59,8 @@ void __m2ndp_launch_parallel(void (*kernel)(void))
 /* One microthread per core, not one per resident slot: a serial kernel's work
  * is per-core -- zeroing this core's bins, folding them out again -- and doing
  * it once per slot would either repeat it or need the kernel to divide it up.
- * So group_size() is 1 here and local_uthread_id() is 0, which leaves a
- * strided walk over the scratchpad covering all of it. */
+ * So the microthread is number zero on its core and the scratchpad is all
+ * its own. */
 void __m2ndp_launch_serial(void (*kernel)(void))
 {
     set_args();
@@ -96,8 +96,8 @@ void __m2ndp_set_task_range(u64 base, u64 size)
         htif_exit(2);
     }
     /* Aligned to a whole round, so every core takes the same number of whole
-     * blocks. That is what makes group_size one number and local_uthread_id a
-     * dense index, and it also means no core is left without work -- which the
+     * blocks. That is what makes local_uthread_id a dense index, and it also
+     * means no core is left without work -- which the
      * hardware model tolerates and ours, running a finalizer on every core,
      * would get wrong. */
     if (base % (cur_topo.stride * cur_topo.cores)) {

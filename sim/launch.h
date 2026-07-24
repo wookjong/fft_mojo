@@ -29,7 +29,6 @@ typedef struct {
     u64 ndp_id;
     u64 local_uthread_id;
     u64 global_uthread_id;
-    u64 group_size;
     u64 group_id;
 } m2ndp_ids;
 
@@ -51,19 +50,18 @@ __attribute__((noinline)) static void m2ndp_launch(const m2ndp_ids *id,
     register u64 a3 __asm__("a3") = id->ndp_id;
     register u64 a4 __asm__("a4") = id->local_uthread_id;
     register u64 a5 __asm__("a5") = id->global_uthread_id;
-    register u64 a6 __asm__("a6") = id->group_size;
-    register u64 a7 __asm__("a7") = id->group_id;
+    register u64 a6 __asm__("a6") = id->group_id;
     /* Pinned to t0 and listed as written rather than clobbered: with every
      * other register spoken for there is nowhere else for it to live. */
     register void (*k)(void) __asm__("t0") = kernel;
 
     __asm__ volatile("jalr %[k]"
                      : "+r"(a0), "+r"(a1), "+r"(a2), "+r"(a3), "+r"(a4),
-                       "+r"(a5), "+r"(a6), "+r"(a7), "+r"(k)
+                       "+r"(a5), "+r"(a6), "+r"(k)
                      : [k] "r"(k)
-                     : "ra", "t1", "t2", "t3", "t4", "t5", "t6", "s1", "s2",
-                       "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
-                       "memory");
+                     : "ra", "a7", "t1", "t2", "t3", "t4", "t5", "t6", "s1",
+                       "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10",
+                       "s11", "memory");
 }
 
 /* Where a task's parameters go. They are one of its scratchpad globals, so the

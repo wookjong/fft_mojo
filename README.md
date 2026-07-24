@@ -315,9 +315,8 @@ The seam between workload and compiler is a set of names. Details in
 
 | Symbol | Signature | Meaning |
 |--------|-----------|---------|
-| `__m2ndp_local_uthread_id` | `i32 ()` | index within the group; also the scratchpad slot |
+| `__m2ndp_local_uthread_id` | `i32 ()` | index among the µthreads on this core |
 | `__m2ndp_global_uthread_id` | `i32 ()` | index across all cores; identifies the mapped data |
-| `__m2ndp_group_size` | `i32 ()` | µthreads sharing one scratchpad |
 | `__m2ndp_group_id` | `i32 ()` | which group this µthread belongs to |
 | `__m2ndp_declare_params` | `void (ptr addrspace(3))` | which global the host fills; the backend exports its offset and drops the call |
 

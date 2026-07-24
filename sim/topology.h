@@ -5,10 +5,10 @@
  * and the compiler never sees any of it: a kernel is handed a scratchpad base
  * and an identity and works from those.
  *
- * `local_uthread_id` and `group_size` have no counterpart in the reference.
- * They are what a kernel strides by when several microthreads share a core,
- * and they are well defined only because a launch takes an aligned range, so
- * every core's share is the same size.
+ * `local_uthread_id` has no counterpart in the reference: it is where a
+ * microthread sits among the ones sharing its core, which is well defined only
+ * because a launch takes an aligned range, so every core's share is the same
+ * size.
  */
 
 #ifndef M2NDP_SIM_TOPOLOGY_H
@@ -29,15 +29,13 @@ static inline m2ndp_ids m2ndp_id_of(const m2ndp_topology *t, u64 u,
         .group_id = core,
         .local_uthread_id = m2ndp_local_of(t, u),
         .global_uthread_id = u,
-        .group_size = t->per_core,
     };
     return id;
 }
 
 /* The identity for a serial launch: one microthread on each core, for the
  * kernels that walk the scratchpad rather than the data. It is alone on its
- * core, so its group is itself -- which is what makes a strided walk from
- * local_uthread_id() by group_size() cover the whole scratchpad. */
+ * core, so it is number zero there and the whole scratchpad is its own. */
 static inline m2ndp_ids m2ndp_id_serial(const m2ndp_topology *t, u64 core,
                                         void *regions, u64 stride)
 {
@@ -48,7 +46,6 @@ static inline m2ndp_ids m2ndp_id_serial(const m2ndp_topology *t, u64 core,
         .group_id = core,
         .local_uthread_id = 0,
         .global_uthread_id = core,
-        .group_size = 1,
     };
     return id;
 }

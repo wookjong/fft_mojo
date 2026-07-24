@@ -115,7 +115,7 @@ README's "How it works" covers this; the operationally relevant parts:
 
 ## Interface contract
 
-The whole benchmark set needs **4 symbols and 1 address space**. Details in
+The whole benchmark set needs **3 symbols and 1 address space**. Details in
 `docs/INTERFACE.md`; annotated codegen in `docs/EXAMPLES.md`; status and
 open work in `docs/STATUS.md`.
 
@@ -123,7 +123,6 @@ open work in `docs/STATUS.md`.
 |--------|-----------|
 | `__m2ndp_local_uthread_id` | `i32 ()` |
 | `__m2ndp_global_uthread_id` | `i32 ()` |
-| `__m2ndp_group_size` | `i32 ()` |
 | `__m2ndp_group_id` | `i32 ()` |
 
 The two IDs follow Arachne's `GlobalUThreadID()` / `LocalUThreadID()`.

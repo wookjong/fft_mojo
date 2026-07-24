@@ -237,8 +237,7 @@ Underneath, `__m2ndp_launch_parallel` and `__m2ndp_launch_serial` are the
 machine again. A `parallel` launch spreads one microthread per packet of the
 range over the cores; a `serial` launch runs one microthread on each core,
 which is what a kernel walking the scratchpad rather than the data needs —
-alone on its core, so a strided walk from `local_uthread_id()` by
-`group_size()` covers all of it. Both return only once every microthread has
+alone on its core, so the whole of it is that microthread's to walk. Both return only once every microthread has
 retired, so a launch is synchronous and the order written is the order that
 happens. Neither takes a size: how much work there is was settled when the
 task was launched.

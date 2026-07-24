@@ -6,7 +6,6 @@ docs/INTERFACE.md.
 
   __m2ndp_local_uthread_id()  -> i32   index within the group
   __m2ndp_global_uthread_id() -> i32   index across all cores
-  __m2ndp_group_size()        -> i32   µthreads sharing one scratchpad
   __m2ndp_group_id()          -> i32   which group
 
 Atomics are not symbols: they lower to LLVM `atomicrmw`. The scratchpad is not
@@ -183,8 +182,7 @@ def launch_serial[F: ImplicitlyDeletable, //, kernel: F]():
         launch_serial[Histogram.initialize]()
 
     Zeroing this core's scratchpad, folding it back out again. That microthread
-    is alone on its core, so `local_uthread_id()` is 0 and `group_size()` is 1,
-    leaving a strided walk that covers the whole of it.
+    is alone on its core, so it walks the whole of it.
 
     Synchronous, as `launch_parallel` is.
     """
@@ -461,12 +459,6 @@ def global_uthread_id() -> Int:
     Identifies the data this µthread was mapped to.
     """
     return Int(external_call["__m2ndp_global_uthread_id", Int32]())
-
-
-@always_inline
-def group_size() -> Int:
-    """Number of µthreads sharing one scratchpad."""
-    return Int(external_call["__m2ndp_group_size", Int32]())
 
 
 @always_inline
