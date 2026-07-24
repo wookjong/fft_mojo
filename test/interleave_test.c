@@ -32,14 +32,12 @@ int main(int argc, char **argv)
         if (*p == '#' || *p == '\n' || *p == '\0') continue;
 
         m2ndp_topology t;
-        unsigned long size;
         int used = 0;
-        if (sscanf(p, "%li %lu %lu %lu %lu :%n", (long *)&t.base, &size,
+        if (sscanf(p, "%li %lu %lu %lu %lu :%n", (long *)&t.base, &t.size,
                    &t.packet, &t.stride, &t.cores, &used) != 5 || !used) {
             fprintf(stderr, "cannot parse: %s", p);
             return 2;
         }
-        t.per_core = size / t.packet / t.cores;
 
         cases++;
         char *rest = p + used;
@@ -50,7 +48,7 @@ int main(int argc, char **argv)
             if (end == rest) break;
             rest = end;
 
-            if (u * t.packet >= size) {
+            if (u >= m2ndp_total(&t)) {
                 printf("FAIL case %d: more units listed than packets\n", cases);
                 bad++;
                 break;
@@ -63,9 +61,9 @@ int main(int argc, char **argv)
                 break;
             }
         }
-        if (u * t.packet != size) {
+        if (u != m2ndp_total(&t)) {
             printf("FAIL case %d: %lu packets listed, the range holds %lu\n",
-                   cases, u, size / t.packet);
+                   cases, u, (unsigned long)m2ndp_total(&t));
             bad++;
         }
     }

@@ -30,3 +30,10 @@
 
 # a single unit takes all of it
 0x40000000 256 32 256 1 : 0 0 0 0 0 0 0 0
+
+# a range that ends mid-packet: the loop condition is count * PACKET < size,
+# so the part-packet gets a microthread of its own (ndp_unit.cc:145)
+0x40000000 300 32 64 2 : 0 0 1 1 0 0 1 1 0 0
+
+# a stride wider than the whole range: one unit takes it, the rest get nothing
+0x40000000 256 32 4096 4 : 0 0 0 0 0 0 0 0

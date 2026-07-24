@@ -26,12 +26,16 @@ typedef struct {
     m2ndp_u64 packet;     /* bytes of the range one microthread is mapped to */
     m2ndp_u64 stride;     /* bytes handed to a core before moving to the next */
     m2ndp_u64 base;       /* where the task's range starts */
-    m2ndp_u64 per_core;   /* microthreads resident on each, once launched */
+    m2ndp_u64 size;       /* bytes of it */
 } m2ndp_topology;
 
+/* Microthreads the range comes to. A trailing part-packet gets one as well,
+ * as it does in the reference (ndp_unit.cc: while (count * PACKET_SIZE <
+ * size)). How many land on any one core is whatever the rule below makes it
+ * -- there is no promise of an even split. */
 static inline m2ndp_u64 m2ndp_total(const m2ndp_topology *t)
 {
-    return t->cores * t->per_core;
+    return (t->size + t->packet - 1) / t->packet;
 }
 
 /* The address microthread `u` was mapped to. */

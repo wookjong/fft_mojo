@@ -71,7 +71,10 @@ void __m2ndp_launch_parallel(void (*kernel)(void))
  * is per-core -- zeroing this core's bins, folding them out again -- and doing
  * it once per slot would either repeat it or need the kernel to divide it up.
  * So the microthread is number zero on its core and the scratchpad is all
- * its own. */
+ * its own.
+ *
+ * Every core runs it, including one the range left no work for: its bins were
+ * zeroed by the same launch and fold back out as zeros. */
 void __m2ndp_launch_serial(void (*kernel)(void))
 {
     set_args();
@@ -95,36 +98,11 @@ void __m2ndp_launch_serial(void (*kernel)(void))
 void __m2ndp_set_task_range(u64 base, u64 size)
 {
     /* Which core a microthread runs on is decided from the address it was
-     * mapped to, so the range's own address is part of the topology. */
+     * mapped to, so the range's own address is part of the topology. Nothing
+     * is demanded of either: a range that starts mid-round or ends mid-packet
+     * spreads lopsidedly, and lopsided is what the reference does too. */
     cur_topo.base = base;
-
-    if (cur_topo.stride % cur_topo.packet) {
-        say("the stride is not a whole number of packets\n");
-        htif_exit(2);
-    }
-    if (size % cur_topo.packet) {
-        say("the task's range is not a whole number of packets\n");
-        htif_exit(2);
-    }
-    /* Aligned to a whole round, so every core takes the same number of whole
-     * blocks. That is what makes local_uthread_id a dense index, and it also
-     * means no core is left without work -- which the
-     * hardware model tolerates and ours, running a finalizer on every core,
-     * would get wrong. */
-    if (base % (cur_topo.stride * cur_topo.cores)) {
-        say("the task's range does not start on a round of the interleave\n");
-        htif_exit(2);
-    }
-    /* And a whole number of rounds of it, so the last one is not partial and
-     * every core ends up with the same share. Without this the spread is
-     * lopsided -- with a stride wider than the range, one core takes all of it
-     * -- while per_core below would still claim an even split. */
-    u64 round = cur_topo.stride * cur_topo.cores;
-    if (size == 0 || size % round) {
-        say("the task's range is not a whole number of interleave rounds\n");
-        htif_exit(2);
-    }
-    cur_topo.per_core = size / cur_topo.packet / cur_topo.cores;
+    cur_topo.size = size;
 }
 
 int launcher_main(void)

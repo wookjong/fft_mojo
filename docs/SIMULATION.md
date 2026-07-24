@@ -237,10 +237,19 @@ Underneath, `__m2ndp_launch_parallel` and `__m2ndp_launch_serial` are the
 machine again. A `parallel` launch spreads one microthread per packet of the
 range over the cores; a `serial` launch runs one microthread on each core,
 which is what a kernel walking the scratchpad rather than the data needs —
-alone on its core, so the whole of it is that microthread's to walk. Both return only once every microthread has
-retired, so a launch is synchronous and the order written is the order that
-happens. Neither takes a size: how much work there is was settled when the
-task was launched.
+alone on its core, so the whole of it is that microthread's to walk. Both
+return only once every microthread has retired, so a launch is synchronous and
+the order written is the order that happens. Neither takes a size: how much
+work there is was settled when the task was launched.
+
+Nothing is asked of the range. Which core a microthread lands on is the
+address it was mapped to, divided by the interleave stride, modulo the core
+count — M2NDP-public's rule, and `test/interleave.cases` is the table that
+pins it. A range that starts mid-round, or ends mid-packet, or is narrower
+than one stride simply spreads unevenly; the reference tolerates that and so
+does this. A core the range leaves without work still runs the serial
+kernels, so a finalizer folding out a zeroed scratchpad contributes
+nothing.
 
 The topology — how many cores, how microthreads map to them, where the
 scratchpads are — is not passed in. It is state the machine already holds

@@ -129,11 +129,10 @@ struct Machine(Copyable, Movable):
         var packet = config.get("packet")
         if cores <= 0 or stride <= 0:
             raise Error("cores and stride must both be positive")
-        if stride % packet:
-            raise Error(
-                String("the stride (") + String(stride)
-                + ") is not a whole number of packets (" + String(packet) + ")"
-            )
+        # Nothing else is demanded of the stride. It is a width in bytes and
+        # the interleave divides an address by it; a stride that is not a
+        # whole number of packets simply splits one, as it does in the
+        # reference.
         if packet != PACKET:
             # The kernels were compiled against PACKET. A machine with another
             # granule would take the same code and hand each microthread the

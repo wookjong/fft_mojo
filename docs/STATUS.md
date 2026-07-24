@@ -56,9 +56,11 @@ checks the answer against one the host computes itself.
 | `softmax` | three kernels in order; scalar float atomics (`famomax.w`, `famoadd.w`) |
 | `layernorm` | both moments in one pass, then a rescale kernel |
 
-Checked at 1, 4 and 8 cores and several interleavings; the answers agree,
-which is what tests the per-core scratchpad claim. `.github/workflows/test.yml`
-runs the whole set on every push and pull request, at two configurations.
+Checked at 1 to 16 cores and interleave strides from 32 to 4096 bytes,
+including strides wider than a whole range and strides that split a packet;
+the answers agree, which is what tests the per-core scratchpad claim.
+`.github/workflows/test.yml` runs the whole set on every push and pull
+request, at two configurations.
 
 Three of the upstream directories are not ported. `naive_bayes`'s kernel body
 is a single vector load — the workload is unfinished upstream, so there is
