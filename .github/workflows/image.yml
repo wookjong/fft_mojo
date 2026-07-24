@@ -60,9 +60,35 @@ jobs:
     steps:
       # Both submodules have to be in the build context: the image cannot clone
       # the private one without carrying a token in a layer.
-      - uses: actions/checkout@v4
+      - id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
         with:
           submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+
+      # A self-hosted runner keeps its workspace, which is what makes the
+      # submodules cheap -- and what makes a wedged one permanent. A run
+      # cancelled inside `git submodule update` leaves the module store
+      # half-written, and every checkout after it fails the same way:
+      #
+      #   fatal: Unable to checkout '<sha>' in submodule path
+      #          'third_party/llvm-project'
+      #
+      # until someone logs into the machine. So throw the store away and clone
+      # it again, unshallowed in case what the first attempt could not reach
+      # was simply outside a depth-1 fetch. Only on the failing path: this is
+      # several gigabytes of LLVM history.
+      - if: steps.checkout.outcome == 'failure'
+        name: Clear a wedged submodule store
+        run: rm -rf .git/modules third_party/llvm-project third_party/riscv-isa-sim
+
+      - if: steps.checkout.outcome == 'failure'
+        name: Check out again, from nothing
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
           token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
 
       - uses: docker/setup-buildx-action@v3
