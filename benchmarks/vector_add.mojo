@@ -51,7 +51,7 @@ struct VectorAdd(NDPTask):
         p.c.store(i, p.a.load[width=W](i) + p.b.load[width=W](i))
 
     @staticmethod
-    def device_main(params: UnsafePointer[VectorAddParams, MutAnyOrigin]):
+    def device_main():
         """The task, as the device runs it: one kernel over the range.
 
         Launches are synchronous, so the order written is the order that

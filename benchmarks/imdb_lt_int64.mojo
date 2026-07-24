@@ -68,7 +68,7 @@ struct ImdbLtInt64(NDPTask):
         p.bitmap[i] = bits
 
     @staticmethod
-    def device_main(params: UnsafePointer[ImdbParams, MutAnyOrigin]):
+    def device_main():
         launch_parallel[ImdbLtInt64.body]()
 
 

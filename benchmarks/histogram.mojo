@@ -100,7 +100,7 @@ struct Histogram(NDPTask):
             i += group_size()
 
     @staticmethod
-    def device_main(params: UnsafePointer[HistogramParams, MutAnyOrigin]):
+    def device_main():
         """The task, as the device runs it.
 
         The body is `parallel`: one µthread per chunk of samples. The

@@ -219,7 +219,7 @@ trait NDPTask:
     """
 
     @staticmethod
-    def device_main(params: UnsafePointer[Self.Params, MutAnyOrigin]):
+    def device_main():
         """Which kernels run, in what order. One per task.
 
         Arguments arrive the way CUDA's do: one pointer to a block the host
@@ -253,22 +253,16 @@ trait NDPTask:
 
     @export
     @staticmethod
-    def __m2ndp_rt_launch_task(
-        base: Int,
-        size: Int,
-        params: UnsafePointer[NoneType, MutAnyOrigin],
-    ):
+    def __m2ndp_rt_launch_task(base: Int, size: Int):
         """The host's launch, arriving on the device.
 
         Controller code, so it may call and keep a stack. The range comes
         first: nothing can be launched until the microthread count is known.
-
-        The one cast in the system is here. This signature is fixed for every
-        task, so what the host fills arrives untyped; doing it once, where the
-        untypedness comes from, keeps it out of the kernels.
+        The parameters are not passed here -- the launcher already holds them
+        and puts them where a kernel reads them.
         """
         external_call["__m2ndp_set_task_range", NoneType](base, size)
-        Self.device_main(params.bitcast[Self.Params]())
+        Self.device_main()
 
     # ------------------------------------------------------------ launching
     #

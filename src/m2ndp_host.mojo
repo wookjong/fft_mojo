@@ -50,7 +50,7 @@ def _add_export_alias(ir: String, path: String) raises:
 
     with open(path, "a") as f:
         f.write(
-            String("\n@__m2ndp_rt_launch_task = alias void (i64, i64, ptr), ptr ")
+            String("\n@__m2ndp_rt_launch_task = alias void (i64, i64), ptr ")
             + name + "\n"
         )
 

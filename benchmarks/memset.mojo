@@ -43,7 +43,7 @@ struct Memset(NDPTask):
         p.dst.store(i, SIMD[DType.uint8, W](p.value[0]))
 
     @staticmethod
-    def device_main(params: UnsafePointer[MemsetParams, MutAnyOrigin]):
+    def device_main():
         launch_parallel[Memset.body]()
 
 

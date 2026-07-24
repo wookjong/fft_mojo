@@ -118,7 +118,8 @@ int launcher_main(void)
     cur_params_bytes = c.params_bytes;
 
     /* Over to the device. Nothing is read in or written out -- the pool is
-     * the same memory the host has. Only addresses cross. */
-    __m2ndp_rt_launch_task(c.base, c.size, (const u64 *)c.params);
+     * the same memory the host has. Only addresses cross, and the parameters
+     * go by way of the scratchpad rather than through this call. */
+    __m2ndp_rt_launch_task(c.base, c.size);
     return 0;
 }

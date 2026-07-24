@@ -75,7 +75,7 @@ struct Spmv(NDPTask):
         _ = atomic_add(y + row, acc)
 
     @staticmethod
-    def device_main(params: UnsafePointer[SpmvParams, MutAnyOrigin]):
+    def device_main():
         launch_parallel[Spmv.body]()
 
 

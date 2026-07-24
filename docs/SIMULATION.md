@@ -175,7 +175,7 @@ struct Histogram(NDPTask):
     def finalize(): ...
 
     @staticmethod
-    def device_main(params: UnsafePointer[HistogramParams, MutAnyOrigin]):
+    def device_main():
         launch_serial[Histogram.initialize]()
         launch_parallel[Histogram.body]()
         launch_serial[Histogram.finalize]()

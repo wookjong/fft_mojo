@@ -19,7 +19,7 @@
 #define M2NDP_SPAD_BYTES (64 * 1024)
 
 /* The task's entry point, compiled from the workload. */
-extern void __m2ndp_rt_launch_task(u64 base, u64 size, const u64 *params);
+extern void __m2ndp_rt_launch_task(u64 base, u64 size);
 
 /* How many microthreads the range comes to. Called before device_main. */
 void __m2ndp_set_task_range(u64 base, u64 size);

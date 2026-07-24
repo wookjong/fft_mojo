@@ -42,7 +42,7 @@ struct Memcpy(NDPTask):
         p.dst.store(i, p.src.load[width=W](i))
 
     @staticmethod
-    def device_main(params: UnsafePointer[MemcpyParams, MutAnyOrigin]):
+    def device_main():
         launch_parallel[Memcpy.body]()
 
 
