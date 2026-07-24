@@ -59,11 +59,16 @@ four cores at an interleave of eight, against one core.
 
 `.github/workflows/test.yml` runs all of this on every push and pull request:
 the artifacts and their checks, the smoke test, and every workload at two
-machine configurations. It runs on GitHub-hosted runners, pulling the image
-`image.yml` publishes rather than building anything -- the toolchains are
-already in it, and only building them needs the self-hosted runner. The
-workspace is the checkout being tested, with `build` linked to the image's
-tools, so what runs is the branch and not the copy baked into the image.
+machine configurations. The tests are on GitHub-hosted runners and build
+nothing; only the image is built, on the self-hosted runner, because the
+toolchains in it are 25 minutes and more disk than a hosted runner has free.
+
+It calls `image.yml` rather than naming a tag, and runs in the image that call
+returns, by digest. So a branch is tested against the image built from the
+branch -- a change to the compiler is tested with that compiler, and no run
+can end up against an image built from something else. The workspace is the
+checkout being tested, with `build` linked to the image's tools, so what runs
+is the branch and not the copy baked into the image.
 
 ## Launching from the host
 

@@ -2,19 +2,18 @@ name: test
 
 # Compile every workload and run it under Spike.
 #
-# Runs on GitHub-hosted runners. Nothing here builds a toolchain: the image
-# published by image.yml already carries Mojo, our LLVM and the simulator, so a
-# job pulls it and runs the scripts. Building is what needs the self-hosted
-# runner (25 minutes and a lot of disk); testing does not, and keeping it on
-# hosted runners means a pull request from anywhere gets checked.
+# The tests run on GitHub-hosted runners and build no toolchain: the image
+# carries Mojo, our LLVM and the simulator, so a job pulls it and runs the
+# scripts. Building that image is the part that needs the self-hosted runner
+# (25 minutes and a lot of disk), and it is the one job here that uses it.
+#
+# The image comes from image.yml, called rather than named: what the tests run
+# on is the image built from this same commit, by digest. Naming a tag instead
+# is how a branch ends up tested against an image built from something else --
+# including, for a while, an image with no compiler in it at all.
 #
 # The checkout is what is tested, not the copy baked into the image: the
 # workspace is its own directory and `build` is a link to the image's tools.
-#
-# A pull request that changes the compiler is tested against main's image --
-# image.yml builds such a PR to prove the Dockerfile is sound but does not
-# publish it. What that PR changes in the backend is covered by the LLVM lit
-# suite, which build-llvm.sh runs.
 
 on:
   push:
@@ -22,21 +21,34 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  IMAGE: ghcr.io/psal-postech/mojo-m2ndp:main
+# One run per branch. The image build holds the only self-hosted runner there
+# is, so a superseded run should not be sitting on it.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # The toolchains, and the image that carries them. Everything below runs
+  # inside what this publishes.
+  image:
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+
   # The artifacts: device IR and assembly for every workload, and the checks
   # that read them. This is where a codegen regression shows up -- an atomic
   # that stopped being one instruction, a kernel that grew a frame -- without
   # anything having to run.
   artifacts:
+    needs: image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
     container:
-      image: ghcr.io/psal-postech/mojo-m2ndp:main
+      image: ${{ needs.image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -71,12 +83,13 @@ jobs:
   # exercises the block-cyclic mapping -- with one core every microthread is on
   # it, so a mapping bug cannot show.
   run:
+    needs: image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
     container:
-      image: ghcr.io/psal-postech/mojo-m2ndp:main
+      image: ${{ needs.image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -108,12 +121,13 @@ jobs:
   # simulator load the vendor extension. Cheap, and it fails with a clearer
   # message than a workload does when the extension is the thing that broke.
   smoke:
+    needs: image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
     container:
-      image: ghcr.io/psal-postech/mojo-m2ndp:main
+      image: ${{ needs.image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
