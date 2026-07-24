@@ -13,6 +13,7 @@ from std.sys import argv, size_of
 from std.random import random_float64, random_si64, seed
 
 from m2ndp import (
+    PACKET,
     NDPTask,
     launch_parallel,
     PooledRange,
@@ -48,7 +49,6 @@ struct Spmv(NDPTask):
     """
 
     comptime Params = SpmvParams
-    comptime packet = size_of[Float32]()
 
     @staticmethod
     def body():
@@ -135,7 +135,7 @@ def main() raises:
     var threads = rows * PER_ROW
 
     var rc = Spmv.launch(
-        pool, PooledRange.of_bytes(values, threads * Spmv.packet),
+        pool, PooledRange.of_bytes(values, threads * PACKET),
         SpmvParams(values, col_idx, x, row_ptr, y),
     )
     if rc != 0:

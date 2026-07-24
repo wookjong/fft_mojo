@@ -15,10 +15,10 @@ is the same splat.
 
 from std.sys import argv
 
-from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
+from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import Pool
 
-comptime W = 32   # uint8 lanes per chunk
+comptime W = PACKET   # uint8 lanes in one packet
 
 
 @fieldwise_init
@@ -34,7 +34,6 @@ struct MemsetParams(Movable):
 
 struct Memset(NDPTask):
     comptime Params = MemsetParams
-    comptime packet = W   # W uint8 lanes is W bytes
 
     @staticmethod
     def body():

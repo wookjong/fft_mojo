@@ -70,7 +70,7 @@ _ = Histogram.launch(PooledRange.over(samples),
 
 A launch takes what it is mapped over and what it is given, and nothing else.
 `PooledRange` is the region of the pool the task covers -- divided by the
-task's packet, that is the microthread count -- and saying it as
+machine's packet, that is the microthread count -- and saying it as
 `PooledRange.over(samples)` beats two bare integers whose meaning a reader has
 to reconstruct.
 

@@ -16,7 +16,7 @@
  * Real hardware interleaves to spread a task's data across cores rather than
  * leaving one core with all of it, so `interleave` is the knob that says how
  * finely. It counts microthreads, not bytes -- how much data one microthread
- * takes is the task's packet.
+ * takes is the machine's packet.
  *
  * What varying it is good for: the answer must not depend on it. A benchmark
  * that gives one result at one core and another at four has a bug -- most

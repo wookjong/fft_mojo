@@ -32,10 +32,11 @@ Closing this needs a primitive, not a rewrite of the benchmark.
 from std.sys import argv, size_of
 from std.random import random_si64, seed
 
-from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
+from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import Pool
 
-comptime W = 8   # int64 lanes per chunk; one bitmap byte covers exactly these
+comptime W = PACKET // size_of[Int64]()   # lanes in one packet;
+                                          # one bitmap byte covers them
 
 
 @fieldwise_init
@@ -51,7 +52,6 @@ struct ImdbParams(Movable):
 
 struct ImdbLtInt64(NDPTask):
     comptime Params = ImdbParams
-    comptime packet = W * size_of[Int64]()
 
     @staticmethod
     def body():

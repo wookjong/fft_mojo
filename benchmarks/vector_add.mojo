@@ -22,10 +22,10 @@ not the workload's.
 from std.sys import argv, size_of
 from std.random import random_si64, seed
 
-from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
+from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import Pool
 
-comptime W = 8   # int32 lanes per chunk, one packet's worth
+comptime W = PACKET // size_of[Int32]()   # lanes in one packet
 
 
 @fieldwise_init
@@ -42,7 +42,6 @@ struct VectorAdd(NDPTask):
     # One packet is one chunk: W int32 lanes. Written in terms of W so it
     # cannot drift from what the kernel indexes by.
     comptime Params = VectorAddParams
-    comptime packet = W * size_of[Int32]()
 
     @staticmethod
     def body():

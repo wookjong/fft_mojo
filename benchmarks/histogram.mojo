@@ -34,6 +34,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import (
+    PACKET,
     NDPTask,
     launch_parallel,
     launch_serial,
@@ -48,7 +49,7 @@ from m2ndp import (
 from m2ndp_host import Pool
 
 comptime BINS = 256
-comptime UNROLL = 16
+comptime UNROLL = PACKET // size_of[Int32]()   # samples in one packet
 
 
 @fieldwise_init
@@ -65,7 +66,6 @@ struct Histogram(NDPTask):
 
     # One packet is UNROLL samples. In terms of UNROLL so it stays in step
     # with what the body loads.
-    comptime packet = UNROLL * size_of[Int32]()
 
     # Declared once, shared by all three kernels.
     comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()

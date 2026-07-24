@@ -89,10 +89,12 @@ check "device_main: 1 parallel + 2 serial launches" \
 check "task exports only its launch entry" \
       "grep -c '^define dso_local[^@]*@[a-z_]' out/histogram.ll | tr -d ' '" "1"
 # One load and one store in the kernel, and nothing else.
+# Width-agnostic: the lane count follows PACKET, and what is being checked is
+# that the kernel is one load and one store, not how wide they are.
 check "memcpy: one vector load, one store" \
-      "test \$(grep -c 'load <8 x i32>' out/memcpy.ll) -eq \$(grep -c 'store <8 x i32>' out/memcpy.ll) && grep -c 'load <8 x i32>' out/memcpy.ll | tr -d ' '" "1"
+      "test \$(grep -cE 'load <[0-9]+ x i32>' out/memcpy.ll) -eq \$(grep -cE 'store <[0-9]+ x i32>' out/memcpy.ll) && grep -cE 'load <[0-9]+ x i32>' out/memcpy.ll | tr -d ' '" "1"
 check "memset: splat via shufflevector" \
-      "grep -q 'shufflevector <32 x i8>' out/memset.ll && echo yes" "yes"
+      "grep -qE 'shufflevector <[0-9]+ x i8>' out/memset.ll && echo yes" "yes"
 # The assembly is now our llc's, so it shows the M2NDP lowering rather than
 # what a stock LLVM would have made of the same IR. These three could not be
 # checked at all while out/*.s came from the frontend's own backend.

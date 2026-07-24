@@ -69,7 +69,7 @@ struct PooledRange(Copyable, Movable):
     """Byte offset into the pool where this task's work starts."""
 
     var size: Int
-    """Bytes of it. Divided by the task's packet, this is the microthread
+    """Bytes of it. Divided by the machine's packet, this is the microthread
     count."""
 
     @staticmethod
@@ -90,6 +90,20 @@ struct PooledRange(Copyable, Movable):
         return PooledRange(Int(at), n)
 
 
+comptime PACKET = 64
+"""Bytes of a task's range one microthread is mapped to.
+
+The hardware's granule, not a workload's: a kernel is written against it, so
+it appears as a width here rather than a choice a task makes. `machine.conf`
+carries the same number and `launch` refuses a machine that disagrees --
+kernels compiled for one granule would silently get the wrong microthread
+count on another.
+
+A constant rather than read from the config because a SIMD width has to be
+known at compile time, which a file read cannot be.
+"""
+
+
 @fieldwise_init
 struct Machine(Copyable, Movable):
     """The NDP hardware a run is modelled on.
@@ -105,6 +119,7 @@ struct Machine(Copyable, Movable):
 
     var cores: Int
     var interleave: Int
+    var packet: Int
 
     @staticmethod
     def from_config() raises -> Machine:
@@ -112,9 +127,18 @@ struct Machine(Copyable, Movable):
         var config = Config.load()
         var cores = config.get("cores")
         var interleave = config.get("interleave")
+        var packet = config.get("packet")
         if cores <= 0 or interleave <= 0:
             raise Error("cores and interleave must both be positive")
-        return Machine(cores, interleave)
+        if packet != PACKET:
+            # The kernels were compiled against PACKET. A machine with another
+            # granule would take the same code and hand each microthread the
+            # wrong slice, so say so rather than compute a wrong answer.
+            raise Error(
+                String("this build's kernels are compiled for packet ")
+                + String(PACKET) + ", but the machine says " + String(packet)
+            )
+        return Machine(cores, interleave, packet)
 
 
 # --------------------------------------------------------------- launching
@@ -165,9 +189,10 @@ def launch_serial[F: ImplicitlyDeletable, //, kernel: F]():
 trait NDPTask:
     """What a task has to provide, and what it gets for free.
 
-    Conforming is the whole interface: declare `device_main` and the packet
-    size its kernels are written against, and the task gains both the runtime
-    entry point the host launches it through and the `launch` that reaches it.
+    Conforming is the whole interface: declare `Params` and `device_main`, and
+    the task gains both the runtime entry point the host launches it through
+    and the `launch` that reaches it. The granule its kernels are written
+    against is not among them -- that is `PACKET`, the hardware's.
 
     `device_main` says which kernels run and in what order, through
     `launch_parallel` and `launch_serial`. A launch names a kernel and nothing
@@ -191,18 +216,6 @@ trait NDPTask:
     declare. The host allocates from the pool and fills the block; the kernels
     read the same declaration on the device. One declaration for both ends
     leaves them no order to disagree about.
-    """
-
-    comptime packet: Int
-    """Bytes of the task's range one microthread is mapped to.
-
-    The granule the parallel kernel is written against, in bytes. The range
-    divided by this is the microthread count.
-
-    Required rather than defaulted, and best written in terms of the same
-    constant the kernel uses, so the two cannot drift:
-
-        comptime packet = W * size_of[Int32]()
     """
 
     comptime target: __mlir_type.`!kgen.target` = m2ndp_target()
@@ -323,7 +336,7 @@ trait NDPTask:
         and no parameter carries a direction.
 
         The device code is compiled here for the target the task declares.
-        `region` divided by the task's packet is the microthread count, and
+        `region` divided by the machine's packet is the microthread count, and
         the hardware comes from config/machine.conf.
 
         Returns the simulator's exit code: 0 finished, 2 launcher error, 3 a
@@ -374,7 +387,7 @@ trait NDPTask:
                 + String(pool.base()) + "," + String(pool.bytes())
                 + " --isa=" + tc.isa + " " + elf + " "
                 + String(machine.cores) + " " + String(machine.interleave) + " "
-                + String(Self.packet) + " " + String(region.base) + " "
+                + String(machine.packet) + " " + String(region.base) + " "
                 + String(region.size) + " " + String(Int(block)) + " "
                 + String(nbytes)
             )

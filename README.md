@@ -209,6 +209,8 @@ out/                  generated artifacts (not tracked by git)
 One file, three parts: what the host passes, the task, and the host code.
 
 ```mojo
+comptime UNROLL = PACKET // size_of[Int32]()   # samples in one packet
+
 @fieldwise_init
 struct HistogramParams(Movable):
     var samples: UnsafePointer[Int32, MutAnyOrigin]   # plain pointers:
@@ -216,7 +218,6 @@ struct HistogramParams(Movable):
 
 struct Histogram(NDPTask):
     comptime Params = HistogramParams             # what the host fills in
-    comptime packet = UNROLL * size_of[Int32]()   # bytes one µthread takes
     # Declared once at struct level so every kernel shares one allocation.
     comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
 
@@ -255,8 +256,10 @@ rather than an argument to it, which is what keeps the launch symbols inside
 the library -- `external_call` takes a function only where it is named at the
 call site, and a parameter is where it keeps that name.
 
-What a benchmark never says is what hardware it runs on. That is
-`config/machine.conf`, which the runtime reads; pointing
+What a benchmark never says is what hardware it runs on -- not the core count,
+not the interleave, and not the packet its kernels index by, which is `PACKET`
+and comes with the library. That is all `config/machine.conf`, which the
+runtime reads; pointing
 `M2NDP_MACHINE_CONFIG` at another description is how the same program is
 shown to give the same answer on a different machine.
 
