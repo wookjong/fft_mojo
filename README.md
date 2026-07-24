@@ -90,10 +90,10 @@ ld        a1, 0(a0)                   # the task's parameters, from the
 ld        a2, 8(a0)                   #   scratchpad -- a0 being the base
 ld        a0, 16(a0)                  #   the hardware gave
 sext.w    a5, a5                      # a5 IS global_uthread_id -- no call
-slli      a5, a5, 5
-vsetivli  zero, 8, e32, m2, ta, ma    # RVV
+slli      a5, a5, 6                   # x 64: one packet
+vsetivli  zero, 16, e32, m4, ta, ma   # RVV, 16 int32 lanes = one packet
 vle32.v   v8, (a1)
-vadd.vv   v8, v8, v10
+vadd.vv   v8, v8, v12
 vse32.v   v8, (a0)
 ret                                   # no frame: a kernel preserves nothing
 ```
@@ -134,10 +134,9 @@ the extension gave it `famoadd.w`.
 `__m2ndp_group_size` used to be re-called on every loop iteration -- an
 opaque external call cannot be proven loop-invariant -- which was the real
 cost of the external-symbol approach. It is a live-in register now, so the
-loop reads it once. The three calls left in `out/spmv.s` are all
-controller-side -- `device_main`, the launch inside it, and the range the
-runtime sets first -- and none is in a kernel, where a call is rejected
-outright.
+loop reads it once. Every call left in `out/spmv.s` is controller-side -- the
+launch and the range the runtime sets before it -- and none is in a kernel,
+where a call is rejected outright.
 
 ### histogram — scratchpad across three kernels, and an indexed vector atomic
 
@@ -156,9 +155,11 @@ struct Histogram(NDPTask):
 ; final: %13 = atomicrmw add ptr %10, i32 %12 monotonic
 ```
 
-One global, all three kernels indexing off it. Calling `scratchpad()`
-separately in each would mint a fresh symbol per call site and they would
-silently use different memory.
+One global for the bins, all three kernels indexing off it. Calling
+`scratchpad()` separately in each would mint a fresh symbol per call site and
+they would silently use different memory. The task's parameter block is a
+second such global, declared by the trait rather than the workload -- which is
+why a kernel reads it at a constant offset and needs no argument.
 
 The body tallies sixteen samples with one instruction, which is the point of
 the extension's headline addition -- an *indexed* vector atomic, where every
@@ -221,11 +222,11 @@ struct Histogram(NDPTask):
     # Declared once at struct level so every kernel shares one allocation.
     comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
 
-    # A kernel takes no arguments: the task's parameters are in the
-    # scratchpad, so it reads the fields it wants by name.
+    # A kernel takes no arguments: the parameters are a scratchpad global
+    # like `bins`, so reading a field is a constant offset from the base.
     @staticmethod
     def body():
-        ...Histogram.params().samples...
+        ...Histogram.params[].samples...
 
     @staticmethod
     def device_main():
@@ -283,6 +284,32 @@ host                                    spike
 kernel loads exactly what the host stored. Nothing is uploaded before a run
 and nothing is downloaded after it; results are in the caller's pool because
 they were written there.
+
+A launch is then five steps, and only the middle three are compilation:
+
+1. **Fill.** The host writes into the mapping. `Pool` bumps a pointer per
+   `alloc`; there is no free, a run being short.
+2. **Compile.** `Task.device_ir()` asks `compile_info` for the entry point and
+   what it reaches, for the target the task declares.
+3. **Finish and link.** Our `llc` does the M²NDP lowering the frontend's LLVM
+   cannot, and `ld.lld` puts the result beside the device-side launcher.
+4. **Run.** The simulator is told where the pool is, and the addresses that
+   cross are pool addresses:
+
+   ```
+   spike -m0x10000:0x1ff0000 --extlib=libm2ndp_ext.so --extension=m2ndp \
+         --device=m2ndp_pool,<file>,<pool_base>,<pool_bytes> \
+         --isa=rv64gcv_zvl128b task.elf \
+         <cores> <interleave> <packet> <range_base> <range_size> \
+         <params> <params_bytes>
+   ```
+
+   The launcher configures the machine from those and calls the task's entry
+   point. It reads no files and writes none: the parameter block is already in
+   the pool, and it copies that into each core's scratchpad so a kernel finds
+   it at a constant offset.
+5. **Read.** The host reads its own pointers. The process exits; the mapping
+   does not need unwinding for the answer to be there.
 
 The device side is 40 lines in `sim/ext/`, registered through the same
 `--extlib` the instruction extension already uses, so the Spike submodule

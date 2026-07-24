@@ -64,9 +64,6 @@ struct HistogramParams(Movable):
 struct Histogram(NDPTask):
     comptime Params = HistogramParams
 
-    # One packet is UNROLL samples. In terms of UNROLL so it stays in step
-    # with what the body loads.
-
     # Declared once, shared by all three kernels.
     comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
 

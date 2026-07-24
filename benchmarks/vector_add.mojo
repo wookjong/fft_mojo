@@ -39,8 +39,6 @@ struct VectorAddParams(Movable):
 
 
 struct VectorAdd(NDPTask):
-    # One packet is one chunk: W int32 lanes. Written in terms of W so it
-    # cannot drift from what the kernel indexes by.
     comptime Params = VectorAddParams
 
     @staticmethod
