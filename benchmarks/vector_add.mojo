@@ -20,6 +20,7 @@ not the workload's.
 """
 
 from std.sys import argv, size_of
+from std.random import random_si64, seed
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import Pool
@@ -90,12 +91,10 @@ def main() raises:
     var c = pool.alloc[Int32](n)
     var expect = List[Int32](length=n, fill=0)
 
-    var state: Int = 20260724
+    seed(0)
     for i in range(n):
-        state = (state * 1103515245 + 12345) & 0xFFFFFFFF
-        a[i] = Int32((state >> 8) % 2000 - 1000)
-        state = (state * 1103515245 + 12345) & 0xFFFFFFFF
-        b[i] = Int32((state >> 8) % 2000 - 1000)
+        a[i] = Int32(random_si64(-1000, 999))
+        b[i] = Int32(random_si64(-1000, 999))
         expect[i] = a[i] + b[i]
 
     var rc = VectorAdd.launch(

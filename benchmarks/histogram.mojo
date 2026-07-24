@@ -31,6 +31,7 @@ shared, keeping all three kernels on the same addrspace(3) global; calling
 """
 
 from std.sys import argv, size_of
+from std.random import random_si64, seed
 
 from m2ndp import (
     NDPTask,
@@ -137,11 +138,10 @@ def main() raises:
     var hist = pool.alloc[Int32](BINS)
     var expect = List[Int32](length=BINS, fill=0)
 
-    var state: Int = 20260724
+    seed(0)
     for i in range(n):
-        state = (state * 1103515245 + 12345) & 0xFFFFFFFF
         # Deliberately narrow, so bins collide and the atomic has to hold up.
-        var s = Int((state >> 8) % 64)
+        var s = Int(random_si64(0, 63))
         samples[i] = Int32(s)
         expect[s] += 1
 

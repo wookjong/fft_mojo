@@ -10,6 +10,7 @@ Also exercises indirect access (x[col_idx[k]]).
 """
 
 from std.sys import argv, size_of
+from std.random import random_float64, random_si64, seed
 
 from m2ndp import (
     NDPTask,
@@ -118,15 +119,12 @@ def main() raises:
     var row_ptr = pool.alloc[Int32](rows + 1)
     var y = pool.alloc[Float32](rows)
 
-    var state: Int = 20260724
+    seed(0)
     for i in range(NCOLS):
-        state = (state * 1103515245 + 12345) & 0xFFFFFFFF
-        x[i] = Float32((state >> 8) % 20 - 10)
+        x[i] = Float32(random_float64(-10.0, 10.0))
     for k in range(nnz):
-        state = (state * 1103515245 + 12345) & 0xFFFFFFFF
-        values[k] = Float32((state >> 8) % 20 - 10)
-        state = (state * 1103515245 + 12345) & 0xFFFFFFFF
-        col_idx[k] = Int32((state >> 8) % NCOLS)
+        values[k] = Float32(random_float64(-10.0, 10.0))
+        col_idx[k] = Int32(random_si64(0, NCOLS - 1))
     for r in range(rows + 1):
         row_ptr[r] = Int32(r * NNZ_PER_ROW)
 

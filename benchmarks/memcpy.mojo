@@ -15,6 +15,7 @@ arithmetic. Useful as a floor for what the interface costs.
 """
 
 from std.sys import argv, size_of
+from std.random import random_si64, seed
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import Pool
@@ -63,10 +64,9 @@ def main() raises:
     var src = pool.alloc[Int32](n)
     var dst = pool.alloc[Int32](n)
 
-    var state: Int = 20260724
+    seed(0)
     for i in range(n):
-        state = (state * 1103515245 + 12345) & 0xFFFFFFFF
-        src[i] = Int32((state >> 8) % 2000 - 1000)
+        src[i] = Int32(random_si64(-1000, 999))
 
     var rc = Memcpy.launch(
         pool, PooledRange.over(src, n), MemcpyParams(src, dst)

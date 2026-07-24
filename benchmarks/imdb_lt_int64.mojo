@@ -30,6 +30,7 @@ Closing this needs a primitive, not a rewrite of the benchmark.
 """
 
 from std.sys import argv, size_of
+from std.random import random_si64, seed
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import Pool
@@ -92,10 +93,9 @@ def main() raises:
     var predicate = pool.alloc[Int64](1)
     predicate[0] = 0
 
-    var state: Int = 20260724
+    seed(0)
     for i in range(rows):
-        state = (state * 1103515245 + 12345) & 0xFFFFFFFF
-        column[i] = Int64((state >> 8) % 2000 - 1000)
+        column[i] = random_si64(-1000, 999)
 
     var rc = ImdbLtInt64.launch(
         pool, PooledRange.over(column, rows),
