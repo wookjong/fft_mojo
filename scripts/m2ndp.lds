@@ -14,9 +14,9 @@
  *     [ globals, SIZEOF(.spad) bytes ][ arguments ]
  *                                     ^ base register
  *
- * so a launcher that has a region at R passes base = R + __m2ndp_spad_size and
- * writes the task's arguments there. The globals end up below the base at the
- * negative offsets the compiler already emitted.
+ * so a launcher passes the region's own address as the base: the compiler laid
+ * the globals out from there. The size is what a launcher checks its region
+ * against.
  */
 
 PHDRS {

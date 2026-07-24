@@ -116,28 +116,18 @@ global becomes a constant offset from a base pointer the hardware hands the
 microthread at spawn:
 
 ```asm
-sw zero, -1024(a0)        # a0 = scratchpad base
+sw zero, 16(a0)           # a0 = scratchpad base
 ```
 
 No address materialization at all — the offset lands in the access itself.
 
-The layout around the base is
-
 ```
-[ globals ][ arguments ]
-           ^ base
+base |[ globals, the task's parameters among them ]
 ```
 
-Arguments come first from the base because every kernel reads them at its
-top and small positive offsets fit in a load's immediate. The globals sit
-below at negative offsets; they are reached inside loops, where an address
-computation would hoist out anyway.
-
-That ordering is also what keeps a global in the same place in every kernel
-of a task. The argument area is as wide as the task's parameter block, so
-anything placed *after* it would move whenever a task gained a buffer.
-Placing the globals before the base makes their offsets depend on the task's
-own globals and nothing else.
+The base is where a task's scratchpad starts and the globals are laid out from
+it, so every offset is positive. There is nothing else in the region: a kernel
+takes no arguments, so there is no argument area to keep clear of.
 
 ### Who decides the offsets, and why it is the compiler
 
@@ -147,9 +137,9 @@ into one opaque block in `.spad`, which reserves the space and gives the
 section a size.
 
 Leaving this to the linker was the obvious alternative and does not work.
-Expressing "1024 bytes below the base" needs the size of the global area,
-and only whole-module code knows it — a symbol difference is not a
-relocatable expression, so the linker cannot be asked for it:
+Expressing one global's distance from another needs to know them all, and
+only whole-module code does — a symbol difference is not a relocatable
+expression, so the linker cannot be asked for it:
 
 ```
 error: expected relocatable expression
@@ -170,8 +160,8 @@ Two symbols it cannot know on its own:
 
 | | |
 |---|---|
-| `__m2ndp_spad_size` | size of the global area, from the linker script; the base is `region + this` |
-| `__m2ndp_params_offset` | where the task's parameters sit, from the compiler; negative, the globals being below the base |
+| `__m2ndp_spad_size` | size of the global area, from the linker script; a core's region has to hold it |
+| `__m2ndp_params_offset` | where the task's parameters sit, from the compiler |
 
 The second is how a task's parameters get to a kernel. They are one of its
 scratchpad globals, so the compiler picks the offset, and the launcher writes

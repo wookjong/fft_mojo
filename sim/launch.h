@@ -67,8 +67,7 @@ __attribute__((noinline)) static void m2ndp_launch(const m2ndp_ids *id,
 }
 
 /* Where a task's parameters go. They are one of its scratchpad globals, so the
- * compiler decides the offset and exports it here; the globals sit below the
- * base, making it negative. */
+ * compiler decides the offset and exports it here. */
 extern const i64 __m2ndp_params_offset;
 
 static inline void *m2ndp_args(u64 base)
@@ -78,7 +77,9 @@ static inline void *m2ndp_args(u64 base)
 
 static inline u64 m2ndp_base(void *region)
 {
-    return (u64)region + (u64)__m2ndp_spad_size;
+    /* The base is where the region starts: a task's globals are laid out from
+     * it, so every offset is positive. */
+    return (u64)region;
 }
 
 #endif

@@ -142,10 +142,9 @@ Five things about this are not obvious, and each cost a debugging session:
 `sim/` implements the launcher half of the contract in C:
 
 - **the scratchpad region is the launcher's to provide.** `.spad` only
-  reserves a size; `__m2ndp_spad_size` says how much, and the base pointer
-  goes at `region + __m2ndp_spad_size` with the arguments written upwards
-  from there. The globals sit below at the negative offsets the compiler
-  already emitted. See `sim/launch.h`.
+  reserves a size; `__m2ndp_spad_size` says how much, and the base pointer is
+  the region's own address, the compiler having laid the globals out from
+  there. See `sim/launch.h`.
 - **the identity values arrive in registers**, one per value. The assignment
   is provisional and lives in `RISCVM2ndpArgInfo.h`; `sim/launch.h` is the
   only other place that knows it, so settling the hardware ABI changes two

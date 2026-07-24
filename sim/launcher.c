@@ -106,8 +106,15 @@ int launcher_main(void)
         say("more cores than this build reserves scratchpad for\n");
         return 2;
     }
-    if (c.params_bytes > sizeof(spad[0]) - (u64)__m2ndp_spad_size) {
-        say("the task's parameter block does not fit in a scratchpad\n");
+    /* The task's globals -- its parameters among them -- have to fit a core's
+     * region. The linker script bounds .spad too, but against a different
+     * size. */
+    if ((u64)__m2ndp_spad_size > sizeof(spad[0])) {
+        say("the task's scratchpad does not fit this build's\n");
+        return 2;
+    }
+    if ((u64)__m2ndp_params_offset + c.params_bytes > sizeof(spad[0])) {
+        say("the task's parameter block runs past its scratchpad\n");
         return 2;
     }
 
