@@ -186,6 +186,35 @@ def launch_serial[F: ImplicitlyDeletable, //, kernel: F]():
     external_call["__m2ndp_launch_serial", NoneType](materialize[kernel]())
 
 
+def _dump(ir: String, ll: String, work: String, tc: Toolchain) raises:
+    """Print the device code, if `M2NDP_DUMP` asks for it.
+
+        M2NDP_DUMP=ir    the LLVM a launch hands to llc
+        M2NDP_DUMP=asm   what llc makes of it
+        M2NDP_DUMP=all   both
+
+    A module is the task and nothing else -- its kernels, its device_main and
+    the entry point -- so this is every function of it, in order.
+    """
+    var want = _getenv("M2NDP_DUMP")
+    if not want:
+        return
+
+    if want == "ir" or want == "all":
+        print("──── llvm ────")
+        print(ir)
+
+    if want == "asm" or want == "all":
+        var asm = work + "/task.s"
+        if _run(
+            tc.llc + " -mtriple=riscv64-unknown-elf -mattr=" + tc.features
+            + " " + ll + " -o " + asm
+        ) == 0:
+            print("──── riscv ────")
+            with open(asm, "r") as f:
+                print(f.read())
+
+
 trait NDPTask:
     """What a task has to provide, and what it gets for free.
 
@@ -366,6 +395,8 @@ trait NDPTask:
         with open(ll, "w") as f:
             f.write(ir)
         _add_export_alias(ir, ll)
+
+        _dump(ir, ll, work, tc)
 
         var rc = _run(
             tc.llc + " -mtriple=riscv64-unknown-elf -mattr=" + tc.features
