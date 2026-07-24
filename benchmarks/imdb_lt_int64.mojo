@@ -32,7 +32,7 @@ Closing this needs a primitive, not a rewrite of the benchmark.
 from std.sys import argv, size_of
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import In, Out
+from m2ndp_host import Pool
 
 comptime W = 8   # int64 lanes per chunk; one bitmap byte covers exactly these
 
@@ -43,9 +43,9 @@ struct ImdbParams(Movable):
     since the parameter block is addresses; the kernel dereferences it, so it
     stays an Int64 rather than being widened on the way through."""
 
-    var column: In[Int64]
-    var bitmap: Out[UInt8]
-    var predicate: In[Int64]
+    var column: UnsafePointer[Int64, MutAnyOrigin]
+    var bitmap: UnsafePointer[UInt8, MutAnyOrigin]
+    var predicate: UnsafePointer[Int64, MutAnyOrigin]
 
 
 struct ImdbLtInt64(NDPTask):
@@ -55,15 +55,15 @@ struct ImdbLtInt64(NDPTask):
     @staticmethod
     def body():
         var i = global_uthread_id()
-        var v = ImdbLtInt64.params()[].column.ptr.load[width=W](i * W)
-        var mask = v.lt(ImdbLtInt64.params()[].predicate.ptr[0])   # SIMD[bool, W]
+        var v = ImdbLtInt64.params()[].column.load[width=W](i * W)
+        var mask = v.lt(ImdbLtInt64.params()[].predicate[0])   # SIMD[bool, W]
 
         # Pack the lanes into one bitmap byte.
         var bits = UInt8(0)
         comptime for lane in range(W):
             if mask[lane]:
                 bits |= UInt8(1 << lane)
-        ImdbLtInt64.params()[].bitmap.ptr[i] = bits
+        ImdbLtInt64.params()[].bitmap[i] = bits
 
     @staticmethod
     def device_main(params: UnsafePointer[ImdbParams, MutAnyOrigin]):
@@ -86,9 +86,10 @@ def main() raises:
 
     var rows = W * 64 * 8        # one bitmap byte per W rows
 
-    var column = List[Int64](length=rows, fill=0)
-    var bitmap = List[UInt8](length=rows // W, fill=0)
-    var predicate = List[Int64](length=1, fill=0)
+    var pool = Pool()
+    var column = pool.alloc[Int64](rows)
+    var bitmap = pool.alloc[UInt8](rows // W)
+    var predicate = pool.alloc[Int64](1)
     predicate[0] = 0
 
     var state: Int = 20260724
@@ -97,7 +98,7 @@ def main() raises:
         column[i] = Int64((state >> 8) % 2000 - 1000)
 
     var rc = ImdbLtInt64.launch(
-        PooledRange.over(column),
+        pool, PooledRange.over(column, rows),
         ImdbParams(column, bitmap, predicate)
     )
     if rc != 0:

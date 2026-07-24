@@ -33,10 +33,18 @@
 #include <sys/syscall.h>
 
 #include "extension.h"
+#include "abstract_device.h"
+#include "devices.h"
 #include "decode_macros.h"   // f16/f32/f64, freg, NaN boxing
 #include "mmu.h"
 #include <type_traits>
 #include <vector>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <cstring>
+#include <cstdlib>
+#include <stdexcept>
 
 namespace {
 
@@ -350,3 +358,79 @@ public:
 } // namespace
 
 REGISTER_EXTENSION(m2ndp, []() { return new m2ndp_t; })
+
+// The memory pool, shared with the host.
+//
+// M2NDP is near-data processing: the data is already in the pool and the cores
+// are attached to it, so nothing is transferred. Two processes do not get that
+// for free, so the pool is a file both sides map -- the host at the same
+// address this attaches to, which is what makes a pointer mean one thing.
+//
+// An abstract_mem_t, not a plain device: sim_t::addr_to_mem only takes the
+// MMU's fast path for a memory, by asking it for contents().
+//
+//   --device=m2ndp_pool,<file>,<base>,<size>
+
+namespace {
+
+class m2ndp_pool_t : public abstract_mem_t
+{
+public:
+  m2ndp_pool_t(const char *path, reg_t size) : size_(size)
+  {
+    int fd = open(path, O_RDWR);
+    if (fd < 0)
+      throw std::runtime_error(std::string("m2ndp_pool: cannot open ") + path);
+    base_ = (char *)mmap(nullptr, size_, PROT_READ | PROT_WRITE, MAP_SHARED,
+                         fd, 0);
+    close(fd);
+    if (base_ == MAP_FAILED)
+      throw std::runtime_error("m2ndp_pool: could not map the pool file");
+  }
+
+  ~m2ndp_pool_t() override { munmap(base_, size_); }
+
+  bool load(reg_t addr, size_t len, uint8_t *bytes) override
+  {
+    if (addr + len > size_)
+      return false;
+    memcpy(bytes, base_ + addr, len);
+    return true;
+  }
+
+  bool store(reg_t addr, size_t len, const uint8_t *bytes) override
+  {
+    if (addr + len > size_)
+      return false;
+    memcpy(base_ + addr, bytes, len);
+    return true;
+  }
+
+  char *contents(reg_t addr) override { return base_ + addr; }
+  reg_t size() override { return size_; }
+  void dump(std::ostream &) override {}
+
+private:
+  char *base_;
+  reg_t size_;
+};
+
+m2ndp_pool_t *pool_parse(const void *, const sim_t *, reg_t *base,
+                         const std::vector<std::string> &sargs)
+{
+  if (sargs.size() != 3)
+    throw std::runtime_error("m2ndp_pool: expected <file>,<base>,<size>");
+  *base = strtoull(sargs[1].c_str(), nullptr, 0);
+  return new m2ndp_pool_t(sargs[0].c_str(),
+                          strtoull(sargs[2].c_str(), nullptr, 0));
+}
+
+/// Nothing in the device tree: the address is agreed, not discovered.
+std::string pool_dts(const sim_t *, const std::vector<std::string> &)
+{
+  return "";
+}
+
+} // namespace
+
+REGISTER_DEVICE(m2ndp_pool, pool_parse, pool_dts)

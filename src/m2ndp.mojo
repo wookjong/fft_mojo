@@ -30,18 +30,13 @@ from std.collections.string.string_slice import _get_kgen_string
 # what keeps the dependency one-way: the model reaches for the machinery, never
 # the other way round.
 from m2ndp_host import (
-    Arg,
-    In,
-    Out,
-    _ArgRec,
     Config,
+    Pool,
     Toolchain,
     _add_export_alias,
     _getenv,
     _mktemp,
-    _read_bytes,
     _run,
-    _write_bytes,
 )
 
 
@@ -78,15 +73,21 @@ struct PooledRange(Copyable, Movable):
     count."""
 
     @staticmethod
-    def over[T: Copyable & Movable](ref data: List[T]) -> PooledRange:
-        """The whole of a buffer -- what most tasks run over."""
-        return PooledRange(0, len(data) * size_of[T]())
+    def over[
+        T: Copyable & Movable
+    ](data: UnsafePointer[T, MutAnyOrigin], count: Int) -> PooledRange:
+        """The whole of a buffer -- what most tasks run over. `base` is the
+        buffer's own address, the pool being memory both sides address the
+        same way."""
+        return PooledRange(Int(data), count * size_of[T]())
 
     @staticmethod
-    def of_bytes(n: Int) -> PooledRange:
-        """`n` bytes from the start of the pool, for a task whose range is not
-        the length of any one buffer."""
-        return PooledRange(0, n)
+    def of_bytes[
+        T: Copyable & Movable
+    ](at: UnsafePointer[T, MutAnyOrigin], n: Int) -> PooledRange:
+        """`n` bytes from `at`, for a task whose range is not the length of
+        any one buffer."""
+        return PooledRange(Int(at), n)
 
 
 @fieldwise_init
@@ -178,17 +179,18 @@ trait NDPTask:
     comptime Params: Movable
     """This task's arguments, declared once for both sides of the launch.
 
-    A struct of the task's own, one `In` or `Out` field per buffer:
+    A struct of the task's own, one pointer per buffer:
 
         @fieldwise_init
         struct HistogramParams(Movable):
-            var samples: In[Int32]
-            var out_hist: Out[Int32]
+            var samples: UnsafePointer[Int32, MutAnyOrigin]
+            var out_hist: UnsafePointer[Int32, MutAnyOrigin]
 
-    The host builds one from its lists and `launch` takes it; the kernels read
-    the same declaration on the device. One declaration for both ends leaves
-    them no order to disagree about, and direction is in the field types, so a
-    caller names its lists and nothing else. See `Arg` in m2ndp_host.mojo.
+    Plain pointers, because the host and the device share the pool those
+    addresses are in: there is nothing to transfer and so no direction to
+    declare. The host allocates from the pool and fills the block; the kernels
+    read the same declaration on the device. One declaration for both ends
+    leaves them no order to disagree about.
     """
 
     comptime packet: Int
@@ -314,22 +316,22 @@ trait NDPTask:
         return False
 
     @staticmethod
-    def launch(region: PooledRange, ref params: Self.Params) raises -> Int:
-        """Run this task over `region` with this parameter block.
+    def launch(
+        mut pool: Pool, region: PooledRange, ref params: Self.Params
+    ) raises -> Int:
+        """Run this task over `region` of `pool` with this parameter block.
 
-            _ = Histogram.launch(PooledRange.over(samples),
+            _ = Histogram.launch(pool, PooledRange.over(samples, n),
                                  HistogramParams(samples, hist))
 
-        The same block `device_main` is handed. Direction is in `Params`, not
-        here, so a caller names its lists and nothing else.
+        The same block `device_main` is handed: one declaration, so the two
+        sides have no order to disagree about. Its fields are plain pointers
+        into the pool, which host and device share -- nothing is transferred
+        and no parameter carries a direction.
 
-        Naming the task is the rest: the device code is compiled here for the
-        target it declares, the inputs uploaded, the task run, the outputs
-        downloaded back into the caller's lists. `region` divided by the task's
-        packet is the microthread count.
-
-        Nothing says what hardware this runs on -- the runtime reads
-        config/machine.conf.
+        The device code is compiled here for the target the task declares.
+        `region` divided by the task's packet is the microthread count, and
+        the hardware comes from config/machine.conf.
 
         Returns the simulator's exit code: 0 finished, 2 launcher error, 3 a
         fault in the target.
@@ -338,21 +340,14 @@ trait NDPTask:
         var tc = Toolchain()
         var work = _mktemp()
 
-        # The block's fields, as records whose element types are forgotten.
-        # Mojo has no field reflection, so the count comes from the block's
-        # size: every field is an `Arg` and they are all one size.
-        var nargs = size_of[Self.Params]() // size_of[_ArgRec]()
-        var args = UnsafePointer(to=params).bitcast[_ArgRec]()
-
-        # Upload the inputs, and describe every buffer for the launcher's
-        # command line: direction, byte length, and the file it lives in.
-        var specs = String("")
-        for i in range(nargs):
-            var file = work + "/buf" + String(i) + ".bin"
-            if not args[i].is_out():
-                _write_bytes(file, args[i].data(), args[i].nbytes())
-            var dir = String("1") if args[i].is_out() else String("0")
-            specs += dir + " " + String(args[i].nbytes()) + " " + file + " "
+        # The block goes in the pool, where both sides can see it. Copied
+        # bytewise rather than moved: taking the caller's would raise what
+        # happens to it if a later step throws.
+        var nbytes = size_of[Self.Params]()
+        var block = pool.alloc[UInt8](nbytes)
+        var src = UnsafePointer(to=params).bitcast[UInt8]()
+        for i in range(nbytes):
+            block[i] = src[i]
 
         var ll = work + "/task.ll"
         var obj = work + "/task.o"
@@ -376,29 +371,21 @@ trait NDPTask:
                 + _getenv("M2NDP_COMMON_OBJ") + " " + obj + " -o " + elf
             )
         if rc == 0:
-            # The machine parameters and the range lead the command line, then
-            # the field size and the buffer specs. The launcher writes each
-            # buffer's device address into the block it hands the task, and
-            # that size is all it needs to know about a layout only Mojo has.
+            # The pool is attached as a device at the address the host mapped
+            # it to, which is what makes the addresses on the command line --
+            # the range and the parameter block -- mean the same on both sides.
             rc = _run(
                 tc.spike + " " + tc.memory + " --extlib=" + tc.extlib
-                + " --extension=m2ndp --isa=" + tc.isa + " " + elf + " "
+                + " --extension=m2ndp"
+                + " --device=m2ndp_pool," + pool.path() + ","
+                + String(pool.base()) + "," + String(pool.bytes())
+                + " --isa=" + tc.isa + " " + elf + " "
                 + String(machine.cores) + " " + String(machine.interleave) + " "
                 + String(Self.packet) + " " + String(region.base) + " "
-                + String(region.size) + " " + String(nargs) + " "
-                + String(size_of[_ArgRec]()) + " " + specs
+                + String(region.size) + " " + String(Int(block)) + " "
+                + String(nbytes)
             )
-        if rc == 0:
-            for i in range(nargs):
-                if args[i].is_out():
-                    _read_bytes(
-                        work + "/buf" + String(i) + ".bin",
-                        UnsafePointer[UInt8, MutAnyOrigin](
-                            unsafe_from_address=args[i].data()
-                        ),
-                        args[i].nbytes(),
-                    )
-
+        # Nothing to download: the task wrote into the caller's pool.
         _ = _run(String("rm -rf ") + work)
         return rc
 

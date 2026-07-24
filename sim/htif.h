@@ -5,10 +5,9 @@
  * and the host runs it for real and writes the result back. That is how a
  * bare-metal program with no operating system under it opens a file.
  *
- * It is what lets a task read its input and write its output rather than
- * carrying both as constants in the binary. Inputs can then change without a
- * rebuild, results can be compared on the host where the tools are, and
- * neither is bounded by what fits in an assembler literal.
+ * A task's data does not come through here -- the pool is shared with the
+ * host. What is left is the command line, the exit code, and a way to say
+ * what went wrong.
  *
  * The syscall numbers are Linux's, because that is the table fesvr indexes.
  */
@@ -32,13 +31,6 @@ int htif_open(const char *path, int flags);
 i64 htif_read(int fd, void *buf, u64 len);
 i64 htif_write(int fd, const void *buf, u64 len);
 int htif_close(int fd);
-
-/* The whole of a file into a buffer, or -1 if it does not fit. Most tasks
- * want exactly this and nothing else. */
-i64 htif_read_file(const char *path, void *buf, u64 cap);
-
-/* A buffer to a file, created or truncated. */
-i64 htif_write_file(const char *path, const void *buf, u64 len);
 
 /* The arguments spike was given, so a task can be told which files to use
  * rather than having them compiled in. argv[0] is the ELF. */

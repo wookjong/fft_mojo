@@ -88,10 +88,11 @@ cp "benchmarks/$bench.mojo" "$STAGE/"
 # The machine is config, not an argument: the runtime reads a description and
 # configures itself. Varying it is varying the file, which is what checking
 # that an answer does not depend on the hardware actually means.
-cat > "$OUT/machine.conf" <<CONF
-cores = $cores
-interleave = $interleave
-CONF
+# Only cores and interleave vary per run; the pool comes from the checked-in
+# description.
+{ echo "cores = $cores"; echo "interleave = $interleave"
+  grep -E '^[[:space:]]*pool_(base|bytes)[[:space:]]*=' config/machine.conf
+} > "$OUT/machine.conf"
 
 export M2NDP_ROOT="$REPO"
 export M2NDP_COMMON_OBJ="$OUT/common.o"

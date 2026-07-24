@@ -22,7 +22,7 @@ not the workload's.
 from std.sys import argv, size_of
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import In, Out
+from m2ndp_host import Pool
 
 comptime W = 8   # int32 lanes per chunk, one packet's worth
 
@@ -32,9 +32,9 @@ struct VectorAddParams(Movable):
     """The task's parameters, declared once for both sides. `main` builds one
     of these and the kernel reads it."""
 
-    var a: In[Int32]
-    var b: In[Int32]
-    var c: Out[Int32]
+    var a: UnsafePointer[Int32, MutAnyOrigin]
+    var b: UnsafePointer[Int32, MutAnyOrigin]
+    var c: UnsafePointer[Int32, MutAnyOrigin]
 
 
 struct VectorAdd(NDPTask):
@@ -47,7 +47,7 @@ struct VectorAdd(NDPTask):
     def body():
         var p = VectorAdd.params()
         var i = global_uthread_id() * W
-        p[].c.ptr.store(i, p[].a.ptr.load[width=W](i) + p[].b.ptr.load[width=W](i))
+        p[].c.store(i, p[].a.load[width=W](i) + p[].b.load[width=W](i))
 
     @staticmethod
     def device_main(params: UnsafePointer[VectorAddParams, MutAnyOrigin]):
@@ -82,9 +82,12 @@ def main() raises:
     # and to divide over whatever core count the machine config names.
     var n = W * 64 * 8
 
-    var a = List[Int32](length=n, fill=0)
-    var b = List[Int32](length=n, fill=0)
-    var c = List[Int32](length=n, fill=0)
+    # The pool is memory the device shares, so the host writes its inputs
+    # straight into it and reads the results back out of it.
+    var pool = Pool()
+    var a = pool.alloc[Int32](n)
+    var b = pool.alloc[Int32](n)
+    var c = pool.alloc[Int32](n)
     var expect = List[Int32](length=n, fill=0)
 
     var state: Int = 20260724
@@ -96,8 +99,7 @@ def main() raises:
         expect[i] = a[i] + b[i]
 
     var rc = VectorAdd.launch(
-        PooledRange.over(a),
-        VectorAddParams(a, b, c),
+        pool, PooledRange.over(a, n), VectorAddParams(a, b, c)
     )
     if rc != 0:
         print("[host] vector_add failed, exit", rc)

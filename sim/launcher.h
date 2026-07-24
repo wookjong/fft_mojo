@@ -1,11 +1,10 @@
 /* The launcher: the machine's half of running a task.
  *
- *   spike ... task.elf <cores> <interleave> <packet> <base> <size> <nbufs> \
- *             <argrec> [<dir> <bytes> <file>]...
+ *   spike ... task.elf <cores> <interleave> <packet> <base> <size> \
+ *             <params> <params_bytes>
  *
- * The host owns the data and describes it on the command line. The launcher
- * lays the buffers out, reads the inputs, hands control to the task's entry
- * point, and writes the outputs back. See docs/INTERFACE.md.
+ * Configures the machine and hands control to the task's entry point. Moves
+ * no data: the pool is shared with the host. See docs/INTERFACE.md.
  */
 
 #ifndef M2NDP_SIM_LAUNCHER_H
@@ -14,12 +13,10 @@
 #include "launch.h"
 #include "topology.h"
 
-/* Ceilings this build reserves for; a bare-metal launcher has no allocator. */
-#define M2NDP_MAX_BUFS 8
-#define M2NDP_MAX_ARGREC 64 /* bytes of one parameter-block field */
+/* Ceilings this build reserves for; a bare-metal launcher has no allocator.
+ * The pool is not among them: it is the host's. */
 #define M2NDP_MAX_CORES 64
 #define M2NDP_SPAD_BYTES (64 * 1024)
-#define M2NDP_POOL_BYTES (4 * 1024 * 1024)
 
 /* The task's entry point, compiled from the workload. */
 extern void __m2ndp_rt_launch_task(u64 base, u64 size, const u64 *params);

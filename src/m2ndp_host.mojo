@@ -58,152 +58,88 @@ def _add_export_alias(ir: String, path: String) raises:
 # ---------------------------------------------------------------- host memory
 
 
-struct Arg[T: Copyable & Movable, writes: Bool](Movable):
-    """One field of a task's parameter block: a buffer, and which way it goes.
+struct Pool(Movable):
+    """The memory a task's data lives in, shared with the device.
 
-    Declared once and read by both sides:
+    M2NDP is near-data processing: the data is already in the CXL pool and the
+    cores are attached to it, so there is nothing to upload or download and a
+    parameter is a plain pointer. A simulator in its own process does not get
+    that for free, so the pool is a file both sides map -- spike through the
+    `m2ndp_pool` device, the host here at the same address.
 
-        @fieldwise_init
-        struct HistogramParams(Movable):
-            var samples: In[Int32]
-            var out_hist: Out[Int32]
+        var pool = Pool()
+        var a = pool.alloc[Int32](n)
+        a[0] = ...                      # the device reads exactly this
 
-    Direction and element type are properties of the parameter, so a caller
-    names its list and nothing else.
-
-    **One pointer, and nothing else** -- a block is as wide as the buffers it
-    names, so what the device carries is the task's, not the runtime's. The
-    length and direction live in a descriptor beside the bytes. One uniform
-    word per field is also what lets `launch` walk a block it cannot inspect:
-    Mojo has no field reflection, so the field count is the block's size over
-    one field's.
-
-    An input holds a *copy* of the caller's bytes, taken when the block is
-    built, because the list's last mention is often that very expression and
-    nothing else would keep it alive. An output holds the caller's *address*,
-    which is alive across the launch by construction.
+    Allocation bumps a pointer and there is no free: a run is short and the
+    pool goes with the process.
     """
 
-    var ptr: UnsafePointer[Self.T, MutAnyOrigin]
-    """Where the buffer is -- the only thing a kernel wants.
+    var _path: String
+    var _base: Int
+    var _bytes: Int
+    var _next: Int
 
-    Two values in turn: on the host, this field's descriptor, which `launch`
-    reads the length and direction from; on the device, where the buffer landed,
-    written by the launcher. Neither side sees the other's, the host block
-    staying on the host.
+    def __init__(out self) raises:
+        var config = Config.load()
+        self._path = _mktemp() + "/pool.bin"
+        self._base = config.get("pool_base")
+        self._bytes = config.get("pool_bytes")
+        if self._bytes <= 0:
+            raise Error("pool_bytes must be positive")
 
-    A pointer rather than an address, since converting an integer to one costs
-    a stack slot that survives into the kernel's frame."""
+        # `open64`, not `open`: the plain name resolves to Mojo's builtin.
+        var fd = Int(external_call["open64", Int32](
+            self._path.unsafe_ptr(), Int32(_O_RDWR | _O_CREAT), Int32(0o600)))
+        if fd < 0:
+            raise Error(String("could not create ") + self._path)
+        if Int(external_call["ftruncate", Int32](Int32(fd), self._bytes)) != 0:
+            raise Error("could not size the pool file")
 
-    @implicit
-    def __init__(out self, ref data: List[Self.T]):
-        """Build from the caller's list. Implicit, so a workload names the list
-        and nothing else."""
-        var n = len(data) * size_of[Self.T]()
-        # The descriptor, and for an input the copy immediately after it. One
-        # allocation, freed below. Straight from libc: this is host-only, and
-        # a `List` would carry its own three words for nothing.
-        var d = external_call["malloc", UnsafePointer[Int, MutAnyOrigin]](
-            _DESC_BYTES + (0 if Self.writes else n)
-        )
-        d[_D_NBYTES] = n
-        d[_D_IS_OUT] = 1 if Self.writes else 0
-        comptime if Self.writes:
-            # An output is downloaded straight back into the caller's list,
-            # which is alive across the launch by construction -- the caller
-            # reads the result afterwards.
-            d[_D_DATA] = Int(data.unsafe_ptr())
-        else:
-            # An input is copied now, while the list is still the expression
-            # being evaluated. A field that only remembered the address would
-            # not keep the list alive, and its last mention is often the very
-            # expression that built the block.
-            var dst = UnsafePointer[UInt8, MutAnyOrigin](
-                unsafe_from_address=Int(d) + _DESC_BYTES
-            )
-            var src = UnsafePointer[UInt8, MutAnyOrigin](
-                unsafe_from_address=Int(data.unsafe_ptr())
-            )
-            for i in range(n):
-                dst[i] = src[i]
-            d[_D_DATA] = Int(d) + _DESC_BYTES
-        self.ptr = UnsafePointer[Self.T, MutAnyOrigin](
-            unsafe_from_address=Int(d)
-        )
+        var got = external_call["mmap", UnsafePointer[UInt8, MutAnyOrigin]](
+            UnsafePointer[UInt8, MutAnyOrigin](unsafe_from_address=self._base),
+            self._bytes, _PROT_READ | _PROT_WRITE,
+            _MAP_SHARED | _MAP_FIXED_NOREPLACE, Int32(fd), 0)
+        _ = external_call["close", Int32](Int32(fd))
+        if Int(got) != self._base:
+            # Landing elsewhere would leave the two sides disagreeing about
+            # what a pointer means, so fail rather than continue.
+            raise Error(String("pool_base ") + String(self._base)
+                        + " is already taken in this process")
+        self._next = 0
 
-    def __del__(deinit self):
-        """Frees the descriptor, and an input's copy along with it.
+    def path(self) -> String:
+        return self._path
 
-        Not `Copyable`: duplicating one would have to duplicate what it owns,
-        and nothing needs to -- `launch` takes the block by reference. Leaving
-        it out makes an accidental copy a compile error instead."""
-        _ = external_call["free", NoneType](
-            UnsafePointer[UInt8, MutAnyOrigin](
-                unsafe_from_address=Int(self.ptr)
-            )
-        )
+    def base(self) -> Int:
+        return self._base
 
-    # What `launch` reads, through a block whose element types it has
-    # forgotten. Read from the descriptor rather than from `writes`, which an
-    # erased field no longer carries.
+    def bytes(self) -> Int:
+        return self._bytes
 
-    @always_inline
-    def _desc(self) -> UnsafePointer[Int, MutAnyOrigin]:
-        return UnsafePointer[Int, MutAnyOrigin](
-            unsafe_from_address=Int(self.ptr)
-        )
-
-    @always_inline
-    def nbytes(self) -> Int:
-        return self._desc()[_D_NBYTES]
-
-    @always_inline
-    def is_out(self) -> Bool:
-        return self._desc()[_D_IS_OUT] != 0
-
-    @always_inline
-    def data(self) -> Int:
-        """The bytes themselves: an input's copy, or an output's destination."""
-        return self._desc()[_D_DATA]
+    def alloc[T: Movable](mut self, count: Int) raises -> UnsafePointer[
+        T, MutAnyOrigin
+    ]:
+        """`count` elements, zeroed. The pointer is a device address too."""
+        var bytes = count * size_of[T]()
+        var off = (self._next + _POOL_ALIGN - 1) // _POOL_ALIGN * _POOL_ALIGN
+        if off + bytes > self._bytes:
+            raise Error("the pool is full; raise pool_bytes")
+        self._next = off + bytes
+        var p = UnsafePointer[UInt8, MutAnyOrigin](
+            unsafe_from_address=self._base + off)
+        for i in range(bytes):
+            p[i] = 0
+        return p.bitcast[T]()
 
 
-# A field's descriptor, in words. Host-side only; it never reaches the device.
-comptime _D_NBYTES = 0
-comptime _D_DATA = 1
-comptime _D_IS_OUT = 2
-comptime _DESC_BYTES = 3 * size_of[Int]()
-
-
-comptime In[T: Copyable & Movable] = Arg[T, False]
-"""A buffer the task reads."""
-
-comptime Out[T: Copyable & Movable] = Arg[T, True]
-"""A buffer the task writes. Pass a list already sized to hold the result and
-keep it in scope until the launch returns; reading the result does that."""
-
-comptime _ArgRec = Arg[UInt8, False]
-"""One field of a parameter block with its element type forgotten.
-
-`Arg`'s layout does not depend on its parameters, so a block of any task's
-fields can be walked as these. That is how `launch` finds what to upload
-without field reflection, which Mojo does not have."""
-
-
-def _write_bytes(path: String, addr: Int, nbytes: Int) raises:
-    """Upload: a host buffer's raw bytes to a file the device reads."""
-    var ptr = UnsafePointer[UInt8, MutAnyOrigin](unsafe_from_address=addr)
-    with open(path, "w") as f:
-        f.write_bytes(Span(ptr=ptr, length=nbytes))
-
-
-def _read_bytes(path: String, ptr: UnsafePointer[UInt8, MutAnyOrigin],
-                cap: Int) raises:
-    """Download: a file the device wrote back into a host buffer."""
-    with open(path, "r") as f:
-        var data = f.read_bytes()
-        var n = min(Int(len(data)), cap)
-        for i in range(n):
-            ptr[i] = data[i]
+comptime _POOL_ALIGN = 64
+comptime _O_RDWR = 2
+comptime _O_CREAT = 0o100
+comptime _PROT_READ = 1
+comptime _PROT_WRITE = 2
+comptime _MAP_SHARED = 1
+comptime _MAP_FIXED_NOREPLACE = 0x100000
 
 
 # ---------------------------------------------------------------- running

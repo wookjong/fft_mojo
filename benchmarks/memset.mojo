@@ -16,7 +16,7 @@ is the same splat.
 from std.sys import argv
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import In, Out
+from m2ndp_host import Pool
 
 comptime W = 32   # uint8 lanes per chunk
 
@@ -28,8 +28,8 @@ struct MemsetParams(Movable):
     scalar has to be somewhere to have an address. The kernel dereferences it
     where it needs it, keeping the byte a byte the whole way."""
 
-    var dst: Out[UInt8]
-    var value: In[UInt8]
+    var dst: UnsafePointer[UInt8, MutAnyOrigin]
+    var value: UnsafePointer[UInt8, MutAnyOrigin]
 
 
 struct Memset(NDPTask):
@@ -39,7 +39,7 @@ struct Memset(NDPTask):
     @staticmethod
     def body():
         var i = global_uthread_id() * W
-        Memset.params()[].dst.ptr.store(i, SIMD[DType.uint8, W](Memset.params()[].value.ptr[0]))
+        Memset.params()[].dst.store(i, SIMD[DType.uint8, W](Memset.params()[].value[0]))
 
     @staticmethod
     def device_main(params: UnsafePointer[MemsetParams, MutAnyOrigin]):
@@ -63,12 +63,15 @@ def main() raises:
 
     var n = W * 64 * 8          # bytes; one packet is W of them
 
-    var dst = List[UInt8](length=n, fill=0)
-    var value = List[UInt8](length=1, fill=0)
+    var pool = Pool()
+    var dst = pool.alloc[UInt8](n)
+    # The scalar goes in the pool too: a parameter is an address, so a byte
+    # the kernel reads has to be somewhere the device can address.
+    var value = pool.alloc[UInt8](1)
     value[0] = 0xAB
 
     var rc = Memset.launch(
-        PooledRange.over(dst), MemsetParams(dst, value)
+        pool, PooledRange.over(dst, n), MemsetParams(dst, value)
     )
     if rc != 0:
         print("[host] memset failed, exit", rc)

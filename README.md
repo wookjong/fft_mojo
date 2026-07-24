@@ -9,7 +9,7 @@ way a `.cu` is. Naming the task compiles it for the target the task declares
 and runs it under Spike:
 
 ```mojo
-_ = Histogram.launch(PooledRange.over(samples),
+_ = Histogram.launch(pool, PooledRange.over(samples, n),
                      HistogramParams(samples, hist))
 ```
 
@@ -210,9 +210,9 @@ One file, three parts: what the host passes, the task, and the host code.
 
 ```mojo
 @fieldwise_init
-struct HistogramParams(Copyable, Movable):
-    var samples: UnsafePointer[Int32, MutAnyOrigin]
-    var out_hist: UnsafePointer[Int32, MutAnyOrigin]
+struct HistogramParams(Movable):
+    var samples: UnsafePointer[Int32, MutAnyOrigin]   # plain pointers:
+    var out_hist: UnsafePointer[Int32, MutAnyOrigin]  # the pool is shared
 
 struct Histogram(NDPTask):
     comptime Params = HistogramParams             # what the host fills in
@@ -224,7 +224,7 @@ struct Histogram(NDPTask):
     # scratchpad, so it reads the fields it wants by name.
     @staticmethod
     def body():
-        ...Histogram.params()[].samples.ptr...
+        ...Histogram.params()[].samples...
 
     @staticmethod
     def device_main(params: UnsafePointer[HistogramParams, MutAnyOrigin]):
@@ -235,10 +235,13 @@ struct Histogram(NDPTask):
 def main() raises:
     if Histogram.emit_ir_if_asked():
         return
-    ...fill samples, size hist...
-    _ = Histogram.launch(PooledRange.over(samples),
+    var pool = Pool()                       # the memory the device shares
+    var samples = pool.alloc[Int32](n)      # host writes straight into it
+    var hist = pool.alloc[Int32](BINS)
+    ...fill samples...
+    _ = Histogram.launch(pool, PooledRange.over(samples, n),
                          HistogramParams(samples, hist))
-    ...check hist against an answer computed here...
+    ...hist already holds the result; check it here...
 ```
 
 Kernels take ordinary parameters and index them; recovering the hardware's
@@ -257,12 +260,43 @@ What a benchmark never says is what hardware it runs on. That is
 `M2NDP_MACHINE_CONFIG` at another description is how the same program is
 shown to give the same answer on a different machine.
 
+## The pool is shared, not copied
+
+M²NDP is near-data processing: the data is already in the CXL pool and the
+NDP cores are attached to that memory. Host and device see the same bytes.
+There is no `cudaMemcpy` here because there is nothing to copy — which is why
+a parameter is a plain pointer and no field says "in" or "out".
+
+Two processes do not get that for free, so the pool is a file both sides map
+at the same address:
+
+```
+host                                    spike
+  mmap(MAP_FIXED, pool_base) ──┐   ┌── --device=m2ndp_pool,<file>,<base>,<size>
+                               └───┴──  the same pages
+```
+
+`pool.alloc[Int32](n)` returns an address that is a device address too, so a
+kernel loads exactly what the host stored. Nothing is uploaded before a run
+and nothing is downloaded after it; results are in the caller's pool because
+they were written there.
+
+The device side is 40 lines in `sim/ext/`, registered through the same
+`--extlib` the instruction extension already uses, so the Spike submodule
+stays untouched. It is an `abstract_mem_t` rather than a plain MMIO device on
+purpose: `sim_t::addr_to_mem` only takes the MMU's fast path for a memory, by
+asking it for `contents()`. A device would cost a virtual call per access.
+
+`pool_base` and `pool_bytes` are in `config/machine.conf` with the rest of the
+machine — how much memory the device has is the hardware's business, not a
+workload's.
+
 ## The symbol contract
 
 The seam between workload and compiler is a set of names. Details in
 [`docs/INTERFACE.md`](docs/INTERFACE.md).
 
-**A µthread's identity** — four symbols, now lowered to live-in registers:
+**What a µthread is handed** — lowered to live-in registers, not calls:
 
 | Symbol | Signature | Meaning |
 |--------|-----------|---------|
@@ -270,6 +304,7 @@ The seam between workload and compiler is a set of names. Details in
 | `__m2ndp_global_uthread_id` | `i32 ()` | index across all cores; identifies the mapped data |
 | `__m2ndp_group_size` | `i32 ()` | µthreads sharing one scratchpad |
 | `__m2ndp_group_id` | `i32 ()` | which group this µthread belongs to |
+| `__m2ndp_task_params` | `ptr ()` | the task's parameter block, in this core's scratchpad |
 
 **Launching** — implemented by the runtime, and load-bearing besides: the
 backend decides a function is a kernel by seeing its address reach one of

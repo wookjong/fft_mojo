@@ -44,7 +44,7 @@ from m2ndp import (
     atomic_add_indexed,
     scratchpad,
 )
-from m2ndp_host import In, Out
+from m2ndp_host import Pool
 
 comptime BINS = 256
 comptime UNROLL = 16
@@ -55,8 +55,8 @@ struct HistogramParams(Movable):
     """The task's parameters, declared once for both sides. `main` builds one
     of these and the kernels read it."""
 
-    var samples: In[Int32]
-    var out_hist: Out[Int32]
+    var samples: UnsafePointer[Int32, MutAnyOrigin]
+    var out_hist: UnsafePointer[Int32, MutAnyOrigin]
 
 
 struct Histogram(NDPTask):
@@ -85,7 +85,7 @@ struct Histogram(NDPTask):
         lane hits its own bin.
         """
         var base = global_uthread_id() * UNROLL
-        var chunk = (Histogram.params()[].samples.ptr + base).load[width=UNROLL]()
+        var chunk = (Histogram.params()[].samples + base).load[width=UNROLL]()
         _ = atomic_add_indexed(
             Histogram.bins, chunk * 4, SIMD[DType.int32, UNROLL](1)
         )
@@ -95,7 +95,7 @@ struct Histogram(NDPTask):
         """FINALIZER: fold this core's bins into the global histogram."""
         var i = local_uthread_id()
         while i < BINS:
-            _ = atomic_add(Histogram.params()[].out_hist.ptr + i, Histogram.bins[i])
+            _ = atomic_add(Histogram.params()[].out_hist + i, Histogram.bins[i])
             i += group_size()
 
     @staticmethod
@@ -132,8 +132,9 @@ def main() raises:
     # One packet is UNROLL samples; the count has to divide over the cores.
     var n = UNROLL * 64 * 8
 
-    var samples = List[Int32](length=n, fill=0)
-    var hist = List[Int32](length=BINS, fill=0)
+    var pool = Pool()
+    var samples = pool.alloc[Int32](n)
+    var hist = pool.alloc[Int32](BINS)
     var expect = List[Int32](length=BINS, fill=0)
 
     var state: Int = 20260724
@@ -145,7 +146,7 @@ def main() raises:
         expect[s] += 1
 
     var rc = Histogram.launch(
-        PooledRange.over(samples), HistogramParams(samples, hist)
+        pool, PooledRange.over(samples, n), HistogramParams(samples, hist)
     )
     if rc != 0:
         print("[host] histogram failed, exit", rc)

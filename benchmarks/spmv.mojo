@@ -20,18 +20,18 @@ from m2ndp import (
     group_size,
     atomic_add,
 )
-from m2ndp_host import In, Out, Config
+from m2ndp_host import Config, Pool
 
 
 @fieldwise_init
 struct SpmvParams(Movable):
     """The task's parameters, declared once for both sides."""
 
-    var values: In[Float32]
-    var col_idx: In[Int32]
-    var x: In[Float32]
-    var row_ptr: In[Int32]
-    var y: Out[Float32]
+    var values: UnsafePointer[Float32, MutAnyOrigin]
+    var col_idx: UnsafePointer[Int32, MutAnyOrigin]
+    var x: UnsafePointer[Float32, MutAnyOrigin]
+    var row_ptr: UnsafePointer[Int32, MutAnyOrigin]
+    var y: UnsafePointer[Float32, MutAnyOrigin]
 
 
 struct Spmv(NDPTask):
@@ -51,11 +51,11 @@ struct Spmv(NDPTask):
 
     @staticmethod
     def body():
-        var values = Spmv.params()[].values.ptr
-        var col_idx = Spmv.params()[].col_idx.ptr
-        var x = Spmv.params()[].x.ptr
-        var row_ptr = Spmv.params()[].row_ptr.ptr
-        var y = Spmv.params()[].y.ptr
+        var values = Spmv.params()[].values
+        var col_idx = Spmv.params()[].col_idx
+        var x = Spmv.params()[].x
+        var row_ptr = Spmv.params()[].row_ptr
+        var y = Spmv.params()[].y
 
         var row = group_id()
         var tid = local_uthread_id()
@@ -111,11 +111,12 @@ def main() raises:
     var rows = Config.load().get("cores")
     var nnz = rows * NNZ_PER_ROW
 
-    var values = List[Float32](length=nnz, fill=0)
-    var col_idx = List[Int32](length=nnz, fill=0)
-    var x = List[Float32](length=NCOLS, fill=0)
-    var row_ptr = List[Int32](length=rows + 1, fill=0)
-    var y = List[Float32](length=rows, fill=0)
+    var pool = Pool()
+    var values = pool.alloc[Float32](nnz)
+    var col_idx = pool.alloc[Int32](nnz)
+    var x = pool.alloc[Float32](NCOLS)
+    var row_ptr = pool.alloc[Int32](rows + 1)
+    var y = pool.alloc[Float32](rows)
 
     var state: Int = 20260724
     for i in range(NCOLS):
@@ -135,7 +136,7 @@ def main() raises:
     var threads = rows * PER_ROW
 
     var rc = Spmv.launch(
-        PooledRange.of_bytes(threads * Spmv.packet),
+        pool, PooledRange.of_bytes(values, threads * Spmv.packet),
         SpmvParams(values, col_idx, x, row_ptr, y),
     )
     if rc != 0:

@@ -6,23 +6,11 @@
 
 static void say(const char *s) { htif_print(s); }
 
-/* The memory the launcher owns. The data pool is where the host's buffers are
- * laid out; the scratchpad is the per-core region a task's globals and kernel
- * arguments live in. Neither is the task's to size -- the task assumes it owns
- * the scratchpad and the host owns the data -- so both are fixed here. */
-static unsigned char pool[M2NDP_POOL_BYTES] __attribute__((aligned(64)));
+/* The per-core scratchpad. The data pool is not here: it is memory the host
+ * and the device share, attached by the simulator, so the launcher neither
+ * owns it nor moves anything through it. */
 static unsigned char spad[M2NDP_MAX_CORES][M2NDP_SPAD_BYTES]
     __attribute__((aligned(64)));
-
-/* One laid-out buffer: where it landed in the pool, how big, which way. */
-typedef struct {
-    unsigned char *mem;
-    u64 bytes;
-    int is_out;
-} buffer;
-
-static buffer bufs[M2NDP_MAX_BUFS];
-static int nbufs;
 
 /* ------------------------------------------------------------ launching
  *
@@ -109,68 +97,6 @@ void __m2ndp_set_task_range(u64 base, u64 size)
     cur_topo.per_core = threads / cur_topo.cores;
 }
 
-/* ------------------------------------------------------------ setup */
-
-static u64 align_up(u64 n, u64 a) { return (n + a - 1) / a * a; }
-
-/* Lay the host's buffers out in the pool, back to back, and read the inputs.
- * The order is the host's declaration order, which is the order the task's
- * params struct expects -- nothing checks that they agree, which is what makes
- * it an interface. */
-static int place_buffers(const m2ndp_cmdline *c)
-{
-    nbufs = c->nbufs;
-    if (nbufs > M2NDP_MAX_BUFS) {
-        say("more buffers than this build reserves for\n");
-        return -1;
-    }
-
-    u64 off = 0;
-    for (int i = 0; i < nbufs; i++) {
-        u64 bytes = m2ndp_atou(M2NDP_BUF_BYTES(i));
-        off = align_up(off, 64);
-        if (off + bytes > M2NDP_POOL_BYTES) {
-            say("buffers do not fit in the pool this build reserves\n");
-            return -1;
-        }
-        bufs[i].mem = pool + off;
-        bufs[i].bytes = bytes;
-        bufs[i].is_out = m2ndp_atou(M2NDP_BUF_DIR(i)) != 0;
-        off += bytes;
-
-        if (bufs[i].is_out) {
-            /* Zeroed rather than left as whatever was there: a finalizer that
-             * accumulates would otherwise fold into stale values. */
-            for (u64 j = 0; j < bytes; j++)
-                bufs[i].mem[j] = 0;
-        } else {
-            i64 n = htif_read_file(M2NDP_BUF_FILE(i), bufs[i].mem, bytes);
-            if (n < 0) {
-                say("could not read ");
-                say(M2NDP_BUF_FILE(i));
-                say("\n");
-                return -1;
-            }
-        }
-    }
-    return 0;
-}
-
-static int write_outputs(void)
-{
-    for (int i = 0; i < nbufs; i++) {
-        if (!bufs[i].is_out)
-            continue;
-        if (htif_write_file(M2NDP_BUF_FILE(i), bufs[i].mem, bufs[i].bytes) < 0) {
-            say("could not write ");
-            say(M2NDP_BUF_FILE(i));
-            say("\n");
-            return -1;
-        }
-    }
-    return 0;
-}
-
 int launcher_main(void)
 {
     m2ndp_cmdline c;
@@ -180,35 +106,19 @@ int launcher_main(void)
         say("more cores than this build reserves scratchpad for\n");
         return 2;
     }
-
-    if (place_buffers(&c))
+    if (c.params_bytes > sizeof(spad[0]) - (u64)__m2ndp_spad_size) {
+        say("the task's parameter block does not fit in a scratchpad\n");
         return 2;
+    }
 
     /* Everything a launch will need, in place before the first one can
      * happen. */
     cur_topo = c.topo;
+    cur_params = (const unsigned char *)c.params;
+    cur_params_bytes = c.params_bytes;
 
-    /* Over to the device. The host's part of a launch is the range the task
-     * runs over and a block of parameters; everything after that -- which
-     * kernels run, in what order -- is decided in there.
-     *
-     * The range is `base` bytes into the first buffer: for the workloads here
-     * base is zero and the range is the whole of it, but the offset is what a
-     * task mapped onto part of a larger region would use. */
-    if (c.argrec > M2NDP_MAX_ARGREC) {
-        say("the task's parameter block has wider fields than this build "
-            "reserves for\n");
-        return 2;
-    }
-    static unsigned char block[M2NDP_MAX_BUFS * M2NDP_MAX_ARGREC];
-    for (u64 i = 0; i < sizeof block; i++)
-        block[i] = 0;
-    for (int i = 0; i < nbufs; i++)
-        *(u64 *)(block + (u64)i * c.argrec) = (u64)bufs[i].mem;
-    cur_params = block;
-    cur_params_bytes = (u64)nbufs * c.argrec;
-    u64 range = nbufs > 0 ? (u64)bufs[0].mem + c.base : c.base;
-    __m2ndp_rt_launch_task(range, c.size, (const u64 *)block);
-
-    return write_outputs() ? 2 : 0;
+    /* Over to the device. Nothing is read in or written out -- the pool is
+     * the same memory the host has. Only addresses cross. */
+    __m2ndp_rt_launch_task(c.base, c.size, (const u64 *)c.params);
+    return 0;
 }

@@ -70,51 +70,7 @@ int htif_close(int fd)
     return (int)htif_syscall(SYS_close, fd, 0, 0, 0, 0, 0, 0);
 }
 
-i64 htif_read_file(const char *path, void *buf, u64 cap)
-{
-    int fd = htif_open(path, HTIF_O_RDONLY);
-    if (fd < 0)
-        return -1;
 
-    i64 total = 0;
-    for (;;) {
-        /* One byte of headroom, so a file that exactly fills the buffer is
-         * told apart from one that overflows it. */
-        if ((u64)total >= cap) {
-            char probe;
-            if (htif_read(fd, &probe, 1) > 0) {
-                htif_close(fd);
-                return -1;
-            }
-            break;
-        }
-        i64 n = htif_read(fd, (char *)buf + total, cap - total);
-        if (n <= 0)
-            break;
-        total += n;
-    }
-    htif_close(fd);
-    return total;
-}
-
-i64 htif_write_file(const char *path, const void *buf, u64 len)
-{
-    int fd = htif_open(path, HTIF_O_WRONLY | HTIF_O_CREAT | HTIF_O_TRUNC);
-    if (fd < 0)
-        return -1;
-
-    i64 total = 0;
-    while ((u64)total < len) {
-        i64 n = htif_write(fd, (const char *)buf + total, len - total);
-        if (n <= 0) {
-            htif_close(fd);
-            return -1;
-        }
-        total += n;
-    }
-    htif_close(fd);
-    return total;
-}
 
 /* getmainvars fills a buffer with [argc, argv[0..argc-1], NULL, strings...],
  * the pointers being offsets from the buffer's own address. Read once. */

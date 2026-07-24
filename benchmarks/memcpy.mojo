@@ -17,7 +17,7 @@ arithmetic. Useful as a floor for what the interface costs.
 from std.sys import argv, size_of
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import In, Out
+from m2ndp_host import Pool
 
 comptime W = 8   # int32 lanes per chunk
 
@@ -26,8 +26,8 @@ comptime W = 8   # int32 lanes per chunk
 struct MemcpyParams(Movable):
     """The task's parameters, declared once for both sides."""
 
-    var src: In[Int32]
-    var dst: Out[Int32]
+    var src: UnsafePointer[Int32, MutAnyOrigin]
+    var dst: UnsafePointer[Int32, MutAnyOrigin]
 
 
 struct Memcpy(NDPTask):
@@ -37,7 +37,7 @@ struct Memcpy(NDPTask):
     @staticmethod
     def body():
         var i = global_uthread_id() * W
-        Memcpy.params()[].dst.ptr.store(i, Memcpy.params()[].src.ptr.load[width=W](i))
+        Memcpy.params()[].dst.store(i, Memcpy.params()[].src.load[width=W](i))
 
     @staticmethod
     def device_main(params: UnsafePointer[MemcpyParams, MutAnyOrigin]):
@@ -59,8 +59,9 @@ def main() raises:
 
     var n = W * 64 * 8
 
-    var src = List[Int32](length=n, fill=0)
-    var dst = List[Int32](length=n, fill=0)
+    var pool = Pool()
+    var src = pool.alloc[Int32](n)
+    var dst = pool.alloc[Int32](n)
 
     var state: Int = 20260724
     for i in range(n):
@@ -68,7 +69,7 @@ def main() raises:
         src[i] = Int32((state >> 8) % 2000 - 1000)
 
     var rc = Memcpy.launch(
-        PooledRange.over(src), MemcpyParams(src, dst)
+        pool, PooledRange.over(src, n), MemcpyParams(src, dst)
     )
     if rc != 0:
         print("[host] memcpy failed, exit", rc)
