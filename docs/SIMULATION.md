@@ -64,7 +64,7 @@ run, and its results back:
 ```mojo
 var hist = List[Int32](length=256, fill=0)
 _ = Histogram.launch(PooledRange.over(samples),
-                     Buffer.input(samples), Buffer.output(hist))
+                     HistogramParams(samples, hist))
 # hist now holds the result
 ```
 
@@ -124,10 +124,10 @@ Five things about this are not obvious, and each cost a debugging session:
 - **It has to emit IR, not assembly.** Mojo's own LLVM has never heard of the
   vendor extension, so its assembly is unfinished — kernels with frames, calls
   where there should be register reads. Our llc is what finishes it.
-- **An input buffer copies its bytes up front.** A buffer that only kept an
-  address would not keep its list alive: nothing mentions the list after
-  `Buffer.input(xs)`, so it can be freed before the upload reads it. See
-  `Buffer` in `src/m2ndp_host.mojo`.
+- **An input field copies its bytes up front.** A field that only kept an
+  address would not keep its list alive: nothing mentions the list after the
+  expression that built the parameter block, so it can be freed before the
+  upload reads it. See `Arg` in `src/m2ndp_host.mojo`.
 - **Commands to `system()` are NUL-terminated by hand.** `String.unsafe_ptr()`
   promises no terminator, and the shell reads one command plus whatever
   followed it in memory otherwise — a syntax error on a well-formed line.
@@ -164,28 +164,43 @@ share, and the `device_main` that says which of them runs in what order:
 struct Histogram(NDPTask):
     comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
 
+    comptime Params = HistogramParams
+
     @staticmethod
     def initialize(): ...
     @staticmethod
-    def body(samples): ...
+    def body():                      # Histogram.params()[].samples.ptr
+        ...
     @staticmethod
-    def finalize(out_hist): ...
+    def finalize(): ...
 
     @staticmethod
-    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
-        var p = params.bitcast[HistogramParams]()
-        external_call["__m2ndp_launch_serial", NoneType](
-            Histogram.initialize, Int(0), Int(0), Int(0), Int(0), Int(0), Int(0))
-        external_call["__m2ndp_launch_parallel", NoneType](
-            Histogram.body, Int(p[].samples), Int(0), Int(0), Int(0), Int(0), Int(0))
-        external_call["__m2ndp_launch_serial", NoneType](
-            Histogram.finalize, Int(p[].out_hist), Int(0), Int(0), Int(0), Int(0), Int(0))
+    def device_main(params: UnsafePointer[HistogramParams, MutAnyOrigin]):
+        external_call["__m2ndp_launch_serial", NoneType](Histogram.initialize)
+        external_call["__m2ndp_launch_parallel", NoneType](Histogram.body)
+        external_call["__m2ndp_launch_serial", NoneType](Histogram.finalize)
 ```
+
+A kernel takes no arguments, so a launch names one and stops there. The
+launcher copies the task's parameters into every core's scratchpad before
+running a kernel on it, and the kernel reads them from its own with
+`Histogram.params()` — a read of the base register the hardware supplies, with
+each field a constant offset from it, the way a scratchpad global is.
+
+That is what leaves nothing to pad and no positions to line up: one pair of
+launch symbols serves every kernel of every task, so there is one signature to
+agree on, and the empty one carries no order to get wrong. What a kernel reads
+is named and typed by `Params` instead. The one cast from what the host filled
+happens in the trait's `__m2ndp_rt_launch_task`, so no workload writes one.
+
+The rule is enforced rather than agreed: the backend rejects a kernel that
+declares an argument, since the frontend cannot state it. See
+`xm2ndp-kernel-no-args.ll`.
 
 The launches are spelled out rather than wrapped. A helper would have to take
 the kernel as an argument and pass it on, and `external_call` will not convert
 a function value that arrives as a parameter — only one named at the call
-site. So the six slots stay visible; see below for where they come from.
+site. See `docs/STATUS.md` for what that rules out.
 
 Conforming to `NDPTask` is the whole interface to the host. The trait carries
 a default `__m2ndp_rt_launch_task`, so every task gets the entry point it is
@@ -218,15 +233,17 @@ in `launcher.c`, set before the task runs.
 
 ### What falls out of the frontend rather than the design
 
-**Arguments arrive as one pointer**, the way CUDA's do, and the task casts it
-to a struct of its own. `@export` cannot be applied to a parametric function,
-so the runtime entry point has one fixed signature; a parameter per argument
-would then cap how many a task could take.
+**Arguments arrive as one pointer**, the way CUDA's do. `@export` cannot be
+applied to a parametric function, so the runtime entry point has one fixed
+signature; a parameter per argument would then cap how many a task could take.
+That entry point is where the block stops being untyped: it casts once, to the
+task's `Params`, and everything below it works in that type.
 
-**Kernel arguments travel in a fixed six slots**, because `external_call`
-allows one signature per symbol name, so a kernel taking five buffers and one
-taking none reach the same entry and the difference is zeros. Six is what
-`spmv` needs plus one spare.
+**No kernel takes arguments**, because `external_call` allows one signature per
+symbol name — a kernel using five buffers and one using none reach the same
+entry. Putting the parameters where every kernel can already reach them is what
+makes that one signature workable, and what makes a kernel's arguments names
+and types instead of positions.
 
 **A kernel named as a value becomes a closure copy**, and that copy is what
 runs. The frontend names it after the function the value appeared in, so a

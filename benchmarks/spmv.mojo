@@ -20,18 +20,18 @@ from m2ndp import (
     group_size,
     atomic_add,
 )
-from m2ndp_host import Buffer, Config
+from m2ndp_host import In, Out, Config
 
 
 @fieldwise_init
-struct SpmvParams(Copyable, Movable):
+struct SpmvParams(Movable):
     """What the host passes, in the order it hands the buffers over."""
 
-    var values: UnsafePointer[Float32, MutAnyOrigin]
-    var col_idx: UnsafePointer[Int32, MutAnyOrigin]
-    var x: UnsafePointer[Float32, MutAnyOrigin]
-    var row_ptr: UnsafePointer[Int32, MutAnyOrigin]
-    var y: UnsafePointer[Float32, MutAnyOrigin]
+    var values: In[Float32]
+    var col_idx: In[Int32]
+    var x: In[Float32]
+    var row_ptr: In[Int32]
+    var y: Out[Float32]
 
 
 struct Spmv(NDPTask):
@@ -49,14 +49,17 @@ struct Spmv(NDPTask):
     how many µthreads there are: rows x µthreads-per-row.
     """
 
+    comptime Params = SpmvParams
     comptime packet = size_of[Float32]()
 
     @staticmethod
-    def body(values: UnsafePointer[Float32, MutAnyOrigin],
-             col_idx: UnsafePointer[Int32, MutAnyOrigin],
-             x: UnsafePointer[Float32, MutAnyOrigin],
-             row_ptr: UnsafePointer[Int32, MutAnyOrigin],
-             y: UnsafePointer[Float32, MutAnyOrigin]):
+    def body():
+        var values = Spmv.params()[].values.ptr
+        var col_idx = Spmv.params()[].col_idx.ptr
+        var x = Spmv.params()[].x.ptr
+        var row_ptr = Spmv.params()[].row_ptr.ptr
+        var y = Spmv.params()[].y.ptr
+
         var row = group_id()
         var tid = local_uthread_id()
         var start = Int(row_ptr[row])
@@ -73,12 +76,8 @@ struct Spmv(NDPTask):
         _ = atomic_add(y + row, acc)
 
     @staticmethod
-    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
-        var p = params.bitcast[SpmvParams]()
-        external_call["__m2ndp_launch_parallel", NoneType](
-            Spmv.body, Int(p[].values), Int(p[].col_idx), Int(p[].x),
-            Int(p[].row_ptr), Int(p[].y), Int(0)
-        )
+    def device_main(params: UnsafePointer[SpmvParams, MutAnyOrigin]):
+        external_call["__m2ndp_launch_parallel", NoneType](Spmv.body)
 
 
 # ------------------------------------------------------------ the host
@@ -140,8 +139,7 @@ def main() raises:
 
     var rc = Spmv.launch(
         PooledRange.of_bytes(threads * Spmv.packet),
-        Buffer.input(values), Buffer.input(col_idx), Buffer.input(x),
-        Buffer.input(row_ptr), Buffer.output(y),
+        SpmvParams(values, col_idx, x, row_ptr, y),
     )
     if rc != 0:
         print("[host] spmv failed, exit", rc)

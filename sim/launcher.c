@@ -35,16 +35,19 @@ static int nbufs;
  */
 static m2ndp_topology cur_topo;
 
-/* A kernel's arguments live in its own core's region, so every core gets its
- * own copy. All the slots are written, including the ones this kernel does not
- * declare: they are zeros from the caller, and leaving them would show a
- * kernel the previous launch's pointers. */
-static void set_args(const u64 *vals)
+/* The task's parameter block, and its size in bytes. Set once when the task is
+ * launched and copied into a core's scratchpad before each kernel runs there:
+ * a kernel takes no arguments and reads the block from its own scratchpad, so
+ * every core needs its own copy. */
+static const unsigned char *cur_params;
+static u64 cur_params_bytes;
+
+static void set_args(void)
 {
     for (u64 core = 0; core < cur_topo.cores; core++) {
-        u64 *args = m2ndp_args(m2ndp_base(spad[core]));
-        for (int i = 0; i < M2NDP_LAUNCH_ARGS; i++)
-            args[i] = vals[i];
+        unsigned char *dst = (unsigned char *)m2ndp_args(m2ndp_base(spad[core]));
+        for (u64 i = 0; i < cur_params_bytes; i++)
+            dst[i] = cur_params[i];
     }
 }
 
@@ -54,11 +57,9 @@ static void set_args(const u64 *vals)
  *
  * Both symbols return only once every microthread has retired, which is what
  * makes a launch synchronous. */
-void __m2ndp_launch_parallel(void (*kernel)(void), u64 a0, u64 a1, u64 a2,
-                             u64 a3, u64 a4, u64 a5)
+void __m2ndp_launch_parallel(void (*kernel)(void))
 {
-    const u64 vals[M2NDP_LAUNCH_ARGS] = {a0, a1, a2, a3, a4, a5};
-    set_args(vals);
+    set_args();
 
     u64 total = m2ndp_total(&cur_topo);
     for (u64 u = 0; u < total; u++) {
@@ -72,11 +73,9 @@ void __m2ndp_launch_parallel(void (*kernel)(void), u64 a0, u64 a1, u64 a2,
  * it once per slot would either repeat it or need the kernel to divide it up.
  * So group_size() is 1 here and local_uthread_id() is 0, which leaves a
  * strided walk over the scratchpad covering all of it. */
-void __m2ndp_launch_serial(void (*kernel)(void), u64 a0, u64 a1, u64 a2,
-                           u64 a3, u64 a4, u64 a5)
+void __m2ndp_launch_serial(void (*kernel)(void))
 {
-    const u64 vals[M2NDP_LAUNCH_ARGS] = {a0, a1, a2, a3, a4, a5};
-    set_args(vals);
+    set_args();
 
     for (u64 core = 0; core < cur_topo.cores; core++) {
         m2ndp_ids id = m2ndp_id_serial(&cur_topo, core, spad, M2NDP_SPAD_BYTES);
@@ -196,11 +195,20 @@ int launcher_main(void)
      * The range is `base` bytes into the first buffer: for the workloads here
      * base is zero and the range is the whole of it, but the offset is what a
      * task mapped onto part of a larger region would use. */
-    u64 params[M2NDP_MAX_BUFS];
+    if (c.argrec > M2NDP_MAX_ARGREC) {
+        say("the task's parameter block has wider fields than this build "
+            "reserves for\n");
+        return 2;
+    }
+    static unsigned char block[M2NDP_MAX_BUFS * M2NDP_MAX_ARGREC];
+    for (u64 i = 0; i < sizeof block; i++)
+        block[i] = 0;
     for (int i = 0; i < nbufs; i++)
-        params[i] = (u64)bufs[i].mem;
+        *(u64 *)(block + (u64)i * c.argrec) = (u64)bufs[i].mem;
+    cur_params = block;
+    cur_params_bytes = (u64)nbufs * c.argrec;
     u64 range = nbufs > 0 ? (u64)bufs[0].mem + c.base : c.base;
-    __m2ndp_rt_launch_task(range, c.size, params);
+    __m2ndp_rt_launch_task(range, c.size, (const u64 *)block);
 
     return write_outputs() ? 2 : 0;
 }

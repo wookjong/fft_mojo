@@ -134,10 +134,10 @@ below at negative offsets; they are reached inside loops, where an address
 computation would hoist out anyway.
 
 That ordering is also what keeps a global in the same place in every kernel
-of a task. `Histogram.initialize` takes no arguments, `Histogram.body` takes
-one — so anything placed *after* the arguments would sit at a different
-offset in each, and the kernels would stop sharing it. Placing them before
-the base makes the offset depend only on the task.
+of a task. The argument area is as wide as the task's parameter block, so
+anything placed *after* it would move whenever a task gained a buffer.
+Placing the globals before the base makes their offsets depend on the task's
+own globals and nothing else.
 
 ### Who decides the offsets, and why it is the compiler
 
@@ -207,23 +207,31 @@ the end of the buffer's live range.
 
 ## Kernel arguments
 
-A kernel is launched, not called. Its arguments are written into the
-argument area by the launcher, so there are no argument registers: each one
-is a load at a small offset from the base.
+A kernel is launched, not called, and takes no arguments. What it works on is
+the task's, and the launcher writes the task's parameter block into the
+argument area of every core's scratchpad before running a kernel there — so a
+kernel reads its buffers out of that block, each one a load at a small offset
+from the base.
 
 ```asm
 vector_add:
-  ld a1, 0(a0)       # arg0        a0 = scratchpad base
-  ld a2, 8(a0)       # arg1
-  ld a0, 16(a0)      # arg2
+  ld a1, 0(a0)       # p.a         a0 = scratchpad base
+  ld a2, 8(a0)       # p.b
+  ld a0, 16(a0)      # p.c
   ...
   ret
 ```
 
 One instruction each, and no address materialized — that is what the
-arguments-first layout buys. Narrow arguments still take a whole XLEN slot,
-as stack arguments do. The loads are marked invariant, since kernel
-arguments never change.
+arguments-first layout buys. The block is one pointer per buffer and nothing
+else, so it is as wide as the buffers a task names; the launcher is told that
+width rather than agreeing on one, and the length and direction of each buffer
+stay on the host, where the launch reads them. The loads are marked invariant,
+since a kernel's parameters do not change while it runs.
+
+The block's address is `llvm.riscv.m2ndp.scratchpad.base()`, reached from Mojo
+through `__m2ndp_task_params`. A kernel that declares an argument is rejected:
+nothing would have written it.
 
 **Vectors keep the ordinary register assignment.** The argument area holds
 what the launcher writes — scalars and pointers — and a vector is something

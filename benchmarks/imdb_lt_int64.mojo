@@ -39,47 +39,42 @@ from std.ffi import external_call
 from std.sys import argv, size_of
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id
-from m2ndp_host import Buffer
+from m2ndp_host import In, Out
 
 comptime W = 8   # int64 lanes per chunk; one bitmap byte covers exactly these
 
 
 @fieldwise_init
-struct ImdbParams(Copyable, Movable):
+struct ImdbParams(Movable):
     """What the host passes. `predicate` comes as a one-element buffer,
-    since the parameter block is addresses; `device_main` reads it and hands
-    the kernel the value."""
+    since the parameter block is addresses; the kernel dereferences it, so it
+    stays an Int64 rather than being widened on the way through."""
 
-    var column: UnsafePointer[Int64, MutAnyOrigin]
-    var bitmap: UnsafePointer[UInt8, MutAnyOrigin]
-    var predicate: UnsafePointer[Int64, MutAnyOrigin]
+    var column: In[Int64]
+    var bitmap: Out[UInt8]
+    var predicate: In[Int64]
 
 
 struct ImdbLtInt64(NDPTask):
+    comptime Params = ImdbParams
     comptime packet = W * size_of[Int64]()
 
     @staticmethod
-    def body(column: UnsafePointer[Int64, MutAnyOrigin],
-             bitmap: UnsafePointer[UInt8, MutAnyOrigin],
-             predicate: Int64):
+    def body():
         var i = global_uthread_id()
-        var v = column.load[width=W](i * W)
-        var mask = v.lt(predicate)            # SIMD[bool, W]
+        var v = ImdbLtInt64.params()[].column.ptr.load[width=W](i * W)
+        var mask = v.lt(ImdbLtInt64.params()[].predicate.ptr[0])   # SIMD[bool, W]
 
         # Pack the lanes into one bitmap byte.
         var bits = UInt8(0)
         comptime for lane in range(W):
             if mask[lane]:
                 bits |= UInt8(1 << lane)
-        bitmap[i] = bits
+        ImdbLtInt64.params()[].bitmap.ptr[i] = bits
 
     @staticmethod
-    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
-        var p = params.bitcast[ImdbParams]()
-        external_call["__m2ndp_launch_parallel", NoneType](
-            ImdbLtInt64.body, Int(p[].column), Int(p[].bitmap),
-            Int(p[].predicate[0]), Int(0), Int(0), Int(0)
-        )
+    def device_main(params: UnsafePointer[ImdbParams, MutAnyOrigin]):
+        external_call["__m2ndp_launch_parallel", NoneType](ImdbLtInt64.body)
 
 
 # ------------------------------------------------------------ the host
@@ -110,7 +105,7 @@ def main() raises:
 
     var rc = ImdbLtInt64.launch(
         PooledRange.over(column),
-        Buffer.input(column), Buffer.output(bitmap), Buffer.input(predicate)
+        ImdbParams(column, bitmap, predicate)
     )
     if rc != 0:
         print("[host] imdb_lt_int64 failed, exit", rc)

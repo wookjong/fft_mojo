@@ -23,7 +23,7 @@ Last updated: 2026-07-24, against Mojo `1.0.0b2.dev2026061203`.
 | Predicate scan | `v.lt(x)` selects `vmslt.vx` |
 | Multi-kernel modules | several kernels per file, held by one task struct; none exported — naming a kernel from `device_main` is what keeps it alive |
 | Tasks | a struct conforming to `NDPTask` carries its kernels, its `device_main`, and the target, machine and packet size it runs with |
-| Launching from the host | `Histogram.launch(base, size, Buffer.input(xs), Buffer.output(ys))` — compiled for the task's target, run under Spike, results downloaded into the caller's lists |
+| Launching from the host | `Histogram.launch(PooledRange.over(xs), HistogramParams(xs, ys))` — compiled for the task's target, run under Spike, results downloaded into the caller's lists |
 
 Benchmarks ported from
 [M2NDP-public](https://github.com/PSAL-POSTECH/M2NDP-public) — 6 of ~23. All
@@ -142,19 +142,35 @@ parametric function -- or the host deriving order from the struct, which
 needs field reflection. `__fields__`, `__field_names__`, `fields_of[T]()` and
 `__type_of(T).__fields__` were all tried; none exists.
 
-What *is* available: traits carry associated types (`comptime Params:
-AnyType` compiles), and `size_of[T.Params]()` is a compile-time value. Since
-the parameter block is all addresses, that gives the field count, so an arity
-check is possible. It is not implemented, because it catches the least
+The unchecked half is the host boundary only. `NDPTask` carries the block as
+an associated type (`comptime Params: AnyType`); the trait-declared
+`device_main` is typed against it and every kernel takes it, so from
+`device_main` inward the parameters are one declaration and the compiler
+checks the names and the types. The single cast lives in
+`__m2ndp_rt_launch_task`, where the untypedness comes from.
+
+`size_of[T.Params]()` is also a compile-time value, and since the block is all
+addresses that gives the field count, so an arity check against the number of
+buffers passed is possible. It is not implemented: it catches the least
 dangerous of the three mistakes and would read as a guarantee it is not.
 
 **Kernel launches cannot be wrapped.** A workload writes them out as
 `external_call` to `__m2ndp_launch_serial` and `__m2ndp_launch_parallel`,
-padding the unused argument slots with zeros. A library wrapper would hide
-both, and cannot: `external_call` accepts a function only where it is named
-at the call site. Passed on through a wrapper it fails to convert, as a
-runtime argument and as a compile-time parameter alike, and with every
-spelling of the function type.
+naming a kernel and nothing else. A
+library wrapper cannot hide that: `external_call` accepts a function only
+where it is named at the call site. Passed on through a wrapper it fails to
+convert, as a runtime argument and as a compile-time parameter alike, and with
+every spelling of the function type -- a declared function's type carries its
+name, so `def body(p: T) -> None` will not convert to `def(p: T) -> None` even
+where the signatures match exactly.
+
+Passing the kernel's *address* compiles and is worse than not wrapping.
+`UnsafePointer(to=k)` is the address of a slot holding the function rather
+than the function, so the launcher is handed one indirection too many; and the
+IR stores the kernel address into that slot, which leaves the function's only
+use a `store` rather than a launch. `isM2ndpKernel` then cannot see it
+launched, and the kernel compiles with the ordinary ABI, silently. The store
+does not optimise away either, since the slot's address escapes into the call.
 
 **A variadic's length is not a compile-time value.** `comptime n =
 len(args)` is rejected as a dynamic value, so anything derived from how many

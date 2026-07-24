@@ -51,22 +51,24 @@ from m2ndp import (
     atomic_add_indexed,
     scratchpad,
 )
-from m2ndp_host import Buffer
+from m2ndp_host import In, Out
 
 comptime BINS = 256
 comptime UNROLL = 16
 
 
 @fieldwise_init
-struct HistogramParams(Copyable, Movable):
-    """What the host passes. The layout is the interface: `main` below hands
-    the buffers over in this order, and nothing checks that the two agree."""
+struct HistogramParams(Movable):
+    """The task's parameters, declared once for both sides. `main` builds one
+    of these and the kernels read it."""
 
-    var samples: UnsafePointer[Int32, MutAnyOrigin]
-    var out_hist: UnsafePointer[Int32, MutAnyOrigin]
+    var samples: In[Int32]
+    var out_hist: Out[Int32]
 
 
 struct Histogram(NDPTask):
+    comptime Params = HistogramParams
+
     # One packet is UNROLL samples. In terms of UNROLL so it stays in step
     # with what the body loads.
     comptime packet = UNROLL * size_of[Int32]()
@@ -76,14 +78,19 @@ struct Histogram(NDPTask):
 
     @staticmethod
     def initialize():
-        """INITIALIZER: zero this core's bins."""
+        """INITIALIZER: zero this core's bins.
+
+        Takes the parameter block and does not read it. Every kernel is handed
+        it whether it wants it or not, which is what lets them all have one
+        signature.
+        """
         var i = local_uthread_id()
         while i < BINS:
             Histogram.bins[i] = 0
             i += group_size()
 
     @staticmethod
-    def body(samples: UnsafePointer[Int32, MutAnyOrigin]):
+    def body():
         """KERNELBODY: tally this µthread's samples into the core-local bins.
 
         One indexed vector atomic over the whole chunk, as in the reference:
@@ -91,21 +98,21 @@ struct Histogram(NDPTask):
         its own bin.
         """
         var base = global_uthread_id() * UNROLL
-        var chunk = (samples + base).load[width=UNROLL]()
+        var chunk = (Histogram.params()[].samples.ptr + base).load[width=UNROLL]()
         _ = atomic_add_indexed(
             Histogram.bins, chunk * 4, SIMD[DType.int32, UNROLL](1)
         )
 
     @staticmethod
-    def finalize(out_hist: UnsafePointer[Int32, MutAnyOrigin]):
+    def finalize():
         """FINALIZER: fold this core's bins into the global histogram."""
         var i = local_uthread_id()
         while i < BINS:
-            _ = atomic_add(out_hist + i, Histogram.bins[i])
+            _ = atomic_add(Histogram.params()[].out_hist.ptr + i, Histogram.bins[i])
             i += group_size()
 
     @staticmethod
-    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
+    def device_main(params: UnsafePointer[HistogramParams, MutAnyOrigin]):
         """The task, as the device runs it.
 
         The three kernels are the reason the launch kind matters. The body is
@@ -121,16 +128,9 @@ struct Histogram(NDPTask):
         no barrier to arrange that inside a kernel; a launch boundary is the
         only synchronization point the model has.
         """
-        var p = params.bitcast[HistogramParams]()
-        external_call["__m2ndp_launch_serial", NoneType](
-            Histogram.initialize, Int(0), Int(0), Int(0), Int(0), Int(0), Int(0)
-        )
-        external_call["__m2ndp_launch_parallel", NoneType](
-            Histogram.body, Int(p[].samples), Int(0), Int(0), Int(0), Int(0), Int(0)
-        )
-        external_call["__m2ndp_launch_serial", NoneType](
-            Histogram.finalize, Int(p[].out_hist), Int(0), Int(0), Int(0), Int(0), Int(0)
-        )
+        external_call["__m2ndp_launch_serial", NoneType](Histogram.initialize)
+        external_call["__m2ndp_launch_parallel", NoneType](Histogram.body)
+        external_call["__m2ndp_launch_serial", NoneType](Histogram.finalize)
 
 
 # ------------------------------------------------------------ the host
@@ -164,9 +164,7 @@ def main() raises:
         expect[s] += 1
 
     var rc = Histogram.launch(
-        PooledRange.over(samples),
-        Buffer.input(samples),
-        Buffer.output(hist),
+        PooledRange.over(samples), HistogramParams(samples, hist)
     )
     if rc != 0:
         print("[host] histogram failed, exit", rc)

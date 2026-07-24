@@ -48,8 +48,16 @@ check "RVV vsetivli" \
       "test \$(grep -c 'vsetivli' out/vector_add.s) -ge 1 && echo yes" "yes"
 check "RVV vector load/add/store" \
       "test \$(grep -cE 'vle32\.v|vadd\.vv|vse32\.v' out/vector_add.s) -ge 3 && echo yes" "yes"
+# An index is loaded, widened, and used to address the values -- x[col_idx[k]].
+# Matched by that shape rather than by SSA numbers, which move whenever the
+# kernel gains or loses a load ahead of the loop.
 check "indirect access chain" \
-      "grep -q 'getelementptr inbounds float, ptr %2, i64' out/spmv.ll && echo yes" "yes"
+      "grep -A1 'sext i32 .* to i64' out/spmv.ll | grep -qE 'getelementptr inbounds float, ptr %[0-9]+, i64 %[0-9]+' && echo yes" "yes"
+# A kernel takes no arguments -- its parameters are in the scratchpad -- so a
+# launch carries the kernel and nothing else. A second operand here would mean
+# a kernel taking arguments the launcher has nowhere to put.
+check "launches carry the kernel and nothing else" \
+      "grep -h 'call void @__m2ndp_launch_' out/*.ll | grep -cE ', (i64|ptr )' | tr -d ' '" "0"
 # The task's three kernels. None is exported: a kernel named as a value becomes
 # a closure, and that closure is what device_main launches, so the exported
 # original would only be a second unused copy of the same code.

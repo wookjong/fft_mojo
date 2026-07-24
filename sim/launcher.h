@@ -22,17 +22,13 @@
 #include "launch.h"
 #include "topology.h"
 
-/* How many argument slots a kernel launch carries. Fixed rather than
- * per-kernel: the frontend allows one signature per external symbol name, so
- * a kernel taking five buffers and one taking none reach the same entry and
- * the difference is zeros. Six because spmv wants five and one spare costs a
- * word of scratchpad. */
-#define M2NDP_LAUNCH_ARGS 6
-
 /* Ceilings the launcher reserves for. A task with more than this does not fit
  * this build; the alternative is allocation, which a bare-metal launcher has
  * no allocator for. */
 #define M2NDP_MAX_BUFS 8
+/* Bytes of one field of a task's parameter block. The host says what the size
+ * really is; this is only what the launcher reserves room for. */
+#define M2NDP_MAX_ARGREC 64
 #define M2NDP_MAX_CORES 64
 #define M2NDP_SPAD_BYTES (64 * 1024)
 #define M2NDP_POOL_BYTES (4 * 1024 * 1024)
@@ -62,10 +58,14 @@ void __m2ndp_set_task_range(u64 base, u64 size);
  *
  * Neither takes a size: how much work there is was settled when the task was
  * launched. The backend also reads these names -- a function whose address
- * reaches one of them is a kernel. */
-void __m2ndp_launch_parallel(void (*kernel)(void), u64 a0, u64 a1, u64 a2,
-                             u64 a3, u64 a4, u64 a5);
-void __m2ndp_launch_serial(void (*kernel)(void), u64 a0, u64 a1, u64 a2,
-                           u64 a3, u64 a4, u64 a5);
+ * reaches one of them is a kernel.
+ *
+ * Neither carries the task's parameters either. A kernel takes no arguments:
+ * the block the task was launched with is copied into a core's scratchpad
+ * before a kernel runs there, and the kernel reads it from its own. So there
+ * is no argument list here whose length has to be agreed with a workload, and
+ * a kernel reads the fields it wants by name rather than by position. */
+void __m2ndp_launch_parallel(void (*kernel)(void));
+void __m2ndp_launch_serial(void (*kernel)(void));
 
 #endif

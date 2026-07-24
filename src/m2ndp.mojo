@@ -36,7 +36,10 @@ from std.collections.string.string_slice import _get_kgen_string
 # what keeps the dependency one-way: the model reaches for the machinery, never
 # the other way round.
 from m2ndp_host import (
-    Buffer,
+    Arg,
+    In,
+    Out,
+    _ArgRec,
     Config,
     Toolchain,
     _add_export_alias,
@@ -138,6 +141,40 @@ trait NDPTask:
     to pass the kernel on. Those symbol names are load-bearing besides -- the
     backend decides which functions are kernels by seeing their addresses
     reach them, so a kernel that is never launched is not one.
+
+    Each of those launches names a kernel and nothing else. A kernel takes no
+    arguments: the launcher copies the task's parameters into every core's
+    scratchpad before running one there, and the kernel reads them with
+    `Self.params()`. One pair of launch symbols serves every kernel of every
+    task, so there is one signature to agree on, and the empty one leaves
+    nothing to pad and no positions to line up -- a kernel names the fields it
+    wants and the compiler checks the names and the types. Our backend enforces
+    it, since the frontend cannot: a kernel declaring an argument is a compile
+    error rather than a wrong answer.
+    """
+
+    comptime Params: Movable
+    """This task's arguments, declared once for both sides of the launch.
+
+    A struct of the task's own, one `In` or `Out` field per buffer:
+
+        @fieldwise_init
+        struct HistogramParams(Movable):
+            var samples: In[Int32]
+            var out_hist: Out[Int32]
+
+        struct Histogram(NDPTask):
+            comptime Params = HistogramParams
+
+    The host builds one from its lists and `launch` takes it; on the device
+    `device_main` is handed the same block and the kernels read it from the
+    scratchpad through `Self.params()`, typed either way. One declaration
+    serving both ends is what leaves them no order to disagree about, and the
+    single cast from what the host filled happens in `__m2ndp_rt_launch_task`
+    below, so no workload writes one.
+
+    Which buffers go up and which come back is in the field types, so a caller
+    names its lists and nothing else. See `Arg` in m2ndp_host.mojo.
     """
 
     comptime packet: Int
@@ -170,17 +207,45 @@ trait NDPTask:
     """
 
     @staticmethod
-    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
+    def device_main(params: UnsafePointer[Self.Params, MutAnyOrigin]):
         """Which kernels run, in what order. One per task.
 
         Arguments arrive the way CUDA's do: one pointer to a block the host
-        filled in, which the task casts to a struct of its own. Not a
-        parameter each -- `@export` cannot be applied to a parametric
-        function, so the entry point below has one fixed signature, and a
-        parameter per argument would cap how many a task could take. A struct
-        has no such ceiling and carries names and types rather than positions.
+        filled in. Not a parameter each -- `@export` cannot be applied to a
+        parametric function, so the entry point below has one fixed signature,
+        and a parameter per argument would cap how many a task could take. A
+        struct has no such ceiling and carries names and types rather than
+        positions.
+
+        Typed, because `Params` says what the block is. The pointer arrives
+        here already cast and goes to the kernels as it stands, so the cast
+        exists once, below, rather than in every kernel of every task.
         """
         ...
+
+    @staticmethod
+    def params() -> UnsafePointer[Self.Params, MutAnyOrigin]:
+        """This task's parameters, where a kernel reads them.
+
+            var chunk = Histogram.params()[].samples.ptr.load[width=W](i)
+
+        The launcher copies the block the task was launched with into every
+        core's scratchpad before running a kernel there, so this is a read of
+        the base register the hardware supplies and each field is a constant
+        offset from it -- an access is one instruction, the way a scratchpad
+        global is.
+
+        This is why a kernel takes no arguments. Everything it works on is the
+        task's, and the task's parameters are somewhere it can already reach;
+        the backend rejects a kernel that declares an argument, since nothing
+        would have written it.
+
+        Kernels only. `device_main` runs on the controller, which has no
+        scratchpad of its own and is handed the block directly.
+        """
+        return external_call[
+            "__m2ndp_task_params", UnsafePointer[Self.Params, MutAnyOrigin]
+        ]()
 
     @export
     @staticmethod
@@ -199,9 +264,14 @@ trait NDPTask:
         kernel can be launched: a task is launched over a memory range, and
         that range is what settles how many µthreads there are. The parameter
         block only travels through.
+
+        The one cast in the system is here. What the host fills is bytes and
+        arrives untyped, because this signature is fixed for every task; what
+        the task works in is `Params`. Doing it once, at the boundary the
+        untypedness actually comes from, is what keeps it out of the kernels.
         """
         external_call["__m2ndp_set_task_range", NoneType](base, size)
-        Self.device_main(params)
+        Self.device_main(params.bitcast[Self.Params]())
 
     # ------------------------------------------------------------ launching
     #
@@ -257,14 +327,19 @@ trait NDPTask:
         return False
 
     @staticmethod
-    def launch(region: PooledRange, *bufs: Buffer) raises -> Int:
-        """Run this task over `region` with these buffers.
+    def launch(region: PooledRange, ref params: Self.Params) raises -> Int:
+        """Run this task over `region` with this parameter block.
 
             _ = Histogram.launch(PooledRange.over(samples),
-                                 Buffer.input(samples), Buffer.output(hist))
+                                 HistogramParams(samples, hist))
 
-        Naming the task is the whole of it. The device code is compiled here,
-        for the target the task declares; the buffers are uploaded, the task
+        The same block `device_main` is handed, so the two agree on what a
+        task's arguments are by being the one declaration. Which buffer is an
+        input and which an output is in `Params`, not here, so a caller names
+        its lists and nothing else.
+
+        Naming the task is the rest of it. The device code is compiled here,
+        for the target the task declares; the inputs are uploaded, the task
         runs, and the outputs are downloaded back into the caller's lists.
 
         `region` is what the task is mapped over, and dividing it by the
@@ -284,17 +359,21 @@ trait NDPTask:
         var tc = Toolchain()
         var work = _mktemp()
 
+        # The block's fields, as records whose element types are forgotten.
+        # Mojo has no field reflection, so the count comes from the block's
+        # size: every field is an `Arg` and they are all one size.
+        var nargs = size_of[Self.Params]() // size_of[_ArgRec]()
+        var args = UnsafePointer(to=params).bitcast[_ArgRec]()
+
         # Upload the inputs, and describe every buffer for the launcher's
         # command line: direction, byte length, and the file it lives in.
         var specs = String("")
-        for i in range(len(bufs)):
+        for i in range(nargs):
             var file = work + "/buf" + String(i) + ".bin"
-            if not bufs[i].is_out:
-                _write_bytes(
-                    file, Int(bufs[i].data.unsafe_ptr()), bufs[i].nbytes
-                )
-            var dir = String("1") if bufs[i].is_out else String("0")
-            specs += dir + " " + String(bufs[i].nbytes) + " " + file + " "
+            if not args[i].is_out():
+                _write_bytes(file, args[i].data(), args[i].nbytes())
+            var dir = String("1") if args[i].is_out() else String("0")
+            specs += dir + " " + String(args[i].nbytes()) + " " + file + " "
 
         var ll = work + "/task.ll"
         var obj = work + "/task.o"
@@ -319,20 +398,26 @@ trait NDPTask:
             )
         if rc == 0:
             # The machine parameters and the range lead the command line, then
-            # the buffer specs.
+            # the field size and the buffer specs. The launcher writes each
+            # buffer's device address into the block it hands the task, and
+            # that size is all it needs to know about a layout only Mojo has.
             rc = _run(
                 tc.spike + " " + tc.memory + " --extlib=" + tc.extlib
                 + " --extension=m2ndp --isa=" + tc.isa + " " + elf + " "
                 + String(machine.cores) + " " + String(machine.interleave) + " "
                 + String(Self.packet) + " " + String(region.base) + " "
-                + String(region.size) + " " + String(len(bufs)) + " " + specs
+                + String(region.size) + " " + String(nargs) + " "
+                + String(size_of[_ArgRec]()) + " " + specs
             )
         if rc == 0:
-            for i in range(len(bufs)):
-                if bufs[i].is_out:
+            for i in range(nargs):
+                if args[i].is_out():
                     _read_bytes(
                         work + "/buf" + String(i) + ".bin",
-                        bufs[i].out_ptr(), bufs[i].nbytes,
+                        UnsafePointer[UInt8, MutAnyOrigin](
+                            unsafe_from_address=args[i].data()
+                        ),
+                        args[i].nbytes(),
                     )
 
         _ = _run(String("rm -rf ") + work)

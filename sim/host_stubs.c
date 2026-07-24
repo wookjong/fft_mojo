@@ -30,22 +30,25 @@ void __m2ndp_set_task_range(unsigned long base, unsigned long size)
     host_side("__m2ndp_set_task_range");
 }
 
-void __m2ndp_launch_parallel(void (*kernel)(void), unsigned long a0,
-                             unsigned long a1, unsigned long a2,
-                             unsigned long a3, unsigned long a4,
-                             unsigned long a5)
+void __m2ndp_launch_parallel(void (*kernel)(void))
 {
-    (void)kernel; (void)a0; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    (void)kernel;
     host_side("__m2ndp_launch_parallel");
 }
 
-void __m2ndp_launch_serial(void (*kernel)(void), unsigned long a0,
-                           unsigned long a1, unsigned long a2,
-                           unsigned long a3, unsigned long a4,
-                           unsigned long a5)
+void __m2ndp_launch_serial(void (*kernel)(void))
 {
-    (void)kernel; (void)a0; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    (void)kernel;
     host_side("__m2ndp_launch_serial");
+}
+
+/* Where a kernel reads the task's parameters. On the device this never
+ * survives to a call -- the backend rewrites it into a read of the scratchpad
+ * base -- but a host build still has to link. */
+void *__m2ndp_task_params(void)
+{
+    host_side("__m2ndp_task_params");
+    return 0;
 }
 
 /* The indexed vector atomics. Declared without their real signatures, which

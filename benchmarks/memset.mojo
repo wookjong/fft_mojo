@@ -17,36 +17,34 @@ from std.ffi import external_call
 from std.sys import argv
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id
-from m2ndp_host import Buffer
+from m2ndp_host import In, Out
 
 comptime W = 32   # uint8 lanes per chunk
 
 
 @fieldwise_init
-struct MemsetParams(Copyable, Movable):
+struct MemsetParams(Movable):
     """What the host passes. `value` arrives as a one-element buffer rather
     than a scalar: the parameter block the host fills is addresses, so a
-    scalar has to be somewhere to have an address. `device_main` reads it and
-    hands the kernel the value, which is why the kernel still takes one."""
+    scalar has to be somewhere to have an address. The kernel dereferences it
+    where it needs it, keeping the byte a byte the whole way."""
 
-    var dst: UnsafePointer[UInt8, MutAnyOrigin]
-    var value: UnsafePointer[UInt8, MutAnyOrigin]
+    var dst: Out[UInt8]
+    var value: In[UInt8]
 
 
 struct Memset(NDPTask):
+    comptime Params = MemsetParams
     comptime packet = W   # W uint8 lanes is W bytes
 
     @staticmethod
-    def body(dst: UnsafePointer[UInt8, MutAnyOrigin], value: UInt8):
+    def body():
         var i = global_uthread_id() * W
-        dst.store(i, SIMD[DType.uint8, W](value))
+        Memset.params()[].dst.ptr.store(i, SIMD[DType.uint8, W](Memset.params()[].value.ptr[0]))
 
     @staticmethod
-    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
-        var p = params.bitcast[MemsetParams]()
-        external_call["__m2ndp_launch_parallel", NoneType](
-            Memset.body, Int(p[].dst), Int(p[].value[0]), Int(0), Int(0), Int(0), Int(0)
-        )
+    def device_main(params: UnsafePointer[MemsetParams, MutAnyOrigin]):
+        external_call["__m2ndp_launch_parallel", NoneType](Memset.body)
 
 
 # ------------------------------------------------------------ the host
@@ -71,7 +69,7 @@ def main() raises:
     value[0] = 0xAB
 
     var rc = Memset.launch(
-        PooledRange.over(dst), Buffer.output(dst), Buffer.input(value)
+        PooledRange.over(dst), MemsetParams(dst, value)
     )
     if rc != 0:
         print("[host] memset failed, exit", rc)

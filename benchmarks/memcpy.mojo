@@ -18,34 +18,31 @@ from std.ffi import external_call
 from std.sys import argv, size_of
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id
-from m2ndp_host import Buffer
+from m2ndp_host import In, Out
 
 comptime W = 8   # int32 lanes per chunk
 
 
 @fieldwise_init
-struct MemcpyParams(Copyable, Movable):
+struct MemcpyParams(Movable):
     """What the host passes, in the order it hands the buffers over."""
 
-    var src: UnsafePointer[Int32, MutAnyOrigin]
-    var dst: UnsafePointer[Int32, MutAnyOrigin]
+    var src: In[Int32]
+    var dst: Out[Int32]
 
 
 struct Memcpy(NDPTask):
+    comptime Params = MemcpyParams
     comptime packet = W * size_of[Int32]()
 
     @staticmethod
-    def body(src: UnsafePointer[Int32, MutAnyOrigin],
-             dst: UnsafePointer[Int32, MutAnyOrigin]):
+    def body():
         var i = global_uthread_id() * W
-        dst.store(i, src.load[width=W](i))
+        Memcpy.params()[].dst.ptr.store(i, Memcpy.params()[].src.ptr.load[width=W](i))
 
     @staticmethod
-    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
-        var p = params.bitcast[MemcpyParams]()
-        external_call["__m2ndp_launch_parallel", NoneType](
-            Memcpy.body, Int(p[].src), Int(p[].dst), Int(0), Int(0), Int(0), Int(0)
-        )
+    def device_main(params: UnsafePointer[MemcpyParams, MutAnyOrigin]):
+        external_call["__m2ndp_launch_parallel", NoneType](Memcpy.body)
 
 
 # ------------------------------------------------------------ the host
@@ -72,7 +69,7 @@ def main() raises:
         src[i] = Int32((state >> 8) % 2000 - 1000)
 
     var rc = Memcpy.launch(
-        PooledRange.over(src), Buffer.input(src), Buffer.output(dst)
+        PooledRange.over(src), MemcpyParams(src, dst)
     )
     if rc != 0:
         print("[host] memcpy failed, exit", rc)

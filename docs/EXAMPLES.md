@@ -20,21 +20,31 @@ Contents:
 comptime W = 8
 
 struct VectorAdd(NDPTask):
+    comptime Params = VectorAddParams        # var a, b, c
+
     @staticmethod
-    def body(a: ..., b: ..., c: ...):
+    def body():
+        var p = VectorAdd.params()
         var i = global_uthread_id() * W
-        c.store(i, a.load[width=W](i) + b.load[width=W](i))
+        p[].c.ptr.store(i, p[].a.ptr.load[width=W](i) + p[].b.ptr.load[width=W](i))
 ```
 
 ```llvm
-%4  = call i32 @__m2ndp_global_uthread_id()
-%6  = mul i64 %5, 8
-%7  = getelementptr inbounds i32, ptr %0, i64 %6
-%8  = load <8 x i32>, ptr %7, align 4
-%10 = load <8 x i32>, ptr %9, align 4
-%11 = add <8 x i32> %8, %10
-      store <8 x i32> %11, ptr %12, align 4
+%1  = call i32 @__m2ndp_global_uthread_id()
+%3  = mul i64 %2, 8
+%4  = call ptr @__m2ndp_task_params()               ; the block, in scratchpad
+%8  = getelementptr {...}, ptr %4, i32 0, i32 0     ; p.a
+%10 = load ptr, ptr %9, align 8
+%11 = getelementptr inbounds i32, ptr %10, i64 %3
+%12 = load <8 x i32>, ptr %11, align 4
+%14 = add <8 x i32> %12, %13                        ; p.b the same way
+      store <8 x i32> %14, ptr %16, align 4         ; p.c
 ```
+
+The kernel takes no arguments. `__m2ndp_task_params()` becomes a read of the
+scratchpad base, each buffer is a field at a constant offset from it, and the
+repeated reads fold together — the intrinsic behind the symbol is
+`IntrNoMem` and speculatable, so one load per buffer survives.
 
 `SIMD[int32, 8]` becomes a native vector type and the RISC-V backend selects
 RVV for it — `vsetvli` / `vle32.v` / `vadd.vv` / `vse32.v`, with the ISA
@@ -97,10 +107,9 @@ If M²NDP wants gather semantics or a prefetch hint on the second load, that
 is a backend pattern-match on this shape. The `fmul`/`fadd contract` pair
 also fuses into a single `fmadd.s` in the assembly.
 
-Note `__m2ndp_group_size` is called **inside** the loop: it is an opaque
-external call, so LLVM cannot prove it loop-invariant and will not hoist it.
-Marking the eventual intrinsics `readnone`/`speculatable` fixes this. It is
-the concrete cost of the external-symbol approach.
+`__m2ndp_group_size` is read once, before the loop: it lowers to an
+`IntrNoMem` speculatable intrinsic over a live-in register, which LLVM can
+prove loop-invariant and hoist.
 
 ### 2.2 Combining without a barrier
 

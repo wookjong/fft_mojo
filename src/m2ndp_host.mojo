@@ -58,63 +58,149 @@ def _add_export_alias(ir: String, path: String) raises:
 # ---------------------------------------------------------------- host memory
 
 
-struct Buffer(Copyable, Movable):
-    """A host buffer handed to a task, and which way it goes.
+struct Arg[T: Copyable & Movable, writes: Bool](Movable):
+    """One field of a task's parameter block: a buffer, and which way it goes.
 
-    An input carries a *copy* of the caller's bytes, taken when the buffer is
-    made. An output carries the caller's *address*, written back into after the
-    run. The asymmetry is deliberate, and it is about lifetimes.
+    A task declares its parameters once and both sides read that declaration:
 
-    A buffer that only remembered an address would not keep the list it points
-    at alive: the list's last mention is the `Buffer.input(xs)` that made the
-    buffer, so nothing stops it being freed before the launch reads it -- and
-    the upload would dump whatever reused that memory. Copying the bytes up
-    front, while the list is still the argument being evaluated, sidesteps that
-    entirely. An output escapes it the other way: the caller reads its list
-    after the launch, so it is alive across the call by construction.
+        @fieldwise_init
+        struct HistogramParams(Movable):
+            var samples: In[Int32]
+            var out_hist: Out[Int32]
 
-    Bytes rather than elements, because at this level a buffer is just memory
-    to move to and from a file. The task's own params struct is what gives the
-    bytes a type again on the device.
+    On the host a field is built from the caller's list, which is why `launch`
+    takes lists and nothing else -- direction and element type are properties
+    of the parameter, so they belong in the declaration rather than at every
+    call site. On the device the same field is where the launcher put the
+    buffer, read back out with `ptr()`.
+
+    An input carries a *copy* of the caller's bytes, taken when the block is
+    built. An output carries the caller's *address*, written back into after
+    the run. The asymmetry is about lifetimes: a field that only remembered an
+    address would not keep the list it points at alive, and the list's last
+    mention is often the very expression that built the block, so nothing would
+    stop it being freed before the upload reads it. An output escapes that the
+    other way, since the caller reads its list after the launch and it is alive
+    across the call by construction.
+
+    **One pointer, and nothing else.** A parameter block is as big as the
+    buffers it names -- eight bytes a field -- so what the device carries is
+    the task's, not the runtime's. Everything a launch needs to know about a
+    buffer besides its address lives in a descriptor beside the bytes, off to
+    one side of the block entirely.
+
+    That the block is one uniform word per field is also what lets `launch`
+    walk it: Mojo has no field reflection, so the number of fields comes from
+    dividing the block's size by one field's, and each is read as an `_ArgRec`.
     """
 
-    var data: List[UInt8]  # an input's copied bytes; empty for an output
-    var out_addr: Int      # an output's destination; 0 for an input
-    var nbytes: Int
-    var is_out: Bool
+    var ptr: UnsafePointer[Self.T, MutAnyOrigin]
+    """Where the buffer is -- and the only thing a kernel wants.
 
-    def __init__(out self, var data: List[UInt8], out_addr: Int, nbytes: Int,
-                 is_out: Bool):
-        self.data = data^
-        self.out_addr = out_addr
-        self.nbytes = nbytes
-        self.is_out = is_out
+    Two values live here in turn. On the host it addresses this field's
+    descriptor, which is where `launch` reads the length and direction from.
+    The launcher then overwrites it with the address the buffer landed at on
+    the device, and that is what a kernel loads. Neither side sees the other's,
+    since the host block stays on the host and the copy in the scratchpad is
+    written by the launcher.
 
-    @staticmethod
-    def input[T: Copyable & Movable](ref data: List[T]) -> Buffer:
-        """A buffer the task reads. Its bytes are copied now, then uploaded."""
-        var n = len(data) * size_of[T]()
-        var src = data.unsafe_ptr().bitcast[UInt8]()
-        var copy = List[UInt8](capacity=n)
-        for i in range(n):
-            copy.append(src[i])
-        return Buffer(copy^, 0, n, False)
+    A pointer rather than an address: reading it is then a field load, where
+    converting an integer to a pointer costs a stack slot that survives into
+    the kernel's frame, our llc not being asked to run the passes that would
+    remove it."""
 
-    @staticmethod
-    def output[T: Copyable & Movable](ref data: List[T]) -> Buffer:
-        """A buffer the task writes. Downloaded after the run, into `data`.
-
-        Pass a list already sized to hold the result; the run fills it. Keep it
-        in scope until the launch returns -- reading the result does that."""
-        return Buffer(
-            List[UInt8](), Int(data.unsafe_ptr().bitcast[UInt8]()),
-            len(data) * size_of[T](), True,
+    @implicit
+    def __init__(out self, ref data: List[Self.T]):
+        """Build from the caller's list. Implicit, so a workload names the list
+        and nothing else."""
+        var n = len(data) * size_of[Self.T]()
+        # The descriptor, and for an input the copy immediately after it. One
+        # allocation, freed below. Straight from libc: this is host-only, and
+        # a `List` would carry its own three words for nothing.
+        var d = external_call["malloc", UnsafePointer[Int, MutAnyOrigin]](
+            _DESC_BYTES + (0 if Self.writes else n)
+        )
+        d[_D_NBYTES] = n
+        d[_D_IS_OUT] = 1 if Self.writes else 0
+        comptime if Self.writes:
+            # An output is downloaded straight back into the caller's list,
+            # which is alive across the launch by construction -- the caller
+            # reads the result afterwards.
+            d[_D_DATA] = Int(data.unsafe_ptr())
+        else:
+            # An input is copied now, while the list is still the expression
+            # being evaluated. A field that only remembered the address would
+            # not keep the list alive, and its last mention is often the very
+            # expression that built the block.
+            var dst = UnsafePointer[UInt8, MutAnyOrigin](
+                unsafe_from_address=Int(d) + _DESC_BYTES
+            )
+            var src = UnsafePointer[UInt8, MutAnyOrigin](
+                unsafe_from_address=Int(data.unsafe_ptr())
+            )
+            for i in range(n):
+                dst[i] = src[i]
+            d[_D_DATA] = Int(d) + _DESC_BYTES
+        self.ptr = UnsafePointer[Self.T, MutAnyOrigin](
+            unsafe_from_address=Int(d)
         )
 
-    def out_ptr(self) -> UnsafePointer[UInt8, MutAnyOrigin]:
-        return UnsafePointer[UInt8, MutAnyOrigin](
-            unsafe_from_address=self.out_addr
+    def __del__(deinit self):
+        """Frees the descriptor, and an input's copy along with it.
+
+        Not `Copyable`: duplicating one would have to duplicate what it owns,
+        and nothing needs to -- `launch` takes the block by reference. Leaving
+        it out makes an accidental copy a compile error instead."""
+        _ = external_call["free", NoneType](
+            UnsafePointer[UInt8, MutAnyOrigin](
+                unsafe_from_address=Int(self.ptr)
+            )
         )
+
+    # What `launch` reads, through a block whose element types it has
+    # forgotten. Read from the descriptor rather than from `writes`, which an
+    # erased field no longer carries.
+
+    @always_inline
+    def _desc(self) -> UnsafePointer[Int, MutAnyOrigin]:
+        return UnsafePointer[Int, MutAnyOrigin](
+            unsafe_from_address=Int(self.ptr)
+        )
+
+    @always_inline
+    def nbytes(self) -> Int:
+        return self._desc()[_D_NBYTES]
+
+    @always_inline
+    def is_out(self) -> Bool:
+        return self._desc()[_D_IS_OUT] != 0
+
+    @always_inline
+    def data(self) -> Int:
+        """The bytes themselves: an input's copy, or an output's destination."""
+        return self._desc()[_D_DATA]
+
+
+# A field's descriptor, in words. Host-side only; it never reaches the device.
+comptime _D_NBYTES = 0
+comptime _D_DATA = 1
+comptime _D_IS_OUT = 2
+comptime _DESC_BYTES = 3 * size_of[Int]()
+
+
+comptime In[T: Copyable & Movable] = Arg[T, False]
+"""A buffer the task reads."""
+
+comptime Out[T: Copyable & Movable] = Arg[T, True]
+"""A buffer the task writes. Pass a list already sized to hold the result and
+keep it in scope until the launch returns; reading the result does that."""
+
+comptime _ArgRec = Arg[UInt8, False]
+"""One field of a parameter block with its element type forgotten.
+
+`Arg`'s layout does not depend on its parameters, so a block of any task's
+fields can be walked as these. That is how `launch` finds what to upload
+without field reflection, which Mojo does not have."""
 
 
 def _write_bytes(path: String, addr: Int, nbytes: Int) raises:

@@ -26,35 +26,36 @@ from std.ffi import external_call
 from std.sys import argv, size_of
 
 from m2ndp import NDPTask, PooledRange, global_uthread_id
-from m2ndp_host import Buffer
+from m2ndp_host import In, Out
 
 comptime W = 8   # int32 lanes per chunk, one packet's worth
 
 
 @fieldwise_init
-struct VectorAddParams(Copyable, Movable):
+struct VectorAddParams(Movable):
     """What the host passes. The layout is the interface: `main` below hands
     the buffers over in this order, and nothing checks that the two agree."""
 
-    var a: UnsafePointer[Int32, MutAnyOrigin]
-    var b: UnsafePointer[Int32, MutAnyOrigin]
-    var c: UnsafePointer[Int32, MutAnyOrigin]
+    var a: In[Int32]
+    var b: In[Int32]
+    var c: Out[Int32]
 
 
 struct VectorAdd(NDPTask):
     # One packet is one chunk: W int32 lanes. Written in terms of W so it
     # cannot drift from what the kernel indexes by.
+    comptime Params = VectorAddParams
     comptime packet = W * size_of[Int32]()
 
     @staticmethod
-    def body(a: UnsafePointer[Int32, MutAnyOrigin],
-             b: UnsafePointer[Int32, MutAnyOrigin],
-             c: UnsafePointer[Int32, MutAnyOrigin]):
+    def body():
         var i = global_uthread_id() * W
-        c.store(i, a.load[width=W](i) + b.load[width=W](i))
+        VectorAdd.params()[].c.ptr.store(
+            i, VectorAdd.params()[].a.ptr.load[width=W](i) + VectorAdd.params()[].b.ptr.load[width=W](i)
+        )
 
     @staticmethod
-    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
+    def device_main(params: UnsafePointer[VectorAddParams, MutAnyOrigin]):
         """The task, as the device runs it: one kernel over the range.
 
         `device_main` decides the sequence of kernels, so a workload of
@@ -67,15 +68,15 @@ struct VectorAdd(NDPTask):
         task was launched over its range; a kernel launch says what to run and
         with what, and nothing about how much.
 
-        The kernel's argument slots are always six because `external_call`
-        allows one signature per symbol name, and a kernel taking five buffers
-        -- spmv's -- has to reach the same launcher entry as one taking none.
-        Unused slots are zero. See docs/INTERFACE.md.
+        Every kernel takes the same one argument: this same parameter block,
+        passed straight on. `external_call` allows one signature per symbol
+        name, and a kernel taking five buffers -- spmv's -- has to reach the
+        same launcher entry as one taking none; handing all of them the block
+        is what makes that one signature, with no padding to count and no
+        positions to line up. A kernel reads the fields it wants by name.
+        See docs/INTERFACE.md.
         """
-        var p = params.bitcast[VectorAddParams]()
-        external_call["__m2ndp_launch_parallel", NoneType](
-            VectorAdd.body, Int(p[].a), Int(p[].b), Int(p[].c), Int(0), Int(0), Int(0)
-        )
+        external_call["__m2ndp_launch_parallel", NoneType](VectorAdd.body)
 
 
 # ------------------------------------------------------------ the host
@@ -88,8 +89,7 @@ struct VectorAdd(NDPTask):
 #
 # The launch is one line:
 #
-#     VectorAdd.launch(PooledRange.over(a),
-#                      Buffer.input(a), Buffer.input(b), Buffer.output(c))
+#     VectorAdd.launch(PooledRange.over(a), VectorAddParams(a, b, c))
 #
 # Naming the task is the whole of it. The device code is compiled at that point,
 # for the target VectorAdd declares. Nothing here says what hardware it runs on:
@@ -120,9 +120,7 @@ def main() raises:
 
     var rc = VectorAdd.launch(
         PooledRange.over(a),
-        Buffer.input(a),
-        Buffer.input(b),
-        Buffer.output(c),
+        VectorAddParams(a, b, c),
     )
     if rc != 0:
         print("[host] vector_add failed, exit", rc)

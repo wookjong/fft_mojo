@@ -10,7 +10,7 @@ and runs it under Spike:
 
 ```mojo
 _ = Histogram.launch(PooledRange.over(samples),
-                     Buffer.input(samples), Buffer.output(hist))
+                     HistogramParams(samples, hist))
 ```
 
 **It started without a backend**, and the seam is still there: M²NDP
@@ -86,9 +86,9 @@ annotated walkthrough in [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
 `out/vector_add.s`, the whole kernel:
 
 ```asm
-ld        a1, 0(a0)                   # arguments from the scratchpad,
-ld        a2, 8(a0)                   #   a0 being the base the hardware gave
-ld        a0, 16(a0)
+ld        a1, 0(a0)                   # the task's parameters, from the
+ld        a2, 8(a0)                   #   scratchpad -- a0 being the base
+ld        a0, 16(a0)                  #   the hardware gave
 sext.w    a5, a5                      # a5 IS global_uthread_id -- no call
 slli      a5, a5, 5
 vsetivli  zero, 8, e32, m2, ta, ma    # RVV
@@ -99,10 +99,10 @@ ret                                   # no frame: a kernel preserves nothing
 ```
 
 Two halves are visible here. RVV comes from the Mojo compiler, reached purely
-through a hand-written target attribute. Everything else is the extension:
-arguments arriving through the scratchpad rather than in registers, the
-identity values as live-in registers rather than calls, and no frame because
-nothing resumes after a kernel.
+through a hand-written target attribute. Everything else is the extension: a
+kernel that takes no arguments and reads the task's parameters out of the
+scratchpad, the identity values as live-in registers rather than calls, and no
+frame because nothing resumes after a kernel.
 
 ### spmv — indirect access, atomic combine
 
@@ -215,27 +215,29 @@ struct HistogramParams(Copyable, Movable):
     var out_hist: UnsafePointer[Int32, MutAnyOrigin]
 
 struct Histogram(NDPTask):
+    comptime Params = HistogramParams             # what the host fills in
     comptime packet = UNROLL * size_of[Int32]()   # bytes one µthread takes
     # Declared once at struct level so every kernel shares one allocation.
     comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
 
+    # A kernel takes no arguments: the task's parameters are in the
+    # scratchpad, so it reads the fields it wants by name.
     @staticmethod
-    def body(samples: UnsafePointer[Int32, MutAnyOrigin]):
-        ...
+    def body():
+        ...Histogram.params()[].samples.ptr...
 
     @staticmethod
-    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
-        var p = params.bitcast[HistogramParams]()
-        external_call["__m2ndp_launch_serial", NoneType](Histogram.initialize, ...)
-        external_call["__m2ndp_launch_parallel", NoneType](Histogram.body, Int(p[].samples), ...)
-        external_call["__m2ndp_launch_serial", NoneType](Histogram.finalize, Int(p[].out_hist), ...)
+    def device_main(params: UnsafePointer[HistogramParams, MutAnyOrigin]):
+        external_call["__m2ndp_launch_serial", NoneType](Histogram.initialize)
+        external_call["__m2ndp_launch_parallel", NoneType](Histogram.body)
+        external_call["__m2ndp_launch_serial", NoneType](Histogram.finalize)
 
 def main() raises:
     if Histogram.emit_ir_if_asked():
         return
     ...fill samples, size hist...
     _ = Histogram.launch(PooledRange.over(samples),
-                         Buffer.input(samples), Buffer.output(hist))
+                         HistogramParams(samples, hist))
     ...check hist against an answer computed here...
 ```
 

@@ -67,7 +67,8 @@ __attribute__((noinline)) static void m2ndp_launch(const m2ndp_ids *id,
 }
 
 /* Where a task's arguments go: immediately above the base, one XLEN slot
- * each, in declaration order. */
+ * each, in declaration order. Every kernel declares exactly one -- the task's
+ * parameter block -- so only the first slot is ever written. */
 static inline u64 *m2ndp_args(u64 base) { return (u64 *)base; }
 
 static inline u64 m2ndp_base(void *region)
