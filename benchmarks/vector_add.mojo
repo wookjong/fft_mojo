@@ -46,7 +46,7 @@ struct VectorAdd(NDPTask):
 
     @staticmethod
     def body():
-        ref p = VectorAdd.params()
+        ref p = VectorAdd.params[]
         var i = global_uthread_id() * W
         p.c.store(i, p.a.load[width=W](i) + p.b.load[width=W](i))
 

@@ -172,7 +172,7 @@ trait NDPTask:
     `device_main` says which kernels run and in what order, through
     `launch_parallel` and `launch_serial`. A launch names a kernel and nothing
     else: a kernel takes no arguments and reads the task's parameters from the
-    scratchpad with `Self.params()`. The backend enforces that, and decides
+    scratchpad with `Self.params`. The backend enforces that, and decides
     what is a kernel by seeing its address reach a launch.
     """
 
@@ -222,34 +222,25 @@ trait NDPTask:
     def device_main():
         """Which kernels run, in what order. One per task.
 
-        Arguments arrive the way CUDA's do: one pointer to a block the host
-        filled in, since `@export` rejects a parametric function and the entry
-        point below therefore has one fixed signature. Typed here, because
-        `Params` says what the block is -- the cast happens once, below.
+        Takes nothing: a task's parameters are `Self.params`, which the
+        host fills and every kernel reads.
         """
         ...
 
-    @staticmethod
-    def params() -> ref [MutAnyOrigin] Self.Params:
-        """This task's parameters, where a kernel reads them.
+    comptime params = scratchpad[
+        1, Self.Params, name="__m2ndp_params", alignment=8
+    ]()
+    """This task's parameters, where the host puts them and a kernel reads them.
 
-            var chunk = Histogram.params().samples.ptr.load[width=W](i)
+        var chunk = Histogram.params[].samples.load[width=W](i)
 
-        The launcher copies the block into every core's scratchpad before
-        running a kernel there, so this is a read of the base register and each
-        field a constant offset from it -- one instruction, as a scratchpad
-        global is. Which is why a kernel needs no arguments.
+    A scratchpad global like any other the task declares, so an access is a
+    constant offset from the base -- one instruction, the same as `bins`. The
+    launcher writes the block here before running a kernel, which is why a
+    kernel takes no arguments.
 
-        A reference rather than a pointer, so a field is named directly. It
-        cannot be a `comptime` member the way a scratchpad global is: that
-        address is a compile-time constant and this one is a register.
-
-        Kernels only: the controller has no scratchpad, and is handed the block
-        directly.
-        """
-        return external_call[
-            "__m2ndp_task_params", UnsafePointer[Self.Params, MutAnyOrigin]
-        ]()[]
+    Kernels only: the controller has no scratchpad of its own.
+    """
 
     @export
     @staticmethod
@@ -261,6 +252,10 @@ trait NDPTask:
         The parameters are not passed here -- the launcher already holds them
         and puts them where a kernel reads them.
         """
+        # Which global holds the parameters. A workload's `name=` does not
+        # survive into the IR, so the backend is told this way instead; it
+        # exports the offset for the launcher and deletes the call.
+        external_call["__m2ndp_declare_params", NoneType](Self.params)
         external_call["__m2ndp_set_task_range", NoneType](base, size)
         Self.device_main()
 

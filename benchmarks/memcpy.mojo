@@ -38,7 +38,7 @@ struct Memcpy(NDPTask):
     @staticmethod
     def body():
         var i = global_uthread_id() * W
-        ref p = Memcpy.params()
+        ref p = Memcpy.params[]
         p.dst.store(i, p.src.load[width=W](i))
 
     @staticmethod

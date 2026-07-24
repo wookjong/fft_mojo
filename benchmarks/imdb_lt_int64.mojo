@@ -56,7 +56,7 @@ struct ImdbLtInt64(NDPTask):
     @staticmethod
     def body():
         var i = global_uthread_id()
-        ref p = ImdbLtInt64.params()
+        ref p = ImdbLtInt64.params[]
         var v = p.column.load[width=W](i * W)
         var mask = v.lt(p.predicate[0])          # SIMD[bool, W]
 

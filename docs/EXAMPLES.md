@@ -30,21 +30,19 @@ struct VectorAdd(NDPTask):
 ```
 
 ```llvm
-%1  = call i32 @__m2ndp_global_uthread_id()
-%3  = mul i64 %2, 8
-%4  = call ptr @__m2ndp_task_params()               ; the block, in scratchpad
-%8  = getelementptr {...}, ptr %4, i32 0, i32 0     ; p.a
-%10 = load ptr, ptr %9, align 8
-%11 = getelementptr inbounds i32, ptr %10, i64 %3
-%12 = load <8 x i32>, ptr %11, align 4
-%14 = add <8 x i32> %12, %13                        ; p.b the same way
-      store <8 x i32> %14, ptr %16, align 4         ; p.c
+%1 = call i32 @__m2ndp_global_uthread_id()
+%3 = mul i64 %2, 8
+%4 = load ptr, ptr addrspace(3) @memory_blob_743df...            ; p.a
+%5 = getelementptr inbounds i32, ptr %4, i64 %3
+%6 = load <8 x i32>, ptr %5, align 4
+%7 = load ptr, ptr addrspace(3) getelementptr (i8, ptr addrspace(3)
+       @memory_blob_743df..., i64 8)                             ; p.b
 ```
 
-The kernel takes no arguments. `__m2ndp_task_params()` becomes a read of the
-scratchpad base, each buffer is a field at a constant offset from it, and the
-repeated reads fold together — the intrinsic behind the symbol is
-`IntrNoMem` and speculatable, so one load per buffer survives.
+The kernel takes no arguments: the parameters are one of the task's scratchpad
+globals, so each buffer is a field at a constant offset. The backend turns each
+into `ld a1, -24(a0)` and the like — one instruction, no address
+materialization.
 
 `SIMD[int32, 8]` becomes a native vector type and the RISC-V backend selects
 RVV for it — `vsetvli` / `vle32.v` / `vadd.vv` / `vse32.v`, with the ISA

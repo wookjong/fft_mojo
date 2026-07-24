@@ -166,12 +166,25 @@ arguments-first ordering.
 
 ### What the launcher needs
 
-Two things, and the linker script exports the one it cannot know:
+Two symbols it cannot know on its own:
 
 | | |
 |---|---|
-| `__m2ndp_spad_size` | size of the global area |
-| — | pass `base = region + __m2ndp_spad_size` and write the task's arguments there |
+| `__m2ndp_spad_size` | size of the global area, from the linker script; the base is `region + this` |
+| `__m2ndp_params_offset` | where the task's parameters sit, from the compiler; negative, the globals being below the base |
+
+The second is how a task's parameters get to a kernel. They are one of its
+scratchpad globals, so the compiler picks the offset, and the launcher writes
+the block at `base + __m2ndp_params_offset` before running a kernel there.
+Which global that is cannot be read off a name -- every one is
+`memory_blob_<hash>` -- so the task marks it:
+
+```llvm
+call void @__m2ndp_declare_params(ptr addrspace(3) @memory_blob_...)
+```
+
+`RISCVM2ndpLowerScratchpad` reads that, exports the offset, and deletes the
+call.
 
 `scripts/m2ndp.lds` also declares the scratchpad as a 128 KiB memory region,
 so a task that asks for more fails at link time rather than overlapping
@@ -229,9 +242,9 @@ width rather than agreeing on one, and the length and direction of each buffer
 stay on the host, where the launch reads them. The loads are marked invariant,
 since a kernel's parameters do not change while it runs.
 
-The block's address is `llvm.riscv.m2ndp.scratchpad.base()`, reached from Mojo
-through `__m2ndp_task_params`. A kernel that declares an argument is rejected:
-nothing would have written it.
+The block is one of the task's scratchpad globals, so its address is a constant
+offset from the base like any other. A kernel that declares an argument is
+rejected: nothing would have written it.
 
 **Vectors keep the ordinary register assignment.** The argument area holds
 what the launcher writes — scalars and pointers — and a vector is something

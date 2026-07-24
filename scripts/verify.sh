@@ -61,13 +61,16 @@ check "launches carry the kernel and nothing else" \
 # The task's three kernels, internal because only device_main reaches them.
 check "histogram: 3 kernels in one module" \
       "grep -cE '^define internal void @\"histogram::Histogram::(initialize|body|finalize)' out/histogram.ll | tr -d ' '" "3"
-check "histogram: one shared scratchpad global" \
-      "grep -c 'addrspace(3) global' out/histogram.ll | tr -d ' '" "1"
+# Two: the bins the kernels share, and the task's parameters. Both are the
+# task's own scratchpad, laid out by the compiler.
+check "histogram: bins and params in the scratchpad" \
+      "grep -c 'addrspace(3) global' out/histogram.ll | tr -d ' '" "2"
 # One use per kernel, on top of the definition. Counting uses rather than
 # occurrences: the body used to unroll into sixteen of them and now needs
-# exactly one, so a threshold would have hidden the change either way.
-check "histogram: all kernels hit that global" \
-      "grep -c 'memory_blob' out/histogram.ll | tr -d ' '" "4"
+# exactly one, so a threshold would have hidden the change either way. The
+# blob is found by its size, its name being a hash.
+check "histogram: all kernels hit the bins" \
+      "b=\$(sed -n 's/^\\(@memory_blob_[0-9a-f]*\\) = internal addrspace(3) global \\[1024 x i8\\].*/\\1/p' out/histogram.ll); grep -c \"\$b\" out/histogram.ll | tr -d ' '" "4"
 # INIT/FINAL still combine with scalar atomics; BODY is the vector one, and
 # it keeps the scratchpad address space through the call.
 check "histogram: scratchpad atomic" \

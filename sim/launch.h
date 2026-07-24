@@ -66,10 +66,15 @@ __attribute__((noinline)) static void m2ndp_launch(const m2ndp_ids *id,
                        "memory");
 }
 
-/* Where a task's arguments go: immediately above the base, one XLEN slot
- * each, in declaration order. Every kernel declares exactly one -- the task's
- * parameter block -- so only the first slot is ever written. */
-static inline u64 *m2ndp_args(u64 base) { return (u64 *)base; }
+/* Where a task's parameters go. They are one of its scratchpad globals, so the
+ * compiler decides the offset and exports it here; the globals sit below the
+ * base, making it negative. */
+extern const i64 __m2ndp_params_offset;
+
+static inline void *m2ndp_args(u64 base)
+{
+    return (void *)(base + (u64)__m2ndp_params_offset);
+}
 
 static inline u64 m2ndp_base(void *region)
 {

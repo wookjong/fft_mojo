@@ -52,7 +52,7 @@ struct Spmv(NDPTask):
 
     @staticmethod
     def body():
-        ref p = Spmv.params()
+        ref p = Spmv.params[]
         var values = p.values
         var col_idx = p.col_idx
         var x = p.x

@@ -45,11 +45,7 @@ void __m2ndp_launch_serial(void (*kernel)(void))
 /* Where a kernel reads the task's parameters. On the device this never
  * survives to a call -- the backend rewrites it into a read of the scratchpad
  * base -- but a host build still has to link. */
-void *__m2ndp_task_params(void)
-{
-    host_side("__m2ndp_task_params");
-    return 0;
-}
+void __m2ndp_declare_params(void *g) { (void)g; host_side("__m2ndp_declare_params"); }
 
 /* The indexed vector atomics. Declared without their real signatures, which
  * involve vectors and differ per element type: nothing here is ever entered,

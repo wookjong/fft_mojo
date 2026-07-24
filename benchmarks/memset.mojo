@@ -39,7 +39,7 @@ struct Memset(NDPTask):
     @staticmethod
     def body():
         var i = global_uthread_id() * W
-        ref p = Memset.params()
+        ref p = Memset.params[]
         p.dst.store(i, SIMD[DType.uint8, W](p.value[0]))
 
     @staticmethod
