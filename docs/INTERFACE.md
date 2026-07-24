@@ -61,7 +61,7 @@ use identity values:
 | | calls before | calls after | kernel frames before | after |
 |---|---|---|---|---|
 | `vector_add` | 1 | 0 | 1 | 0 |
-| `spmv` | 3 | 0 | 1 | 0 |
+| `spmv` | 1 | 0 | 1 | 0 |
 | `histogram` | 5 | 0 | 3 | 0 |
 
 **Which register carries which value is provisional.** The assignment lives
@@ -103,7 +103,7 @@ Two properties of that global the backend cannot assume away:
   The element type appears only on the GEPs and the accesses.
 
 `histogram` is the only one of the six benchmarks that allocates a
-scratchpad. `spmv` combines through atomics on ordinary memory and has none.
+scratchpad. `spmv` writes its answer straight to ordinary memory and has none.
 
 Address space 3 follows the GPU shared-memory convention. If M²NDP wants a
 different number, change it in `src/m2ndp.mojo`; ordinary memory stays in
@@ -468,8 +468,7 @@ Plus floating-point forms, which the draft never had: `vfamoadd`,
 `vfamoswap`, `vfamomin`, `vfamomax`. Only the operations that mean anything
 for floats, so no `xor`/`and`/`or` and no signed/unsigned split. These matter
 because RISC-V has **no** floating-point atomic add anywhere, scalar or
-vector -- which is why `spmv`'s `atomicrmw fadd` becomes an LR/SC retry loop
-today.
+vector -- so an `atomicrmw fadd` becomes an LR/SC retry loop without them.
 
 52 instructions in total. `llvm.riscv.m2ndp.*` intrinsics select into them,
 one intrinsic to one instruction with a `vsetvli` in front.
@@ -488,7 +487,7 @@ so `atomicrmw fadd` becomes a cmpxchg loop. `famoadd`, `famoswap`, `famomin`
 and `famomax` at `.h`, `.w` and `.d`, with the usual `.aq`/`.rl`/`.aqrl`
 forms, and `atomicrmw` selects into them directly.
 
-`spmv`'s accumulation, which is what pays for that loop today:
+An accumulation into shared memory, one instruction against a retry loop:
 
 ```asm
 .LBB0_7:                                  ; without +xm2ndp
@@ -500,8 +499,6 @@ forms, and `atomicrmw` selects into them directly.
 ```asm
     m2ndp.famoadd.w fa5, fs0, (s0)        ; with it
 ```
-
-99 instructions to 89 for the kernel.
 
 `fsub` is deliberately not covered — it is not one of the four operations, so
 it still expands. Neither is `xchg`: `ATOMIC_SWAP`'s node profile is

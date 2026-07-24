@@ -8,7 +8,7 @@ Regenerate with `./scripts/build.sh`. All IR below is verbatim from `out/`.
 
 Contents:
 1. [vector_add](#1-vector_add--indexing-and-rvv) — indexing, RVV
-2. [spmv](#2-spmv--indirect-access-atomic-combine) — indirect access, atomic combine
+2. [spmv](#2-spmv--indirect-access) — indirect access
 3. [histogram](#3-histogram--scratchpad-across-three-phases) — scratchpad across three phases
 4. [What the backend has to handle](#4-what-the-backend-has-to-handle)
 
@@ -73,19 +73,18 @@ paper's 22.2% static instruction reduction comes from.
 
 ---
 
-## 2. spmv — indirect access, atomic combine
+## 2. spmv — indirect access
 
 ```mojo
-var row = group_id()
-var k = Int(row_ptr[row]) + local_uthread_id()
+var row = global_uthread_id()
 var acc = Float32(0)
-while k < end:
+for k in range(Int(p.row_ptr[row]), Int(p.row_ptr[row + 1])):
     acc += values[k] * x[Int(col_idx[k])]
-    k += group_size()
-_ = atomic_add(y + row, acc)
+p.y[row] = acc
 ```
 
-One group per row; its µthreads take a strided slice of the nonzeros.
+One row to a µthread, as in the reference: it walks the row itself and stores
+the answer once, so there is nothing to combine.
 
 ### 2.1 Indirect access needs no special construct
 
@@ -93,48 +92,28 @@ One group per row; its µthreads take a strided slice of the nonzeros.
 use it to index `x`:
 
 ```llvm
-%28 = load i32, ptr %27, align 4                        ; col_idx[k]      <-- load 1
-%29 = sext i32 %28 to i64
-%30 = getelementptr inbounds float, ptr %2, i64 %29     ; &x[col_idx[k]]
-%32 = load float, ptr %30, align 4                      ; x[col_idx[k]]   <-- load 2
-%33 = fmul contract float %31, %32
-%34 = fadd contract float %20, %33
+%36 = load i32, ptr %35, align 4                        ; col_idx[k]      <-- load 1
+%37 = sext i32 %36 to i64
+%38 = getelementptr inbounds float, ptr %3, i64 %37     ; &x[col_idx[k]]
+%40 = load float, ptr %38, align 4                      ; x[col_idx[k]]   <-- load 2
+%41 = fmul contract float %39, %40
+%42 = fadd contract float %16, %41
 ```
 
 If M²NDP wants gather semantics or a prefetch hint on the second load, that
 is a backend pattern-match on this shape. The `fmul`/`fadd contract` pair
 also fuses into a single `fmadd.s` in the assembly.
 
-`__m2ndp_group_size` is read once, before the loop: it lowers to an
-`IntrNoMem` speculatable intrinsic over a live-in register, which LLVM can
-prove loop-invariant and hoist.
-
-### 2.2 Combining without a barrier
+### 2.2 The answer is one store
 
 ```llvm
-%40 = atomicrmw fadd ptr %39, float %38 monotonic, align 4
+%46 = getelementptr inbounds float, ptr %45, i64 %5
+      store float %44, ptr %46, align 4
 ```
 
-M²NDP has no barrier — µthreads are created and retired by hardware FGMT, so
-there is no well-defined set to synchronize. Where a GPU kernel would
-`__syncthreads()` and tree-reduce through shared memory, µthreads here
-combine with an atomic. `monotonic` is `Ordering.RELAXED`: accumulation does
-not need the stdlib's default `seq_cst`, and a weaker ordering leaves the
-backend fewer fences to emit.
-
-Worth flagging for the backend: RISC-V's `+a` has integer AMOs but no
-floating-point atomic add, so LLVM expands this into an LR/SC retry loop:
-
-```asm
-.LBB0_5:
-	lr.w	a2, (s0)
-	bne	a2, a1, .LBB0_7
-	sc.w	a3, a0, (s0)
-	bnez	a3, .LBB0_5
-```
-
-Contended rows will pay for that. If M²NDP has a native FP atomic add, this
-is the pattern to match.
+`%5` is the µthread's index, so the row it summed is the row it writes and no
+two µthreads write the same one. Nothing is shared, so nothing is atomic —
+the reference's kernel ends the same way, with `fsw f0, (x9)`.
 
 ---
 
@@ -233,7 +212,7 @@ intrinsic, expressed the way the indexing symbols are.
 | `group_size()` | `call i32 @__m2ndp_group_size()` | → ID read (**must** be hoistable; see 2.1) |
 | `group_id()` | `call i32 @__m2ndp_group_id()` | → ID read (must be hoistable) |
 | `scratchpad[N, T, name=...]()` | `@<name> = internal addrspace(3) global` | → place in scratchpad memory, not `.bss`; decide absolute vs. per-group base register |
-| `atomic_add()` | `atomicrmw ... monotonic` | → native atomic; note no FP AMO in `+a` (2.2) |
+| `atomic_add()` | `atomicrmw ... monotonic` | → native atomic; `+a` has no FP AMO, which is what `famoadd` is for |
 | indirect access | load → sext → GEP → load | nothing required; optionally pattern-match for gather/prefetch |
 | SIMD | `<N x T>` ops | already handled — selects RVV |
 | index arithmetic | `base[id * W]` | → recover `ADDR`/`OFFSET` (see 1) |
