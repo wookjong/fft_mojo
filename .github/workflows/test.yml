@@ -52,9 +52,12 @@ jobs:
       - run: ./scripts/build.sh
       - run: ./scripts/verify.sh
 
-      # Kept whether or not the checks passed -- when one fails the generated
-      # code is what you want to read.
-      - if: always()
+      # Kept when a check fails, that being when the generated code is what you
+      # want to read. Never fatal: the artifact store is a shared quota that
+      # can be full for reasons that have nothing to do with this branch, and
+      # losing the upload is not losing the result.
+      - if: failure()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: device-code
