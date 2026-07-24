@@ -1,12 +1,26 @@
 # mojo-m2ndp
 
 A PoC for writing M²NDP (RISC-V Vector based µthread GPNDP) workloads in
-Mojo and compiling them for a RISC-V/RVV target to get LLVM IR and assembly.
+Mojo, compiling them for a RISC-V/RVV target, and running them.
 
-**It works without a backend.** M²NDP-specific operations are expressed as
-external symbols, so compiler-backend work and workload/library work can
-proceed in parallel. The symbol set fixed here is the interface contract
-between the two.
+A workload is one file: its kernels, the `device_main` that launches them,
+and the host code that feeds it and checks the answer -- single source, the
+way a `.cu` is. Naming the task compiles it for the target the task declares
+and runs it under Spike:
+
+```mojo
+_ = Histogram.launch(PooledRange.over(samples),
+                     Buffer.input(samples), Buffer.output(hist))
+```
+
+**It started without a backend**, and the seam is still there: M²NDP
+operations are expressed as external symbols, so compiler work and
+workload work can proceed in parallel, and the symbol set is the contract
+between them. There is now a backend behind that seam --
+[an LLVM fork](https://github.com/PSAL-POSTECH/llvm-project-m2ndp) with an
+`XM2ndp` vendor extension -- so the symbols lower to real instructions and a
+kernel gets the calling convention the hardware wants. What has not changed
+is that `benchmarks/` never had to know.
 
 ## Quick start
 
@@ -67,22 +81,28 @@ The benchmarks are ports of
 kernels, so each one can be read against the assembly it came from. Full
 annotated walkthrough in [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
 
-### vector_add — RVV vectorization
+### vector_add — RVV vectorization, and the kernel ABI
 
-`out/vector_add.s`:
+`out/vector_add.s`, the whole kernel:
 
 ```asm
-.attribute 5, "rv64i2p1_..._v1p0_..._zve32f1p0_zve64d1p0_zvl128b1p0..."
-
-call      __m2ndp_global_uthread_id   # M²NDP interface symbol
-vsetvli   zero, a0, e32, m2, ta, ma   # RVV
-vle32.v   v8, (a1)                    # vector load
-vadd.vv   v8, v8, v10                 # vector add
-vse32.v   v8, (a2)                    # vector store
+ld        a1, 0(a0)                   # arguments from the scratchpad,
+ld        a2, 8(a0)                   #   a0 being the base the hardware gave
+ld        a0, 16(a0)
+sext.w    a5, a5                      # a5 IS global_uthread_id -- no call
+slli      a5, a5, 5
+vsetivli  zero, 8, e32, m2, ta, ma    # RVV
+vle32.v   v8, (a1)
+vadd.vv   v8, v8, v10
+vse32.v   v8, (a0)
+ret                                   # no frame: a kernel preserves nothing
 ```
 
-The RVV backend inside the Mojo compiler is real and reachable purely
-through a hand-written target attribute. No backend work needed.
+Two halves are visible here. RVV comes from the Mojo compiler, reached purely
+through a hand-written target attribute. Everything else is the extension:
+arguments arriving through the scratchpad rather than in registers, the
+identity values as live-in registers rather than calls, and no frame because
+nothing resumes after a kernel.
 
 ### spmv — indirect access, atomic combine
 
@@ -107,17 +127,22 @@ The partial sums are combined with an atomic, not a barrier:
 
 **M²NDP has no barrier.** µthreads are created and retired by hardware FGMT,
 so there is no well-defined set to synchronize; atomics combine within a
-kernel and kernel boundaries synchronize between them.
+kernel and kernel boundaries synchronize between them. RISC-V has no
+floating-point AMO at all, so that `fadd` was a compare-exchange loop until
+the extension gave it `famoadd.w`.
 
-Note `__m2ndp_group_size` is re-called on **every** loop iteration: an
-opaque external call cannot be proven loop-invariant. That is the real cost
-of the external-symbol approach, and it disappears once the symbols become
-intrinsics.
+`__m2ndp_group_size` used to be re-called on every loop iteration -- an
+opaque external call cannot be proven loop-invariant -- which was the real
+cost of the external-symbol approach. It is a live-in register now, so the
+loop reads it once. The three calls left in `out/spmv.s` are all
+controller-side -- `device_main`, the launch inside it, and the range the
+runtime sets first -- and none is in a kernel, where a call is rejected
+outright.
 
-### histogram — scratchpad across three phases
+### histogram — scratchpad across three kernels, and an indexed vector atomic
 
-Three phases of one kernel share a per-core bin array. Declaring the
-scratchpad at struct level is what keeps them on the same storage:
+Three kernels share a per-core bin array. Declaring the scratchpad at struct
+level is what keeps them on the same storage:
 
 ```mojo
 struct Histogram(NDPTask):
@@ -131,16 +156,29 @@ struct Histogram(NDPTask):
 ; final: %13 = atomicrmw add ptr %10, i32 %12 monotonic
 ```
 
-One global, all three functions indexing off it. Calling `scratchpad()`
-separately in each function would mint a fresh symbol per call site and the
-phases would silently use different memory.
+One global, all three kernels indexing off it. Calling `scratchpad()`
+separately in each would mint a fresh symbol per call site and they would
+silently use different memory.
+
+The body tallies sixteen samples with one instruction, which is the point of
+the extension's headline addition -- an *indexed* vector atomic, where every
+lane has its own address:
+
+```asm
+m2ndp.vamoaddei32.v  v12, (a0), v8, v12
+```
+
+Neither layer could express that before. LLVM's vector `atomicrmw` is
+contiguous, and RVV's indexed AMOs were dropped before 1.0, so there was
+nothing standard to lower to. Sixteen scalar atomics were the alternative.
 
 ## Layout
 
 ```
 src/m2ndp.mojo        the model: kernels' primitives, NDPTask, launching a task
 src/m2ndp_host.mojo   host-side machinery a launch runs on (files, processes, tools)
-benchmarks/           ports of M2NDP-public/examples/benchmarks
+benchmarks/           ports of M2NDP-public/examples/benchmarks -- each one
+                      holds its kernels, its device_main and its host main
   memcpy.mojo         vector load + store, nothing else
   memset.mojo         scalar splat to a vector store
   vector_add.mojo     confirms RVV vectorization
@@ -157,40 +195,71 @@ scripts/
   build-llvm.sh       our LLVM (vendor extension) + lld
   build-spike.sh      the simulator and sim/ext/ as a loadable extension
   spike-smoke.sh      does the pipeline, and the extension, stand up
-  host-run.sh         run a workload from its host program
+  host-run.sh         run a workload and check its own answer
 docs/SIMULATION.md    running compiled workloads, and what that does not catch
 docs/INTERFACE.md     the backend contract in detail
 docs/EXAMPLES.md      annotated source -> LLVM IR -> assembly walkthrough
 docs/STATUS.md        what works, what the backend must supply, open work
+third_party/          the LLVM fork and Spike, as submodules
 out/                  generated artifacts (not tracked by git)
 ```
 
 ## Writing a benchmark
 
-```mojo
-from m2ndp import global_uthread_id, atomic_add, scratchpad
+One file, three parts: what the host passes, the task, and the host code.
 
-comptime BINS = 256
+```mojo
+@fieldwise_init
+struct HistogramParams(Copyable, Movable):
+    var samples: UnsafePointer[Int32, MutAnyOrigin]
+    var out_hist: UnsafePointer[Int32, MutAnyOrigin]
 
 struct Histogram(NDPTask):
+    comptime packet = UNROLL * size_of[Int32]()   # bytes one µthread takes
     # Declared once at struct level so every kernel shares one allocation.
     comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
 
     @staticmethod
     def body(samples: UnsafePointer[Int32, MutAnyOrigin]):
-        var bin = Int(samples[global_uthread_id()])
-        _ = atomic_add(Histogram.bins + bin, Int32(1))
+        ...
+
+    @staticmethod
+    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
+        var p = params.bitcast[HistogramParams]()
+        external_call["__m2ndp_launch_serial", NoneType](Histogram.initialize, ...)
+        external_call["__m2ndp_launch_parallel", NoneType](Histogram.body, Int(p[].samples), ...)
+        external_call["__m2ndp_launch_serial", NoneType](Histogram.finalize, Int(p[].out_hist), ...)
+
+def main() raises:
+    if Histogram.emit_ir_if_asked():
+        return
+    ...fill samples, size hist...
+    _ = Histogram.launch(PooledRange.over(samples),
+                         Buffer.input(samples), Buffer.output(hist))
+    ...check hist against an answer computed here...
 ```
 
 Kernels take ordinary parameters and index them; recovering the hardware's
-mapped-address form is the compiler's job. Nothing is exported: conforming
-to `NDPTask` gives the task the one entry point the host launches it
-through, and naming a kernel from `device_main` is what keeps it alive.
+mapped-address form is the compiler's job. Nothing is exported: conforming to
+`NDPTask` gives the task the one entry point the host launches it through,
+and naming a kernel from `device_main` is what keeps it alive -- and what
+tells the backend it is a kernel at all.
 
-## Backend interface contract
+`device_main` decides the order, and the launches are spelled out because a
+library wrapper cannot be written: `external_call` takes only a function
+named at the call site.
 
-The entire benchmark set needs **4 symbols and 1 address space**. Details in
+What a benchmark never says is what hardware it runs on. That is
+`config/machine.conf`, which the runtime reads; pointing
+`M2NDP_MACHINE_CONFIG` at another description is how the same program is
+shown to give the same answer on a different machine.
+
+## The symbol contract
+
+The seam between workload and compiler is a set of names. Details in
 [`docs/INTERFACE.md`](docs/INTERFACE.md).
+
+**A µthread's identity** — four symbols, now lowered to live-in registers:
 
 | Symbol | Signature | Meaning |
 |--------|-----------|---------|
@@ -199,22 +268,33 @@ The entire benchmark set needs **4 symbols and 1 address space**. Details in
 | `__m2ndp_group_size` | `i32 ()` | µthreads sharing one scratchpad |
 | `__m2ndp_group_id` | `i32 ()` | which group this µthread belongs to |
 
+**Launching** — implemented by the runtime, and load-bearing besides: the
+backend decides a function is a kernel by seeing its address reach one of
+these, so a kernel that is never launched is not one.
+
+| Symbol | Meaning |
+|--------|---------|
+| `__m2ndp_rt_launch_task` | a task's entry point; the host calls it |
+| `__m2ndp_set_task_range` | the range a task is mapped over, hence the µthread count |
+| `__m2ndp_launch_parallel` | one µthread per packet of the range |
+| `__m2ndp_launch_serial` | one µthread per core |
+
+**Operations with no spelling at this level** — `__m2ndp_vamoadd_*` for the
+indexed vector atomic, since neither `atomicrmw` nor RVV 1.0 can express it.
+Mask-to-bitmap still has none and is open.
+
 | Address space | Use |
 |---------------|-----|
 | `addrspace(3)` | scratchpad (group-shared memory) |
 
-When the backend is ready, replace **only the function bodies** in
-`src/m2ndp.mojo` with real intrinsics. **Benchmark code does not change.**
-
-Beyond these symbols the backend also has to decide how addrspace(3) globals
-are placed and addressed, and two operations have no spelling at this level
-at all (vector atomic, mask-to-bitmap). See
-[`docs/INTERFACE.md`](docs/INTERFACE.md) for the contract and
-[`docs/STATUS.md`](docs/STATUS.md) for what is left to do.
+The extension supplies all of the above except mask-to-bitmap. Where a symbol
+becomes an intrinsic, **only the function bodies in `src/m2ndp.mojo` change** —
+benchmark code does not. See [`docs/STATUS.md`](docs/STATUS.md) for what is
+left.
 
 ## How it works
 
-Two things make this PoC possible.
+Three things make this work.
 
 **1. The compile target can be constructed by hand.**
 `std.gpu`'s hardware detection (`is_nvidia_gpu()` and friends) is locked
@@ -239,19 +319,42 @@ def m2ndp_target() -> __mlir_type.`!kgen.target`:
     return __mlir_attr[
         `#kgen.target<triple = "riscv64-unknown-elf", `,
         `arch = "generic-rv64", `,
-        `features = "+m,+a,+f,+d,+v,+zvl128b", `,
+        `features = "+m,+a,+f,+d,+v,+zvl128b,+xm2ndp", `,
         ...
     ]
 ```
 
-`+v,+zvl128b` in `features` is what turns RVV on.
+`+v,+zvl128b` turns RVV on. `+xm2ndp` is our extension: the frontend's own
+LLVM does not know it and says so on every build, but it copies the string
+into the `target-features` attribute verbatim, so the marker survives into
+the IR and our llc picks it up. A task can override the whole target, which
+is the whole of what lowering the same workload elsewhere takes.
 
 **2. M²NDP operations are expressed as external symbols.**
 Mojo's `llvm_intrinsic[...]` only accepts intrinsics LLVM already knows;
-unknown names are rejected during translation. So before the backend
-exists, use `external_call`. It survives into the LLVM IR as `declare` +
-`call`, which makes the backend mapping points explicit.
+unknown names are rejected during translation. So `external_call` instead.
+It survives into the LLVM IR as `declare` + `call`, which makes the mapping
+points explicit — and lets the workload half be written before the compiler
+half exists, which is how this was built.
+
+**3. The task compiles itself, for its own target.**
+`compile_info` takes that same `!kgen.target`, so a host program asks a task
+for its device code rather than a build script compiling the module:
+
+```mojo
+var ir = Histogram.device_ir()      # compile_info, for Histogram.target
+```
+
+Only what the entry point reaches comes back, which is why a single file can
+hold both halves: the host `main` is not device code and is never compiled as
+any. That is nvcc's two-pass model, arrived at from the other direction.
 
 ## Requirements
 
-`python3` + `pip`. Verified on Linux x86-64.
+`python3` + `pip` for the Mojo toolchain, and that is all `build.sh` and
+`verify.sh` need. Running a workload also wants the LLVM fork and Spike,
+which `build-llvm.sh` and `build-spike.sh` build from the submodules; the
+development image carries both already. `riscv64-unknown-elf-gcc` compiles
+the device-side launcher.
+
+Verified on Linux x86-64.
