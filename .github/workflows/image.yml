@@ -60,11 +60,17 @@ jobs:
     steps:
       # Both submodules have to be in the build context: the image cannot clone
       # the private one without carrying a token in a layer.
+      # Blobless. The submodule is a fork of llvm-project and its history is
+      # gigabytes of file contents nothing here reads -- the image builds one
+      # commit. `blob:none` fetches the blobs that commit needs and leaves the
+      # rest on the server, which is the difference between a clone measured in
+      # gigabytes and one measured in hundreds of megabytes.
       - id: checkout
         uses: actions/checkout@v4
         continue-on-error: true
         with:
           submodules: recursive
+          filter: blob:none
           token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
 
       # A self-hosted runner keeps its workspace, which is what makes the
@@ -76,9 +82,8 @@ jobs:
       #          'third_party/llvm-project'
       #
       # until someone logs into the machine. So throw the store away and clone
-      # it again, unshallowed in case what the first attempt could not reach
-      # was simply outside a depth-1 fetch. Only on the failing path: this is
-      # several gigabytes of LLVM history.
+      # it again -- blobless, so recovering costs a fresh clone and not a
+      # fresh clone of every version of every file.
       - if: steps.checkout.outcome == 'failure'
         name: Clear a wedged submodule store
         run: rm -rf .git/modules third_party/llvm-project third_party/riscv-isa-sim
@@ -88,7 +93,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
+          filter: blob:none
           token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
 
       - uses: docker/setup-buildx-action@v3
