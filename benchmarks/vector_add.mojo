@@ -46,9 +46,9 @@ struct VectorAdd(NDPTask):
 
     @staticmethod
     def body():
-        var p = VectorAdd.params()
+        ref p = VectorAdd.params()
         var i = global_uthread_id() * W
-        p[].c.store(i, p[].a.load[width=W](i) + p[].b.load[width=W](i))
+        p.c.store(i, p.a.load[width=W](i) + p.b.load[width=W](i))
 
     @staticmethod
     def device_main(params: UnsafePointer[VectorAddParams, MutAnyOrigin]):

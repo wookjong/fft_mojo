@@ -38,7 +38,8 @@ struct Memcpy(NDPTask):
     @staticmethod
     def body():
         var i = global_uthread_id() * W
-        Memcpy.params()[].dst.store(i, Memcpy.params()[].src.load[width=W](i))
+        ref p = Memcpy.params()
+        p.dst.store(i, p.src.load[width=W](i))
 
     @staticmethod
     def device_main(params: UnsafePointer[MemcpyParams, MutAnyOrigin]):

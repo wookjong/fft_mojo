@@ -224,7 +224,7 @@ struct Histogram(NDPTask):
     # scratchpad, so it reads the fields it wants by name.
     @staticmethod
     def body():
-        ...Histogram.params()[].samples...
+        ...Histogram.params().samples...
 
     @staticmethod
     def device_main(params: UnsafePointer[HistogramParams, MutAnyOrigin]):

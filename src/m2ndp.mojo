@@ -230,22 +230,26 @@ trait NDPTask:
         ...
 
     @staticmethod
-    def params() -> UnsafePointer[Self.Params, MutAnyOrigin]:
+    def params() -> ref [MutAnyOrigin] Self.Params:
         """This task's parameters, where a kernel reads them.
 
-            var chunk = Histogram.params()[].samples.ptr.load[width=W](i)
+            var chunk = Histogram.params().samples.ptr.load[width=W](i)
 
         The launcher copies the block into every core's scratchpad before
         running a kernel there, so this is a read of the base register and each
         field a constant offset from it -- one instruction, as a scratchpad
         global is. Which is why a kernel needs no arguments.
 
+        A reference rather than a pointer, so a field is named directly. It
+        cannot be a `comptime` member the way a scratchpad global is: that
+        address is a compile-time constant and this one is a register.
+
         Kernels only: the controller has no scratchpad, and is handed the block
         directly.
         """
         return external_call[
             "__m2ndp_task_params", UnsafePointer[Self.Params, MutAnyOrigin]
-        ]()
+        ]()[]
 
     @export
     @staticmethod

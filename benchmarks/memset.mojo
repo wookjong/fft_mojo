@@ -39,7 +39,8 @@ struct Memset(NDPTask):
     @staticmethod
     def body():
         var i = global_uthread_id() * W
-        Memset.params()[].dst.store(i, SIMD[DType.uint8, W](Memset.params()[].value[0]))
+        ref p = Memset.params()
+        p.dst.store(i, SIMD[DType.uint8, W](p.value[0]))
 
     @staticmethod
     def device_main(params: UnsafePointer[MemsetParams, MutAnyOrigin]):

@@ -86,7 +86,7 @@ struct Histogram(NDPTask):
         lane hits its own bin.
         """
         var base = global_uthread_id() * UNROLL
-        var chunk = (Histogram.params()[].samples + base).load[width=UNROLL]()
+        var chunk = (Histogram.params().samples + base).load[width=UNROLL]()
         _ = atomic_add_indexed(
             Histogram.bins, chunk * 4, SIMD[DType.int32, UNROLL](1)
         )
@@ -96,7 +96,7 @@ struct Histogram(NDPTask):
         """FINALIZER: fold this core's bins into the global histogram."""
         var i = local_uthread_id()
         while i < BINS:
-            _ = atomic_add(Histogram.params()[].out_hist + i, Histogram.bins[i])
+            _ = atomic_add(Histogram.params().out_hist + i, Histogram.bins[i])
             i += group_size()
 
     @staticmethod

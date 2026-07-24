@@ -56,15 +56,16 @@ struct ImdbLtInt64(NDPTask):
     @staticmethod
     def body():
         var i = global_uthread_id()
-        var v = ImdbLtInt64.params()[].column.load[width=W](i * W)
-        var mask = v.lt(ImdbLtInt64.params()[].predicate[0])   # SIMD[bool, W]
+        ref p = ImdbLtInt64.params()
+        var v = p.column.load[width=W](i * W)
+        var mask = v.lt(p.predicate[0])          # SIMD[bool, W]
 
         # Pack the lanes into one bitmap byte.
         var bits = UInt8(0)
         comptime for lane in range(W):
             if mask[lane]:
                 bits |= UInt8(1 << lane)
-        ImdbLtInt64.params()[].bitmap[i] = bits
+        p.bitmap[i] = bits
 
     @staticmethod
     def device_main(params: UnsafePointer[ImdbParams, MutAnyOrigin]):

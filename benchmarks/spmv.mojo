@@ -52,11 +52,12 @@ struct Spmv(NDPTask):
 
     @staticmethod
     def body():
-        var values = Spmv.params()[].values
-        var col_idx = Spmv.params()[].col_idx
-        var x = Spmv.params()[].x
-        var row_ptr = Spmv.params()[].row_ptr
-        var y = Spmv.params()[].y
+        ref p = Spmv.params()
+        var values = p.values
+        var col_idx = p.col_idx
+        var x = p.x
+        var row_ptr = p.row_ptr
+        var y = p.y
 
         var row = group_id()
         var tid = local_uthread_id()
