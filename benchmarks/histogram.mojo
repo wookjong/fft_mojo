@@ -21,21 +21,13 @@ Reference kernel, abridged (hand-written M²NDP assembly):
     vle32.v v2, (x1)
     vamoaddei32.v x0, (x6), v1, v2
 
-Everything the task is made of lives in one struct: the three kernels, the
-scratchpad they share, and the `device_main` that launches them. That
-grouping is the point -- a task is a unit, and its parts are not separately
-meaningful. Conforming to `NDPTask` is the whole interface to the host; the
-entry point it is launched through comes with it.
+The three kernels, the scratchpad they share and the `device_main` that
+launches them are one struct: a task is a unit and its parts are not
+separately meaningful.
 
-`bins` is declared at struct level rather than inside a kernel because a
-comptime member is evaluated once and shared, which keeps all three kernels
-on the same addrspace(3) global. Calling `scratchpad()` separately in each
-would instead mint a fresh symbol per call site.
-
-The reference uses `vamoaddei32.v` — an indexed *vector* atomic. Neither
-`pop.atomic.rmw` nor LLVM's `atomicrmw` accepts a vector operand, so this
-falls back to one scalar atomic per sample; see the atomics note in
-src/m2ndp.mojo. Reaching that instruction needs a dedicated intrinsic.
+`bins` is at struct level because a comptime member is evaluated once and
+shared, keeping all three kernels on the same addrspace(3) global; calling
+`scratchpad()` in each would mint a fresh symbol per call site.
 """
 
 from std.sys import argv, size_of
@@ -79,12 +71,7 @@ struct Histogram(NDPTask):
 
     @staticmethod
     def initialize():
-        """INITIALIZER: zero this core's bins.
-
-        Takes the parameter block and does not read it. Every kernel is handed
-        it whether it wants it or not, which is what lets them all have one
-        signature.
-        """
+        """INITIALIZER: zero this core's bins."""
         var i = local_uthread_id()
         while i < BINS:
             Histogram.bins[i] = 0
@@ -94,9 +81,8 @@ struct Histogram(NDPTask):
     def body():
         """KERNELBODY: tally this µthread's samples into the core-local bins.
 
-        One indexed vector atomic over the whole chunk, as in the reference:
-        load the samples, scale them to byte offsets, and let every lane hit
-        its own bin.
+        One indexed vector atomic over the chunk, as in the reference: every
+        lane hits its own bin.
         """
         var base = global_uthread_id() * UNROLL
         var chunk = (Histogram.params()[].samples.ptr + base).load[width=UNROLL]()
@@ -116,18 +102,14 @@ struct Histogram(NDPTask):
     def device_main(params: UnsafePointer[HistogramParams, MutAnyOrigin]):
         """The task, as the device runs it.
 
-        The three kernels are the reason the launch kind matters. The body is
-        `parallel`: one µthread per chunk of samples, spread over the cores by
-        whatever mapping the hardware uses. The initializer and the finalizer
-        are `serial`: they walk this core's bins rather than the data, so what
-        they need is one µthread on each core -- the work is per-core, not
-        per-packet. Striding by `group_size()` from `local_uthread_id()` then
-        covers the whole bin array, since that µthread is alone on its core.
+        The body is `parallel`: one µthread per chunk of samples. The
+        initializer and finalizer walk this core's bins rather than the data,
+        so they are `serial` -- one µthread per core, striding by
+        `group_size()`.
 
-        Correctness rests on the launches being synchronous. The bins must be
-        zero before the first tally and complete before the fold, and there is
-        no barrier to arrange that inside a kernel; a launch boundary is the
-        only synchronization point the model has.
+        Correctness rests on the launches being synchronous: the bins must be
+        zero before the first tally and complete before the fold, and a launch
+        boundary is the only synchronization point there is.
         """
         launch_serial[Histogram.initialize]()
         launch_parallel[Histogram.body]()
@@ -138,11 +120,9 @@ struct Histogram(NDPTask):
 #
 #     ./scripts/host-run.sh histogram
 #
-# The task the whole contract runs through: three kernels sharing a per-core
-# scratchpad across launches, and an indexed vector atomic. The host fills the
-# samples, launches, and folds its own histogram to check against -- and running
-# it against several machine descriptions is what tests that the answer does not
-# depend on the core count, which is the scratchpad-per-core claim.
+# The host folds its own histogram to check against. Running it at several core
+# counts is what tests the scratchpad-per-core claim: the answer must not
+# depend on how many there are.
 
 
 def main() raises:

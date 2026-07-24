@@ -1,27 +1,21 @@
 """M²NDP PoC primitive library.
 
-There is no M²NDP compiler backend yet, so M²NDP-specific operations are
-expressed as external symbol calls. They appear in the LLVM IR as
-`declare` + `call`, and the backend team only has to map those symbols onto
-real M²NDP intrinsics. The symbol names *are* the interface contract.
+M²NDP operations are external symbol calls, which the backend maps onto real
+instructions. The symbol names are the interface contract; see
+docs/INTERFACE.md.
 
-Symbol convention:
   __m2ndp_local_uthread_id()  -> i32   index within the group
   __m2ndp_global_uthread_id() -> i32   index across all cores
   __m2ndp_group_size()        -> i32   µthreads sharing one scratchpad
   __m2ndp_group_id()          -> i32   which group
 
-Atomics are not symbols here: they lower to LLVM `atomicrmw`. See the
-atomics section for why there is no vector form.
-
-The scratchpad needs no symbol of its own: it is a named global in LLVM
-address space 3, which the backend places in M²NDP scratchpad memory.
+Atomics are not symbols: they lower to LLVM `atomicrmw`. The scratchpad is not
+one either -- it is a global in address space 3.
 
 There is no barrier. µthreads are created and retired by hardware FGMT, so
-there is no well-defined set to synchronize; the only synchronization point
-is a kernel boundary, and `device_main`'s kernel launches are synchronous.
-Anything that would need `__syncthreads()` on a GPU has to be split into
-two kernels here.
+there is no set to synchronize; the only synchronization point is a kernel
+boundary, and launches are synchronous. What would need `__syncthreads()` on a
+GPU has to be two kernels here.
 """
 
 from std.atomic import Atomic, Ordering
@@ -68,11 +62,7 @@ from m2ndp_host import (
 struct PooledRange(Copyable, Movable):
     """The region of the memory pool a task is mapped over.
 
-    A task is launched onto a range, and the range is what settles how many
-    microthreads there are: one per packet of it. That is the only thing the
-    launch needs to be told, and spelling it out as two bare integers made it
-    look like an offset into nothing.
-
+    The range settles how many microthreads there are: one per packet of it.
     Build one from the data it covers:
 
         PooledRange.over(samples)       # the whole of a buffer
@@ -128,21 +118,15 @@ struct Machine(Copyable, Movable):
 
 # --------------------------------------------------------------- launching
 #
-# A kernel is launched, never called. Which of the two below runs it is the
-# workload's decision, and saying so is the whole of what `device_main` does.
+# The kernel is a *parameter*, not an argument: `external_call` takes a
+# function only where it is named at the call site, and one passed as a runtime
+# argument does not convert -- a declared function's type carries its name. As
+# a parameter it keeps that name, and `materialize` hands it on. What comes out
+# is `call void @__m2ndp_launch_parallel(ptr @body)`, which is what the backend
+# reads to decide a function is a kernel.
 #
-# The kernel arrives as a *parameter* rather than an argument, which is what
-# makes a wrapper possible at all. `external_call` takes a function only where
-# it is named at the call site: passed as a runtime argument one fails to
-# convert, a declared function's type carrying its name, so `def body() -> None`
-# is not `def() -> None`. As a parameter it stays the function it is, and
-# `materialize` hands it on with that identity intact. What comes out is
-# `call void @__m2ndp_launch_parallel(ptr @body)`, which is also what the
-# backend reads -- a function whose address reaches a launch symbol is a kernel.
-#
-# `F` is inferred and never written. It is constrained to `ImplicitlyDeletable`
-# because the materialized value is a temporary the compiler has to be able to
-# discard.
+# `F` is inferred and never written; `ImplicitlyDeletable` is what lets the
+# materialized temporary be discarded.
 
 
 @always_inline
@@ -151,17 +135,12 @@ def launch_parallel[F: ImplicitlyDeletable, //, kernel: F]():
 
         launch_parallel[Histogram.body]()
 
-    Spread over the cores by whatever mapping the hardware uses, so the kernel
-    keys off `global_uthread_id()`. Nothing is passed to it: a kernel takes no
-    arguments and reads the task's parameters from the scratchpad.
+    Spread over the cores by the hardware's mapping, so the kernel keys off
+    `global_uthread_id()`. Nothing is passed and no size: the range was settled
+    when the task was launched.
 
-    No size either. How much work there is was settled when the task was
-    launched, and that range divided by the task's packet is the microthread
-    count.
-
-    Returns once every microthread has retired. Launches are synchronous, and
-    with no barrier inside a kernel that boundary is the only synchronization
-    point the model has.
+    Returns once every microthread has retired, which is the model's only
+    synchronization point.
     """
     external_call["__m2ndp_launch_parallel", NoneType](materialize[kernel]())
 
@@ -173,11 +152,9 @@ def launch_serial[F: ImplicitlyDeletable, //, kernel: F]():
 
         launch_serial[Histogram.initialize]()
 
-    Zeroing this core's scratchpad, folding it back out again: the work is the
-    core's, and one microthread per packet would either repeat it or need the
-    kernel to divide it up. That microthread is alone on its core, so
-    `local_uthread_id()` is 0 and `group_size()` is 1, which leaves a strided
-    walk covering the whole of it.
+    Zeroing this core's scratchpad, folding it back out again. That microthread
+    is alone on its core, so `local_uthread_id()` is 0 and `group_size()` is 1,
+    leaving a strided walk that covers the whole of it.
 
     Synchronous, as `launch_parallel` is.
     """
@@ -191,21 +168,11 @@ trait NDPTask:
     size its kernels are written against, and the task gains both the runtime
     entry point the host launches it through and the `launch` that reaches it.
 
-    What a workload writes inside `device_main` is which kernels run and in
-    what order, through `launch_parallel` and `launch_serial` above. The
-    symbols underneath those appear nowhere in a workload, and are
-    load-bearing: the backend decides which functions are kernels by seeing
-    their addresses reach them, so a kernel that is never launched is not one.
-
-    A launch names a kernel and nothing else. A kernel takes no arguments --
-    the launcher copies the task's parameters into every core's scratchpad
-    before running one there, and the kernel reads them with `Self.params()`.
-    One pair of launch symbols serves every kernel of every task, so there is
-    one signature to agree on, and the empty one leaves nothing to pad and no
-    positions to line up: a kernel names the fields it wants and the compiler
-    checks the names and the types. Our backend enforces that, since the
-    frontend cannot -- a kernel declaring an argument is a compile error rather
-    than a wrong answer.
+    `device_main` says which kernels run and in what order, through
+    `launch_parallel` and `launch_serial`. A launch names a kernel and nothing
+    else: a kernel takes no arguments and reads the task's parameters from the
+    scratchpad with `Self.params()`. The backend enforces that, and decides
+    what is a kernel by seeing its address reach a launch.
     """
 
     comptime Params: Movable
@@ -218,27 +185,17 @@ trait NDPTask:
             var samples: In[Int32]
             var out_hist: Out[Int32]
 
-        struct Histogram(NDPTask):
-            comptime Params = HistogramParams
-
-    The host builds one from its lists and `launch` takes it; on the device
-    `device_main` is handed the same block and the kernels read it from the
-    scratchpad through `Self.params()`, typed either way. One declaration
-    serving both ends is what leaves them no order to disagree about, and the
-    single cast from what the host filled happens in `__m2ndp_rt_launch_task`
-    below, so no workload writes one.
-
-    Which buffers go up and which come back is in the field types, so a caller
-    names its lists and nothing else. See `Arg` in m2ndp_host.mojo.
+    The host builds one from its lists and `launch` takes it; the kernels read
+    the same declaration on the device. One declaration for both ends leaves
+    them no order to disagree about, and direction is in the field types, so a
+    caller names its lists and nothing else. See `Arg` in m2ndp_host.mojo.
     """
 
     comptime packet: Int
     """Bytes of the task's range one microthread is mapped to.
 
-    The granule the parallel kernel is written against -- eight int32 lanes,
-    sixteen samples -- expressed in bytes. It belongs here because it is the
-    kernel's, not the machine's: the range comes from the launch, and how many
-    microthreads that range is is the range divided by this.
+    The granule the parallel kernel is written against, in bytes. The range
+    divided by this is the microthread count.
 
     Required rather than defaulted, and best written in terms of the same
     constant the kernel uses, so the two cannot drift:
@@ -249,16 +206,14 @@ trait NDPTask:
     comptime target: __mlir_type.`!kgen.target` = m2ndp_target()
     """Which machine this task is compiled for.
 
-    Defaults to M²NDP, which is what a task written against this library is
-    for. Overriding it is a one-line change in the task, and it is the whole
-    of what lowering the same workload onto a different machine takes:
+    Overriding it is the whole of what lowering the same workload onto another
+    machine takes:
 
         struct VectorAdd(NDPTask):
             comptime target = some_other_target()
 
-    Belonging to the task rather than to the toolchain is the point. A build
-    script deciding it would mean the same source meant different things
-    depending on how it was invoked.
+    It belongs to the task, not the toolchain: a build script deciding it would
+    mean the same source meant different things depending on the invocation.
     """
 
     @staticmethod
@@ -266,15 +221,9 @@ trait NDPTask:
         """Which kernels run, in what order. One per task.
 
         Arguments arrive the way CUDA's do: one pointer to a block the host
-        filled in. Not a parameter each -- `@export` cannot be applied to a
-        parametric function, so the entry point below has one fixed signature,
-        and a parameter per argument would cap how many a task could take. A
-        struct has no such ceiling and carries names and types rather than
-        positions.
-
-        Typed, because `Params` says what the block is. The pointer arrives
-        here already cast and goes to the kernels as it stands, so the cast
-        exists once, below, rather than in every kernel of every task.
+        filled in, since `@export` rejects a parametric function and the entry
+        point below therefore has one fixed signature. Typed here, because
+        `Params` says what the block is -- the cast happens once, below.
         """
         ...
 
@@ -284,19 +233,13 @@ trait NDPTask:
 
             var chunk = Histogram.params()[].samples.ptr.load[width=W](i)
 
-        The launcher copies the block the task was launched with into every
-        core's scratchpad before running a kernel there, so this is a read of
-        the base register the hardware supplies and each field is a constant
-        offset from it -- an access is one instruction, the way a scratchpad
-        global is.
+        The launcher copies the block into every core's scratchpad before
+        running a kernel there, so this is a read of the base register and each
+        field a constant offset from it -- one instruction, as a scratchpad
+        global is. Which is why a kernel needs no arguments.
 
-        This is why a kernel takes no arguments. Everything it works on is the
-        task's, and the task's parameters are somewhere it can already reach;
-        the backend rejects a kernel that declares an argument, since nothing
-        would have written it.
-
-        Kernels only. `device_main` runs on the controller, which has no
-        scratchpad of its own and is handed the block directly.
+        Kernels only: the controller has no scratchpad, and is handed the block
+        directly.
         """
         return external_call[
             "__m2ndp_task_params", UnsafePointer[Self.Params, MutAnyOrigin]
@@ -311,19 +254,12 @@ trait NDPTask:
     ):
         """The host's launch, arriving on the device.
 
-        Runs on the controller, not on a core -- the backend recognises the
-        `__m2ndp_rt_` marker and gives it the ordinary convention, so it may
-        call and keep a stack. See RISCVM2ndpArgInfo.h.
+        Controller code, so it may call and keep a stack. The range comes
+        first: nothing can be launched until the microthread count is known.
 
-        The range comes first because it is what the machine needs before any
-        kernel can be launched: a task is launched over a memory range, and
-        that range is what settles how many µthreads there are. The parameter
-        block only travels through.
-
-        The one cast in the system is here. What the host fills is bytes and
-        arrives untyped, because this signature is fixed for every task; what
-        the task works in is `Params`. Doing it once, at the boundary the
-        untypedness actually comes from, is what keeps it out of the kernels.
+        The one cast in the system is here. This signature is fixed for every
+        task, so what the host fills arrives untyped; doing it once, where the
+        untypedness comes from, keeps it out of the kernels.
         """
         external_call["__m2ndp_set_task_range", NoneType](base, size)
         Self.device_main(params.bitcast[Self.Params]())
@@ -343,16 +279,12 @@ trait NDPTask:
     def device_ir() -> String:
         """This task's device code, as LLVM IR, ready for our llc.
 
-        One function is asked for -- the task's entry point -- and what comes
-        back is that plus everything it needs: `device_main` inlined into it,
-        and a copy of every kernel it launches. That is the whole task, because
-        a task is exactly what its entry point reaches.
+        Asking for the entry point gets everything it reaches, which is the
+        whole task.
 
-        IR rather than assembly, though `compile_info` will emit either: this
-        is the frontend's own LLVM, which has never heard of the vendor
-        extension, so the M²NDP lowering -- scratchpad arguments, the identity
-        registers, the indexed vector atomics -- has not happened yet. Asking
-        for assembly here produces something that looks finished and is not.
+        IR rather than assembly: this is the frontend's own LLVM, which has
+        never heard of the vendor extension, so none of the M²NDP lowering has
+        happened. Assembly here would look finished and not be.
         """
         return String(
             compile_info[
@@ -388,27 +320,19 @@ trait NDPTask:
             _ = Histogram.launch(PooledRange.over(samples),
                                  HistogramParams(samples, hist))
 
-        The same block `device_main` is handed, so the two agree on what a
-        task's arguments are by being the one declaration. Which buffer is an
-        input and which an output is in `Params`, not here, so a caller names
-        its lists and nothing else.
+        The same block `device_main` is handed. Direction is in `Params`, not
+        here, so a caller names its lists and nothing else.
 
-        Naming the task is the rest of it. The device code is compiled here,
-        for the target the task declares; the inputs are uploaded, the task
-        runs, and the outputs are downloaded back into the caller's lists.
+        Naming the task is the rest: the device code is compiled here for the
+        target it declares, the inputs uploaded, the task run, the outputs
+        downloaded back into the caller's lists. `region` divided by the task's
+        packet is the microthread count.
 
-        `region` is what the task is mapped over, and dividing it by the
-        task's packet is where the microthread count comes from. The parameter
-        is not called `range` because that is the builtin a `for` loop needs.
+        Nothing says what hardware this runs on -- the runtime reads
+        config/machine.conf.
 
-        There is no argument for the machine. How many cores exist and how
-        finely work is spread across them is the hardware's, not a caller's,
-        so the runtime reads config/machine.conf and configures itself.
-
-        Returns the simulator's exit code: 0 for a run that finished, 2 for a
-        launcher error, 3 for a fault in the target. The device-side launcher
-        and the host-side stubs are supplied by the build; see sim/host_stubs.c
-        and scripts/host-run.sh.
+        Returns the simulator's exit code: 0 finished, 2 launcher error, 3 a
+        fault in the target.
         """
         var machine = Machine.from_config()
         var tc = Toolchain()
@@ -481,23 +405,16 @@ trait NDPTask:
 
 # ---------------------------------------------------------------- indexing
 #
-# Two IDs, following Arachne's `GlobalUThreadID()` / `LocalUThreadID()`:
-# one across all cores, one within a single core. Both arrive from the
-# hardware — a µthread is handed its identity in scalar registers when
-# spawned, so neither is computed from the other.
+# Two IDs, following Arachne's `GlobalUThreadID()` / `LocalUThreadID()`: one
+# across all cores, one within a core. Both come from the hardware in scalar
+# registers at spawn, so neither is computed from the other.
 #
-# `group` here means the set of µthreads that share one scratchpad, i.e. the
-# µthreads resident on one NDP core: `local_uthread_id()` indexes into it,
-# `group_size()` is its size, `group_id()` says which one it is.
+# `group` is the set of µthreads sharing one scratchpad, i.e. those resident on
+# one core.
 #
-# Kernels take their buffers as ordinary parameters and index them. On the
-# hardware a µthread is instead handed the address it was mapped to, and a
-# kernel's arguments arrive through the scratchpad — but that is a calling
-# convention, and belongs to the backend and the launch glue. Surfacing it
-# (`kernel_arg(0)`, raw byte offsets) would put the convention inside every
-# workload and break the rule that `workloads/` survives the backend
-# switchover unchanged. Turning `base[id]` back into the address the
-# hardware already provided is the compiler's job.
+# A kernel indexes its buffers with these rather than being handed the address
+# it was mapped to. That mapping is a calling convention and belongs to the
+# backend -- surfacing it here would put the convention in every workload.
 
 @always_inline
 def local_uthread_id() -> Int:
@@ -531,21 +448,13 @@ def group_id() -> Int:
 
 # ---------------------------------------------------------------- atomics
 #
-# With no barrier, atomics are how µthreads combine results. These lower to
-# LLVM `atomicrmw`, not to an M²NDP symbol, so the backend sees a standard
-# instruction rather than something to map by name.
+# With no barrier, atomics are how µthreads combine results. They lower to
+# LLVM `atomicrmw` rather than to a symbol, so the backend sees a standard
+# instruction. Ordering is RELAXED: accumulation does not need `seq_cst`.
 #
-# Ordering is RELAXED: accumulation does not need the `seq_cst` the stdlib
-# defaults to, and a weaker ordering leaves the backend fewer fences to emit.
-#
-# NOTE (vector atomics): `pop.atomic.rmw` rejects a vector operand outright —
-#
-#   error: 'pop.atomic.rmw' op operand #0 must be pointer to whose type is an
-#   arithmetic dtype, but got '!kgen.pointer<...SIMD<f32, 4>>'
-#
-# — so `atomic_add_lanes` below is one scalar atomic per lane. That covers the
-# contiguous case. What it cannot express is the *indexed* one, where each
-# lane has its own address; see `atomic_add_indexed`.
+# `pop.atomic.rmw` rejects a vector operand, so `atomic_add_lanes` is one
+# scalar atomic per lane -- and cannot express the *indexed* case at all, where
+# each lane has its own address. See `atomic_add_indexed`.
 
 @always_inline
 def atomic_add[
@@ -591,19 +500,14 @@ def atomic_add_indexed[
 ) -> SIMD[dtype, width]:
     """Atomically add each lane of `val` at `base + byte_offsets[lane]`.
 
-    Indexed, so every lane has its own address — unlike `atomic_add_lanes`,
-    which walks consecutive elements from one pointer. This is the operation
-    `histogram` needs, where the lanes are bin indices.
-
-    Offsets are in bytes, matching the reference kernel, which scales sample
-    values with `vmul.vi v, v, 4` before the atomic.
+    Indexed, so every lane has its own address -- unlike `atomic_add_lanes`,
+    which walks consecutive elements. This is what `histogram` needs, its lanes
+    being bin indices. Offsets are in bytes, as in the reference kernel.
 
     Returns the previous values, one per lane.
 
-    Emitted as an external symbol rather than an intrinsic: Mojo's own LLVM
-    has never heard of `llvm.riscv.m2ndp.*` and cannot be made to emit it.
-    Our backend rewrites the call in RISCVM2ndpLowerExternalOps. So the same
-    mechanism as the µthread ID symbols, and for the same reason.
+    An external symbol rather than an intrinsic, since Mojo's own LLVM cannot
+    emit `llvm.riscv.m2ndp.*`; RISCVM2ndpLowerExternalOps rewrites it.
     """
     return external_call[
         "__m2ndp_vamoadd_" + _amo_type_suffix[dtype](), SIMD[dtype, width]
@@ -657,25 +561,17 @@ def scratchpad[
         var tile = scratchpad[64, Float32, name="spmv_tile"]()
         tile[tid] = acc
 
-    Emits `@<name>._gpu_shared_mem = internal addrspace(3) global`. Declare
-    several and the compiler lays them out — no offsets in source.
+    Emits an `addrspace(3)` global; declare several and the compiler lays them
+    out, so no offsets appear in source.
 
-    This open-codes the `pop.global_alloc` path that `std.memory`'s
-    `stack_allocation` takes for GPU targets. Calling `stack_allocation`
-    directly is NOT equivalent here: its promotion is gated on `is_gpu()`, and
-    on a RISC-V triple the addrspace(3) alloca falls through to an ordinary
-    stack slot — which is per-µthread, so nothing is actually shared.
+    This open-codes `pop.global_alloc` rather than calling `stack_allocation`,
+    whose promotion is gated on `is_gpu()` -- on a RISC-V triple the
+    addrspace(3) alloca falls through to an ordinary stack slot, which is
+    per-µthread and so shares nothing.
 
-    The parameter list deliberately mirrors `std._plugin`'s
-    `stack_allocation_fn` hook:
-
-        [count: Int, type: AnyType, /, name: Optional[StringSlice], alignment: Int]
-            -> UnsafePointer[type, MutUntrackedOrigin, address_space=address_space]
-
-    so that once a toolchain ships both a RISC-V backend and the plugin
-    selector (`stdlib_plugin` on the target attribute), this body can move
-    into an `std/_plugin/m2ndp/` overlay unchanged and `stack_allocation`
-    itself starts routing here. See docs/INTERFACE.md.
+    The signature mirrors `std._plugin`'s `stack_allocation_fn` hook, so this
+    body can move into a plugin overlay once a toolchain ships both a RISC-V
+    backend and the plugin selector. See docs/INTERFACE.md.
     """
     return UnsafePointer[
         type, MutUntrackedOrigin, address_space = AddressSpace.SHARED
@@ -698,19 +594,15 @@ def scratchpad[
 def m2ndp_target() -> __mlir_type.`!kgen.target`:
     """M²NDP compile target (RISC-V + RVV).
 
-    Builds the MLIR target attribute directly rather than going through
-    std.sys.info's GPU vendor detection. Once the backend exists, swap
-    arch/features for the real M²NDP ones.
+    Built directly rather than through std.sys.info's GPU vendor detection.
 
-    `+xm2ndp` is the vendor extension registered in our LLVM fork. Mojo's
-    own LLVM does not know it and says so on every build:
+    `+xm2ndp` is the vendor extension in our LLVM fork. Mojo's own LLVM does
+    not know it and warns on every build, harmlessly:
 
         '+xm2ndp' is not a recognized feature for this target (ignoring feature)
 
-    That warning is expected and harmless. The feature string is passed
-    through verbatim into the `target-features` function attribute, so the
-    marker survives into the IR and our llc — which does know it — picks it
-    up without needing -mattr on the command line.
+    The string still reaches the `target-features` attribute verbatim, so the
+    marker survives into the IR and our llc picks it up.
     """
     return __mlir_attr[
         `#kgen.target<triple = "riscv64-unknown-elf", `,

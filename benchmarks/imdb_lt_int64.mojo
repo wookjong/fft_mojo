@@ -18,21 +18,15 @@ Reference kernel:
     sb x3, (x6)                 ; one byte of bitmap per 8 rows
 
 A database scan: compare a column against a constant and write a bitmap of
-which rows passed. The interesting part is that the comparison result is a
-*mask*, packed to bits rather than stored as one value per row.
+which rows passed, one bit per row.
 
-The compare itself ports cleanly — `v.lt(predicate)` selects `vmslt.vx`, the
-same instruction the reference uses. Packing the mask into a byte does not:
-the reference gets it for free, because an RVV mask register already holds
-one bit per lane, so `vmv.x.s` + `sb` is the whole job. Mojo has no way to
-name that. `SIMD[bool, W]` cannot be converted to an integer bitmask —
-`Int(mask)` only instantiates at width 1, and there is no movemask-style
-primitive — so the lanes have to be tested and OR'd back together one at a
-time. The mask register is still produced; the compiler then spends ~15
-and/or instructions rebuilding the bit pattern it already had.
+The compare ports cleanly — `v.lt(predicate)` selects `vmslt.vx`. Packing the
+mask into a byte does not. The reference gets it free from an RVV mask
+register (`vmv.x.s` + `sb`), but `SIMD[bool, W]` has no conversion to an
+integer bitmask, so the lanes are tested and OR'd back one at a time and the
+compiler spends ~15 instructions rebuilding a bit pattern it already had.
 
-Like the vector atomic in histogram.mojo, closing this gap needs a
-primitive, not a rewrite of the benchmark.
+Closing this needs a primitive, not a rewrite of the benchmark.
 """
 
 from std.sys import argv, size_of

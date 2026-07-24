@@ -61,53 +61,39 @@ def _add_export_alias(ir: String, path: String) raises:
 struct Arg[T: Copyable & Movable, writes: Bool](Movable):
     """One field of a task's parameter block: a buffer, and which way it goes.
 
-    A task declares its parameters once and both sides read that declaration:
+    Declared once and read by both sides:
 
         @fieldwise_init
         struct HistogramParams(Movable):
             var samples: In[Int32]
             var out_hist: Out[Int32]
 
-    On the host a field is built from the caller's list, which is why `launch`
-    takes lists and nothing else -- direction and element type are properties
-    of the parameter, so they belong in the declaration rather than at every
-    call site. On the device the same field is where the launcher put the
-    buffer, read back out with `ptr()`.
+    Direction and element type are properties of the parameter, so a caller
+    names its list and nothing else.
 
-    An input carries a *copy* of the caller's bytes, taken when the block is
-    built. An output carries the caller's *address*, written back into after
-    the run. The asymmetry is about lifetimes: a field that only remembered an
-    address would not keep the list it points at alive, and the list's last
-    mention is often the very expression that built the block, so nothing would
-    stop it being freed before the upload reads it. An output escapes that the
-    other way, since the caller reads its list after the launch and it is alive
-    across the call by construction.
+    **One pointer, and nothing else** -- a block is as wide as the buffers it
+    names, so what the device carries is the task's, not the runtime's. The
+    length and direction live in a descriptor beside the bytes. One uniform
+    word per field is also what lets `launch` walk a block it cannot inspect:
+    Mojo has no field reflection, so the field count is the block's size over
+    one field's.
 
-    **One pointer, and nothing else.** A parameter block is as big as the
-    buffers it names -- eight bytes a field -- so what the device carries is
-    the task's, not the runtime's. Everything a launch needs to know about a
-    buffer besides its address lives in a descriptor beside the bytes, off to
-    one side of the block entirely.
-
-    That the block is one uniform word per field is also what lets `launch`
-    walk it: Mojo has no field reflection, so the number of fields comes from
-    dividing the block's size by one field's, and each is read as an `_ArgRec`.
+    An input holds a *copy* of the caller's bytes, taken when the block is
+    built, because the list's last mention is often that very expression and
+    nothing else would keep it alive. An output holds the caller's *address*,
+    which is alive across the launch by construction.
     """
 
     var ptr: UnsafePointer[Self.T, MutAnyOrigin]
-    """Where the buffer is -- and the only thing a kernel wants.
+    """Where the buffer is -- the only thing a kernel wants.
 
-    Two values live here in turn. On the host it addresses this field's
-    descriptor, which is where `launch` reads the length and direction from.
-    The launcher then overwrites it with the address the buffer landed at on
-    the device, and that is what a kernel loads. Neither side sees the other's,
-    since the host block stays on the host and the copy in the scratchpad is
-    written by the launcher.
+    Two values in turn: on the host, this field's descriptor, which `launch`
+    reads the length and direction from; on the device, where the buffer landed,
+    written by the launcher. Neither side sees the other's, the host block
+    staying on the host.
 
-    A pointer rather than an address: reading it is then a field load, where
-    converting an integer to a pointer costs a stack slot that survives into
-    the kernel's frame, our llc not being asked to run the passes that would
-    remove it."""
+    A pointer rather than an address, since converting an integer to one costs
+    a stack slot that survives into the kernel's frame."""
 
     @implicit
     def __init__(out self, ref data: List[Self.T]):

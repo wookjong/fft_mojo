@@ -37,16 +37,13 @@ struct SpmvParams(Movable):
 struct Spmv(NDPTask):
     """One group per row.
 
-    This is the one workload whose shape the launch model does not fit
-    cleanly. The kernel keys off `group_id()`, and in this model a group is a
-    core, so a run computes exactly as many rows as there are cores -- the
-    host has to set `cores` to the row count. A launch that could say "spawn
-    G groups of N" independently of the core count is what the model is
-    missing; until then this is the arrangement that expresses the workload.
+    The one workload the launch model does not fit cleanly. The kernel keys
+    off `group_id()` and a group is a core, so a run computes as many rows as
+    there are cores -- the host has to set `cores` to the row count. What is
+    missing is a launch that can say "spawn G groups of N".
 
-    `packet` therefore says nothing about data here. The kernel indexes by
-    group and slot, never by `global_uthread_id()`, so the range only settles
-    how many µthreads there are: rows x µthreads-per-row.
+    `packet` therefore says nothing about data: the kernel indexes by group and
+    slot, so the range only settles the µthread count.
     """
 
     comptime Params = SpmvParams

@@ -15,11 +15,8 @@ Reference kernel (hand-written M²NDP assembly):
     vadd.vv v3, v1, v2
     vse32.v v3, (x2)
 
-Written here with ordinary parameters and an index: arg marshalling and the
-id-to-address mapping are the backend's job, not the workload's.
-
-The task is the struct: the kernel and the `device_main` that launches it are
-one unit, and neither is separately meaningful.
+Written with an index instead: the id-to-address mapping is the backend's job,
+not the workload's.
 """
 
 from std.sys import argv, size_of
@@ -56,18 +53,10 @@ struct VectorAdd(NDPTask):
     def device_main(params: UnsafePointer[VectorAddParams, MutAnyOrigin]):
         """The task, as the device runs it: one kernel over the range.
 
-        `device_main` decides the sequence of kernels, so a workload of
-        several is one function here rather than a table somewhere else.
-        Launches are synchronous -- the call returns when every µthread of
-        that kernel has retired -- so the order written is the order that
-        happens.
-
-        A launch names a kernel and nothing else. No size, because how many
-        µthreads there are was settled when the task was launched over its
-        range; and no arguments, because a kernel reads the task's parameters
-        out of the scratchpad -- which is what lets one pair of launch symbols
-        serve every kernel of every task, with no padding to count and no
-        positions to line up. See docs/INTERFACE.md.
+        Launches are synchronous, so the order written is the order that
+        happens. A launch names a kernel and nothing else -- no size, and no
+        arguments, a kernel reading the task's parameters from the scratchpad.
+        See docs/INTERFACE.md.
         """
         launch_parallel[VectorAdd.body]()
 
@@ -76,18 +65,13 @@ struct VectorAdd(NDPTask):
 #
 #     ./scripts/host-run.sh vector_add
 #
-# The host owns the data now. It fills the inputs, launches the task, and checks
-# the output against a result it computes itself -- so the answer being checked
-# does not come from the same place as the answer being produced.
-#
-# The launch is one line:
+# The host fills the inputs and checks the output against a result it computes
+# itself, so the two answers do not come from the same place.
 #
 #     VectorAdd.launch(PooledRange.over(a), VectorAddParams(a, b, c))
 #
-# Naming the task is the whole of it. The device code is compiled at that point,
-# for the target VectorAdd declares. Nothing here says what hardware it runs on:
-# the runtime reads config/machine.conf, so running the same program on a
-# different machine is a change to that file.
+# Naming the task compiles it, for the target it declares. What hardware it runs
+# on is config/machine.conf's business.
 
 
 def main() raises:
