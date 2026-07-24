@@ -40,8 +40,6 @@ from m2ndp import (
     launch_serial,
     PooledRange,
     global_uthread_id,
-    local_uthread_id,
-    group_size,
     atomic_add,
     atomic_add_indexed,
     scratchpad,
@@ -69,11 +67,11 @@ struct Histogram(NDPTask):
 
     @staticmethod
     def initialize():
-        """INITIALIZER: zero this core's bins."""
-        var i = local_uthread_id()
-        while i < BINS:
+        """INITIALIZER: zero this core's bins.
+
+        One microthread on the core, so it walks the whole array."""
+        for i in range(BINS):
             Histogram.bins[i] = 0
-            i += group_size()
 
     @staticmethod
     def body():
@@ -91,10 +89,8 @@ struct Histogram(NDPTask):
     @staticmethod
     def finalize():
         """FINALIZER: fold this core's bins into the global histogram."""
-        var i = local_uthread_id()
-        while i < BINS:
+        for i in range(BINS):
             _ = atomic_add(Histogram.params[].out_hist + i, Histogram.bins[i])
-            i += group_size()
 
     @staticmethod
     def device_main():
@@ -102,8 +98,8 @@ struct Histogram(NDPTask):
 
         The body is `parallel`: one µthread per chunk of samples. The
         initializer and finalizer walk this core's bins rather than the data,
-        so they are `serial` -- one µthread per core, striding by
-        `group_size()`.
+        so they are `serial` -- one µthread per core, walking the whole
+        array.
 
         Correctness rests on the launches being synchronous: the bins must be
         zero before the first tally and complete before the fold, and a launch
