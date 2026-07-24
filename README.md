@@ -228,9 +228,9 @@ struct Histogram(NDPTask):
 
     @staticmethod
     def device_main(params: UnsafePointer[HistogramParams, MutAnyOrigin]):
-        external_call["__m2ndp_launch_serial", NoneType](Histogram.initialize)
-        external_call["__m2ndp_launch_parallel", NoneType](Histogram.body)
-        external_call["__m2ndp_launch_serial", NoneType](Histogram.finalize)
+        launch_serial[Histogram.initialize]()
+        launch_parallel[Histogram.body]()
+        launch_serial[Histogram.finalize]()
 
 def main() raises:
     if Histogram.emit_ir_if_asked():
@@ -247,9 +247,10 @@ mapped-address form is the compiler's job. Nothing is exported: conforming to
 and naming a kernel from `device_main` is what keeps it alive -- and what
 tells the backend it is a kernel at all.
 
-`device_main` decides the order, and the launches are spelled out because a
-library wrapper cannot be written: `external_call` takes only a function
-named at the call site.
+`device_main` decides the order. The kernel is a parameter of the launch
+rather than an argument to it, which is what keeps the launch symbols inside
+the library -- `external_call` takes a function only where it is named at the
+call site, and a parameter is where it keeps that name.
 
 What a benchmark never says is what hardware it runs on. That is
 `config/machine.conf`, which the runtime reads; pointing

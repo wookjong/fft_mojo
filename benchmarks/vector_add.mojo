@@ -22,10 +22,9 @@ The task is the struct: the kernel and the `device_main` that launches it are
 one unit, and neither is separately meaningful.
 """
 
-from std.ffi import external_call
 from std.sys import argv, size_of
 
-from m2ndp import NDPTask, PooledRange, global_uthread_id
+from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import In, Out
 
 comptime W = 8   # int32 lanes per chunk, one packet's worth
@@ -33,8 +32,8 @@ comptime W = 8   # int32 lanes per chunk, one packet's worth
 
 @fieldwise_init
 struct VectorAddParams(Movable):
-    """What the host passes. The layout is the interface: `main` below hands
-    the buffers over in this order, and nothing checks that the two agree."""
+    """The task's parameters, declared once for both sides. `main` builds one
+    of these and the kernel reads it."""
 
     var a: In[Int32]
     var b: In[Int32]
@@ -49,10 +48,9 @@ struct VectorAdd(NDPTask):
 
     @staticmethod
     def body():
+        var p = VectorAdd.params()
         var i = global_uthread_id() * W
-        VectorAdd.params()[].c.ptr.store(
-            i, VectorAdd.params()[].a.ptr.load[width=W](i) + VectorAdd.params()[].b.ptr.load[width=W](i)
-        )
+        p[].c.ptr.store(i, p[].a.ptr.load[width=W](i) + p[].b.ptr.load[width=W](i))
 
     @staticmethod
     def device_main(params: UnsafePointer[VectorAddParams, MutAnyOrigin]):
@@ -64,19 +62,14 @@ struct VectorAdd(NDPTask):
         that kernel has retired -- so the order written is the order that
         happens.
 
-        No size is passed. How many µthreads there are was settled when the
-        task was launched over its range; a kernel launch says what to run and
-        with what, and nothing about how much.
-
-        Every kernel takes the same one argument: this same parameter block,
-        passed straight on. `external_call` allows one signature per symbol
-        name, and a kernel taking five buffers -- spmv's -- has to reach the
-        same launcher entry as one taking none; handing all of them the block
-        is what makes that one signature, with no padding to count and no
-        positions to line up. A kernel reads the fields it wants by name.
-        See docs/INTERFACE.md.
+        A launch names a kernel and nothing else. No size, because how many
+        µthreads there are was settled when the task was launched over its
+        range; and no arguments, because a kernel reads the task's parameters
+        out of the scratchpad -- which is what lets one pair of launch symbols
+        serve every kernel of every task, with no padding to count and no
+        positions to line up. See docs/INTERFACE.md.
         """
-        external_call["__m2ndp_launch_parallel", NoneType](VectorAdd.body)
+        launch_parallel[VectorAdd.body]()
 
 
 # ------------------------------------------------------------ the host

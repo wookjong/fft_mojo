@@ -176,9 +176,9 @@ struct Histogram(NDPTask):
 
     @staticmethod
     def device_main(params: UnsafePointer[HistogramParams, MutAnyOrigin]):
-        external_call["__m2ndp_launch_serial", NoneType](Histogram.initialize)
-        external_call["__m2ndp_launch_parallel", NoneType](Histogram.body)
-        external_call["__m2ndp_launch_serial", NoneType](Histogram.finalize)
+        launch_serial[Histogram.initialize]()
+        launch_parallel[Histogram.body]()
+        launch_serial[Histogram.finalize]()
 ```
 
 A kernel takes no arguments, so a launch names one and stops there. The
@@ -197,10 +197,13 @@ The rule is enforced rather than agreed: the backend rejects a kernel that
 declares an argument, since the frontend cannot state it. See
 `xm2ndp-kernel-no-args.ll`.
 
-The launches are spelled out rather than wrapped. A helper would have to take
-the kernel as an argument and pass it on, and `external_call` will not convert
-a function value that arrives as a parameter — only one named at the call
-site. See `docs/STATUS.md` for what that rules out.
+The kernel is a *parameter* of the launch, not an argument to it. That is what
+lets the launch symbols stay inside the library: `external_call` takes a
+function only where it is named at the call site, and one passed as a runtime
+argument does not convert, a declared function's type carrying its name. As a
+parameter it keeps that identity, and what comes out is
+`call void @__m2ndp_launch_serial(ptr @initialize)` — which is also what the
+backend reads.
 
 Conforming to `NDPTask` is the whole interface to the host. The trait carries
 a default `__m2ndp_rt_launch_task`, so every task gets the entry point it is

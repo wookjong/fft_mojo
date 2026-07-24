@@ -58,11 +58,9 @@ check "indirect access chain" \
 # a kernel taking arguments the launcher has nowhere to put.
 check "launches carry the kernel and nothing else" \
       "grep -h 'call void @__m2ndp_launch_' out/*.ll | grep -cE ', (i64|ptr )' | tr -d ' '" "0"
-# The task's three kernels. None is exported: a kernel named as a value becomes
-# a closure, and that closure is what device_main launches, so the exported
-# original would only be a second unused copy of the same code.
+# The task's three kernels, internal because only device_main reaches them.
 check "histogram: 3 kernels in one module" \
-      "grep -c '^define internal void @\"histogram::Histogram::device_main.*_closure_' out/histogram.ll | tr -d ' '" "3"
+      "grep -cE '^define internal void @\"histogram::Histogram::(initialize|body|finalize)' out/histogram.ll | tr -d ' '" "3"
 check "histogram: one shared scratchpad global" \
       "grep -c 'addrspace(3) global' out/histogram.ll | tr -d ' '" "1"
 # One use per kernel, on top of the definition. Counting uses rather than
@@ -77,9 +75,11 @@ check "histogram: scratchpad atomic" \
 check "histogram: one vector atomic, not 16 scalar" \
       "grep -c 'atomicrmw add ptr addrspace(3)' out/histogram.ll | tr -d ' '" "0"
 # The schedule lives in the workload, not the launcher: device_main launches
-# init serially, the body in parallel, then final serially.
+# init serially, the body in parallel, then final serially. Scoped to the
+# exported entry point, since histogram's module also carries a mangled copy of
+# it and counting the whole file would see the schedule twice.
 check "device_main: 1 parallel + 2 serial launches" \
-      "grep -c 'call void @__m2ndp_launch_' out/histogram.ll | tr -d ' '" "3"
+      "awk '/^define dso_local void @__m2ndp_rt_launch_task/,/^}/' out/histogram.ll | grep -c 'call void @__m2ndp_launch_' | tr -d ' '" "3"
 # Conforming to NDPTask is the whole interface to the host: the task exports
 # the runtime entry point and nothing else. device_main and the kernels are
 # internal, which is what keeps one task per ELF from colliding with another.

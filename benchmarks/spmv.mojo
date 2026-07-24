@@ -9,11 +9,11 @@ way µthreads combine results.
 Also exercises indirect access (x[col_idx[k]]).
 """
 
-from std.ffi import external_call
 from std.sys import argv, size_of
 
 from m2ndp import (
     NDPTask,
+    launch_parallel,
     PooledRange,
     local_uthread_id,
     group_id,
@@ -25,7 +25,7 @@ from m2ndp_host import In, Out, Config
 
 @fieldwise_init
 struct SpmvParams(Movable):
-    """What the host passes, in the order it hands the buffers over."""
+    """The task's parameters, declared once for both sides."""
 
     var values: In[Float32]
     var col_idx: In[Int32]
@@ -77,7 +77,7 @@ struct Spmv(NDPTask):
 
     @staticmethod
     def device_main(params: UnsafePointer[SpmvParams, MutAnyOrigin]):
-        external_call["__m2ndp_launch_parallel", NoneType](Spmv.body)
+        launch_parallel[Spmv.body]()
 
 
 # ------------------------------------------------------------ the host

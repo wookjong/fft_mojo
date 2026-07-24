@@ -38,11 +38,12 @@ falls back to one scalar atomic per sample; see the atomics note in
 src/m2ndp.mojo. Reaching that instruction needs a dedicated intrinsic.
 """
 
-from std.ffi import external_call
 from std.sys import argv, size_of
 
 from m2ndp import (
     NDPTask,
+    launch_parallel,
+    launch_serial,
     PooledRange,
     global_uthread_id,
     local_uthread_id,
@@ -128,9 +129,9 @@ struct Histogram(NDPTask):
         no barrier to arrange that inside a kernel; a launch boundary is the
         only synchronization point the model has.
         """
-        external_call["__m2ndp_launch_serial", NoneType](Histogram.initialize)
-        external_call["__m2ndp_launch_parallel", NoneType](Histogram.body)
-        external_call["__m2ndp_launch_serial", NoneType](Histogram.finalize)
+        launch_serial[Histogram.initialize]()
+        launch_parallel[Histogram.body]()
+        launch_serial[Histogram.finalize]()
 
 
 # ------------------------------------------------------------ the host

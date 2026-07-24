@@ -35,10 +35,9 @@ Like the vector atomic in histogram.mojo, closing this gap needs a
 primitive, not a rewrite of the benchmark.
 """
 
-from std.ffi import external_call
 from std.sys import argv, size_of
 
-from m2ndp import NDPTask, PooledRange, global_uthread_id
+from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import In, Out
 
 comptime W = 8   # int64 lanes per chunk; one bitmap byte covers exactly these
@@ -74,7 +73,7 @@ struct ImdbLtInt64(NDPTask):
 
     @staticmethod
     def device_main(params: UnsafePointer[ImdbParams, MutAnyOrigin]):
-        external_call["__m2ndp_launch_parallel", NoneType](ImdbLtInt64.body)
+        launch_parallel[ImdbLtInt64.body]()
 
 
 # ------------------------------------------------------------ the host

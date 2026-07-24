@@ -13,10 +13,9 @@ Note the reference works at e8 and splats a scalar; `SIMD[uint8, W](value)`
 is the same splat.
 """
 
-from std.ffi import external_call
 from std.sys import argv
 
-from m2ndp import NDPTask, PooledRange, global_uthread_id
+from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import In, Out
 
 comptime W = 32   # uint8 lanes per chunk
@@ -44,7 +43,7 @@ struct Memset(NDPTask):
 
     @staticmethod
     def device_main(params: UnsafePointer[MemsetParams, MutAnyOrigin]):
-        external_call["__m2ndp_launch_parallel", NoneType](Memset.body)
+        launch_parallel[Memset.body]()
 
 
 # ------------------------------------------------------------ the host

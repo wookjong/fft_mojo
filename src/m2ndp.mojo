@@ -126,6 +126,64 @@ struct Machine(Copyable, Movable):
         return Machine(cores, interleave)
 
 
+# --------------------------------------------------------------- launching
+#
+# A kernel is launched, never called. Which of the two below runs it is the
+# workload's decision, and saying so is the whole of what `device_main` does.
+#
+# The kernel arrives as a *parameter* rather than an argument, which is what
+# makes a wrapper possible at all. `external_call` takes a function only where
+# it is named at the call site: passed as a runtime argument one fails to
+# convert, a declared function's type carrying its name, so `def body() -> None`
+# is not `def() -> None`. As a parameter it stays the function it is, and
+# `materialize` hands it on with that identity intact. What comes out is
+# `call void @__m2ndp_launch_parallel(ptr @body)`, which is also what the
+# backend reads -- a function whose address reaches a launch symbol is a kernel.
+#
+# `F` is inferred and never written. It is constrained to `ImplicitlyDeletable`
+# because the materialized value is a temporary the compiler has to be able to
+# discard.
+
+
+@always_inline
+def launch_parallel[F: ImplicitlyDeletable, //, kernel: F]():
+    """Run `kernel` over the task's range: one microthread per packet of it.
+
+        launch_parallel[Histogram.body]()
+
+    Spread over the cores by whatever mapping the hardware uses, so the kernel
+    keys off `global_uthread_id()`. Nothing is passed to it: a kernel takes no
+    arguments and reads the task's parameters from the scratchpad.
+
+    No size either. How much work there is was settled when the task was
+    launched, and that range divided by the task's packet is the microthread
+    count.
+
+    Returns once every microthread has retired. Launches are synchronous, and
+    with no barrier inside a kernel that boundary is the only synchronization
+    point the model has.
+    """
+    external_call["__m2ndp_launch_parallel", NoneType](materialize[kernel]())
+
+
+@always_inline
+def launch_serial[F: ImplicitlyDeletable, //, kernel: F]():
+    """Run `kernel` once on each core, for work that is per-core rather than
+    per-packet.
+
+        launch_serial[Histogram.initialize]()
+
+    Zeroing this core's scratchpad, folding it back out again: the work is the
+    core's, and one microthread per packet would either repeat it or need the
+    kernel to divide it up. That microthread is alone on its core, so
+    `local_uthread_id()` is 0 and `group_size()` is 1, which leaves a strided
+    walk covering the whole of it.
+
+    Synchronous, as `launch_parallel` is.
+    """
+    external_call["__m2ndp_launch_serial", NoneType](materialize[kernel]())
+
+
 trait NDPTask:
     """What a task has to provide, and what it gets for free.
 
@@ -133,24 +191,21 @@ trait NDPTask:
     size its kernels are written against, and the task gains both the runtime
     entry point the host launches it through and the `launch` that reaches it.
 
-    What a workload does still write is the kernel launches inside
-    `device_main`, spelled out as `external_call` to `__m2ndp_launch_parallel`
-    and `__m2ndp_launch_serial`. A library wrapper would be better and is not
-    possible here: `external_call` takes only a function named at the call
-    site, and refuses one that arrives as a parameter, so a wrapper has no way
-    to pass the kernel on. Those symbol names are load-bearing besides -- the
-    backend decides which functions are kernels by seeing their addresses
-    reach them, so a kernel that is never launched is not one.
+    What a workload writes inside `device_main` is which kernels run and in
+    what order, through `launch_parallel` and `launch_serial` above. The
+    symbols underneath those appear nowhere in a workload, and are
+    load-bearing: the backend decides which functions are kernels by seeing
+    their addresses reach them, so a kernel that is never launched is not one.
 
-    Each of those launches names a kernel and nothing else. A kernel takes no
-    arguments: the launcher copies the task's parameters into every core's
-    scratchpad before running one there, and the kernel reads them with
-    `Self.params()`. One pair of launch symbols serves every kernel of every
-    task, so there is one signature to agree on, and the empty one leaves
-    nothing to pad and no positions to line up -- a kernel names the fields it
-    wants and the compiler checks the names and the types. Our backend enforces
-    it, since the frontend cannot: a kernel declaring an argument is a compile
-    error rather than a wrong answer.
+    A launch names a kernel and nothing else. A kernel takes no arguments --
+    the launcher copies the task's parameters into every core's scratchpad
+    before running one there, and the kernel reads them with `Self.params()`.
+    One pair of launch symbols serves every kernel of every task, so there is
+    one signature to agree on, and the empty one leaves nothing to pad and no
+    positions to line up: a kernel names the fields it wants and the compiler
+    checks the names and the types. Our backend enforces that, since the
+    frontend cannot -- a kernel declaring an argument is a compile error rather
+    than a wrong answer.
     """
 
     comptime Params: Movable

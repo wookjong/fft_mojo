@@ -125,46 +125,38 @@ confined to one table: a provisional choice can be measured now and
 corrected in one place later, the same bargain taken for the AMO
 encodings.
 
-## 3. What the frontend cannot express
+## 3. Where the frontend sets the shape
 
-Three things the launch interface would be better for, each tried against
-Mojo `1.0.0b2.dev2026061203` and each blocked. Recorded so the same ground is
-not covered again, and so that a toolchain that lifts one of them is
-recognised when it arrives.
+What the launch interface can and cannot say, tried against Mojo
+`1.0.0b2.dev2026061203`. Recorded so the same ground is not covered twice, and
+so a toolchain that moves one of these is recognised when it arrives.
 
-**A task's parameters are declared twice, and nothing ties the two together.**
-The host names them positionally at the call site, the device names them as
-fields of a struct, and a mismatch in count, order or type is found by the
-program going wrong. Collapsing the two into one declaration needs either a
-`device_main` whose signature varies per task -- impossible, because
-`__m2ndp_rt_launch_task` must be `@export`ed and `@export` rejects a
-parametric function -- or the host deriving order from the struct, which
-needs field reflection. `__fields__`, `__field_names__`, `fields_of[T]()` and
-`__type_of(T).__fields__` were all tried; none exists.
+**Field reflection does not exist.** `__fields__`, `__field_names__`,
+`fields_of[T]()` and `__type_of(T).__fields__` were all tried; none does. So a
+parameter block cannot be walked with its field types in hand, and `launch`
+reads it as a run of uniform records instead -- the field count being the
+block's size divided by one field's.
 
-The unchecked half is the host boundary only. `NDPTask` carries the block as
-an associated type (`comptime Params: AnyType`); the trait-declared
-`device_main` is typed against it and every kernel takes it, so from
-`device_main` inward the parameters are one declaration and the compiler
-checks the names and the types. The single cast lives in
-`__m2ndp_rt_launch_task`, where the untypedness comes from.
+That is also why the host end of a launch stays unchecked. `NDPTask` carries
+the block as an associated type (`comptime Params: Movable`), so the
+trait-declared `device_main` is typed against it and the kernels read it
+through `Self.params()`: from `device_main` inward the parameters are one
+declaration and the compiler checks the names and the types. What is left is
+the caller's own ordering of `PooledRange` against the buffers it names.
 
-`size_of[T.Params]()` is also a compile-time value, and since the block is all
-addresses that gives the field count, so an arity check against the number of
-buffers passed is possible. It is not implemented: it catches the least
-dangerous of the three mistakes and would read as a guarantee it is not.
+`size_of[T.Params]()` is a compile-time value, and since the block is all
+addresses that gives the field count. An arity check against it is possible
+and is not implemented: it catches the least dangerous mistake and would read
+as a guarantee it is not.
 
-**Kernel launches cannot be wrapped.** A workload writes them out as
-`external_call` to `__m2ndp_launch_serial` and `__m2ndp_launch_parallel`,
-naming a kernel and nothing else. A
-library wrapper cannot hide that: `external_call` accepts a function only
-where it is named at the call site. Passed on through a wrapper it fails to
-convert, as a runtime argument and as a compile-time parameter alike, and with
-every spelling of the function type -- a declared function's type carries its
-name, so `def body(p: T) -> None` will not convert to `def(p: T) -> None` even
-where the signatures match exactly.
+**A function reaches `external_call` only as a parameter.** As a runtime
+argument it does not convert: a declared function's type carries its name, so
+`def body() -> None` is not `def() -> None`, and no spelling of the type
+bridges them. Bound to a compile-time parameter whose type is inferred it
+stays the function it is, and `materialize` hands it on -- which is how
+`launch_serial` and `launch_parallel` wrap the launch symbols.
 
-Passing the kernel's *address* compiles and is worse than not wrapping.
+Taking the kernel's *address* instead compiles and is worse than not wrapping.
 `UnsafePointer(to=k)` is the address of a slot holding the function rather
 than the function, so the launcher is handed one indirection too many; and the
 IR stores the kernel address into that slot, which leaves the function's only

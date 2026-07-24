@@ -14,10 +14,9 @@ The smallest kernel in the suite: one vector load, one vector store, no
 arithmetic. Useful as a floor for what the interface costs.
 """
 
-from std.ffi import external_call
 from std.sys import argv, size_of
 
-from m2ndp import NDPTask, PooledRange, global_uthread_id
+from m2ndp import NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import In, Out
 
 comptime W = 8   # int32 lanes per chunk
@@ -25,7 +24,7 @@ comptime W = 8   # int32 lanes per chunk
 
 @fieldwise_init
 struct MemcpyParams(Movable):
-    """What the host passes, in the order it hands the buffers over."""
+    """The task's parameters, declared once for both sides."""
 
     var src: In[Int32]
     var dst: Out[Int32]
@@ -42,7 +41,7 @@ struct Memcpy(NDPTask):
 
     @staticmethod
     def device_main(params: UnsafePointer[MemcpyParams, MutAnyOrigin]):
-        external_call["__m2ndp_launch_parallel", NoneType](Memcpy.body)
+        launch_parallel[Memcpy.body]()
 
 
 # ------------------------------------------------------------ the host
