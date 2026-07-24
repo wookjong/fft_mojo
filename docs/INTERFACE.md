@@ -323,6 +323,39 @@ signature deliberately matches `std._plugin`'s `stack_allocation_fn` hook so
 the body can move into a plugin overlay once a toolchain ships both a RISC-V
 backend and the plugin selector.
 
+## What a module has to satisfy
+
+A kernel and controller code are not alike, and every way of confusing them
+compiles and runs — a kernel reads a register a spawn would have set, a
+caller's values do not survive, the launcher jumps to an integer. The failure
+is a wrong answer rather than a crash, which is why the rules are checked
+rather than written down. `RISCVM2ndpVerify` holds them, and
+`xm2ndp-module-rules.ll` shows each one being broken:
+
+| Rule | Because |
+|---|---|
+| a kernel takes no arguments | its parameters are in the scratchpad; an argument would be read from somewhere nothing wrote |
+| a kernel is launched, never called | it preserves nothing, and is entered without what a spawn sets |
+| a launch is given a kernel | anything else reaches the launcher as an address to jump to |
+| a launch symbol is called with the signature it was declared with | otherwise it is not a call to that symbol, and nothing it names is a kernel |
+| the scratchpad is a kernel's | controller code has none, and the register a kernel finds its base in holds its own first argument |
+
+One rule is not in the pass and cannot be: **a kernel may make no calls.** Most
+of the calls worth catching do not exist in the IR — `memcpy` for a large copy,
+`__atomic_*` for an operation the hardware lacks, the soft-float helpers — so
+that check lives in `LowerCall`, where the backend first synthesises them.
+
+The frontend states none of this. `external_call` checks nothing about the
+function whose address it passes on, and a kernel is an ordinary static method
+that anything may call.
+
+**What the pass cannot see is a call the frontend already removed.** A small
+kernel called directly from `device_main` is inlined before codegen, so the
+call is gone; what catches it then is the scratchpad rule, since the inlined
+body reads a base the controller does not have. A kernel that touches no
+scratchpad and is inlined this way runs once on the controller instead of once
+per microthread, and nothing says so.
+
 ## Synchronization
 
 There is none to map: the library has no barrier. µthreads are created and
