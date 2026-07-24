@@ -55,6 +55,16 @@ tested. Running the same workload at one core and at four is what tests it —
 `./scripts/host-run.sh histogram 4 8` against `... histogram 1 1` --
 four cores at an interleave of eight, against one core.
 
+## In CI
+
+`.github/workflows/test.yml` runs all of this on every push and pull request:
+the artifacts and their checks, the smoke test, and every workload at two
+machine configurations. It runs on GitHub-hosted runners, pulling the image
+`image.yml` publishes rather than building anything -- the toolchains are
+already in it, and only building them needs the self-hosted runner. The
+workspace is the checkout being tested, with `build` linked to the image's
+tools, so what runs is the branch and not the copy baked into the image.
+
 ## Launching from the host
 
 The device code is compiled Mojo; so is the program that launches it. A host

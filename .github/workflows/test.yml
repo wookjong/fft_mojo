@@ -1,0 +1,122 @@
+name: test
+
+# Compile every workload and run it under Spike.
+#
+# Runs on GitHub-hosted runners. Nothing here builds a toolchain: the image
+# published by image.yml already carries Mojo, our LLVM and the simulator, so a
+# job pulls it and runs the scripts. Building is what needs the self-hosted
+# runner (25 minutes and a lot of disk); testing does not, and keeping it on
+# hosted runners means a pull request from anywhere gets checked.
+#
+# The checkout is what is tested, not the copy baked into the image: the
+# workspace is its own directory and `build` is a link to the image's tools.
+#
+# A pull request that changes the compiler is tested against main's image --
+# image.yml builds such a PR to prove the Dockerfile is sound but does not
+# publish it. What that PR changes in the backend is covered by the LLVM lit
+# suite, which build-llvm.sh runs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/psal-postech/mojo-m2ndp:main
+
+jobs:
+  # The artifacts: device IR and assembly for every workload, and the checks
+  # that read them. This is where a codegen regression shows up -- an atomic
+  # that stopped being one instruction, a kernel that grew a frame -- without
+  # anything having to run.
+  artifacts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/psal-postech/mojo-m2ndp:main
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image's toolchains, at the path the scripts look for them at. Not a
+      # mount over /work: that is where they live.
+      - name: Point at the image's toolchains
+        run: ln -s /work/build build
+
+      - run: ./scripts/build.sh
+      - run: ./scripts/verify.sh
+
+      # Kept whether or not the checks passed -- when one fails the generated
+      # code is what you want to read.
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-code
+          path: out/
+          retention-days: 7
+
+  # The workloads themselves: each host program fills the pool, launches its
+  # task under Spike and checks the result against one it computes itself.
+  #
+  # Twice over, at two machine configurations. The second is the one that
+  # exercises the block-cyclic mapping -- with one core every microthread is on
+  # it, so a mapping bug cannot show.
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/psal-postech/mojo-m2ndp:main
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cores: 1
+            interleave: 1
+          - cores: 4
+            interleave: 2
+
+    name: run (cores=${{ matrix.cores }}, interleave=${{ matrix.interleave }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Point at the image's toolchains
+        run: ln -s /work/build build
+
+      - name: Run every workload
+        env:
+          CORES: ${{ matrix.cores }}
+          INTERLEAVE: ${{ matrix.interleave }}
+        run: ./scripts/host-run.sh
+
+  # Does the pipeline stand up at all: assemble, link, run, and does the
+  # simulator load the vendor extension. Cheap, and it fails with a clearer
+  # message than a workload does when the extension is the thing that broke.
+  smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/psal-postech/mojo-m2ndp:main
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Point at the image's toolchains
+        run: ln -s /work/build build
+      - run: ./scripts/spike-smoke.sh
