@@ -100,7 +100,8 @@ jobs:
             type=sha,format=long
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
@@ -108,5 +109,32 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Skipping the toolchains is a workflow_dispatch choice and nothing
+          # else. Testing `inputs.build_toolchains == false` on its own does
+          # not say that: on a push there is no such input, and an expression
+          # comparing null against false casts both to 0 and comes out true --
+          # so every image published from main was built with the skip branch
+          # taken, and had no compiler in it.
           build-args: |
-            BUILD_TOOLCHAINS=${{ inputs.build_toolchains == false && '0' || '1' }}
+            BUILD_TOOLCHAINS=${{ github.event_name == 'workflow_dispatch' && inputs.build_toolchains == false && '0' || '1' }}
+
+      # An image without a compiler in it is what this job exists to not
+      # publish, and nothing noticed when it did: the build succeeds either
+      # way, the skip branch leaving the directories behind empty. So ask the
+      # image it just pushed, by digest rather than by tag, whether the tools
+      # are in it. Skipped for a deliberate skip, and on pull requests, which
+      # push nothing to pull.
+      - name: The published image carries the toolchains
+        if: >-
+          github.event_name != 'pull_request'
+          && !(github.event_name == 'workflow_dispatch'
+               && inputs.build_toolchains == false)
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+          docker run --rm "${image,,}" sh -c '
+            set -e
+            test -x /work/build/llvm/bin/llc
+            test -x /work/build/llvm/bin/ld.lld
+            test -x /work/build/spike/install/bin/spike
+            test -s /work/build/spike/libm2ndp_ext.so
+          '
