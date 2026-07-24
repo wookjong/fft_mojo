@@ -41,13 +41,12 @@ comptime W = PACKET // size_of[Int64]()   # lanes in one packet;
 
 @fieldwise_init
 struct ImdbParams(Movable):
-    """What the host passes. `predicate` comes as a one-element buffer,
-    since the parameter block is addresses; the kernel dereferences it, so it
-    stays an Int64 rather than being widened on the way through."""
+    """What the host passes. `predicate` goes in by value: the block is copied
+    into the scratchpad as it stands, so a scalar needs no address."""
 
     var column: UnsafePointer[Int64, MutAnyOrigin]
     var bitmap: UnsafePointer[UInt8, MutAnyOrigin]
-    var predicate: UnsafePointer[Int64, MutAnyOrigin]
+    var predicate: Int64
 
 
 struct ImdbLtInt64(NDPTask):
@@ -58,7 +57,7 @@ struct ImdbLtInt64(NDPTask):
         var i = global_uthread_id()
         ref p = ImdbLtInt64.params[]
         var v = p.column.load[width=W](i * W)
-        var mask = v.lt(p.predicate[0])          # SIMD[bool, W]
+        var mask = v.lt(p.predicate)          # SIMD[bool, W]
 
         # Pack the lanes into one bitmap byte.
         var bits = UInt8(0)
@@ -91,8 +90,7 @@ def main() raises:
     var pool = Pool()
     var column = pool.alloc[Int64](rows)
     var bitmap = pool.alloc[UInt8](rows // W)
-    var predicate = pool.alloc[Int64](1)
-    predicate[0] = 0
+    var predicate = Int64(0)
 
     seed(0)
     for i in range(rows):
@@ -109,7 +107,7 @@ def main() raises:
     for i in range(rows // W):
         var want = UInt8(0)
         for lane in range(W):
-            if column[i * W + lane] < predicate[0]:
+            if column[i * W + lane] < predicate:
                 want |= UInt8(1 << lane)
         if bitmap[i] != want:
             print("[host] wrong at byte", i, ":", bitmap[i], "expected", want)

@@ -23,13 +23,12 @@ comptime W = PACKET   # uint8 lanes in one packet
 
 @fieldwise_init
 struct MemsetParams(Movable):
-    """What the host passes. `value` arrives as a one-element buffer rather
-    than a scalar: the parameter block the host fills is addresses, so a
-    scalar has to be somewhere to have an address. The kernel dereferences it
-    where it needs it, keeping the byte a byte the whole way."""
+    """What the host passes. A scalar goes in by value: the block is copied
+    into the scratchpad as it stands, so a field does not have to be an
+    address to survive the trip."""
 
     var dst: UnsafePointer[UInt8, MutAnyOrigin]
-    var value: UnsafePointer[UInt8, MutAnyOrigin]
+    var value: UInt8
 
 
 struct Memset(NDPTask):
@@ -39,7 +38,7 @@ struct Memset(NDPTask):
     def body():
         var i = global_uthread_id() * W
         ref p = Memset.params[]
-        p.dst.store(i, SIMD[DType.uint8, W](p.value[0]))
+        p.dst.store(i, SIMD[DType.uint8, W](p.value))
 
     @staticmethod
     def device_main():
@@ -65,10 +64,7 @@ def main() raises:
 
     var pool = Pool()
     var dst = pool.alloc[UInt8](n)
-    # The scalar goes in the pool too: a parameter is an address, so a byte
-    # the kernel reads has to be somewhere the device can address.
-    var value = pool.alloc[UInt8](1)
-    value[0] = 0xAB
+    var value = UInt8(0xAB)
 
     var rc = Memset.launch(
         pool, PooledRange.over(dst, n), MemsetParams(dst, value)
