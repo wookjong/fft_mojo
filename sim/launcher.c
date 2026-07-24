@@ -49,9 +49,20 @@ void __m2ndp_launch_parallel(void (*kernel)(void))
 {
     set_args();
 
+    /* A microthread's number on its core is counted out as the core receives
+     * them, rather than derived from where it sits in the range: counting
+     * holds whatever the spread is, deriving assumes every core gets an equal
+     * share of it. Static because a launcher has no allocator and this is
+     * larger than the stack wants. */
+    static u64 local[M2NDP_MAX_CORES];
+    for (u64 core = 0; core < cur_topo.cores; core++)
+        local[core] = 0;
+
     u64 total = m2ndp_total(&cur_topo);
     for (u64 u = 0; u < total; u++) {
-        m2ndp_ids id = m2ndp_id_of(&cur_topo, u, spad, M2NDP_SPAD_BYTES);
+        u64 core = m2ndp_core_of(&cur_topo, u);
+        m2ndp_ids id =
+            m2ndp_id_of(&cur_topo, u, local[core]++, spad, M2NDP_SPAD_BYTES);
         m2ndp_launch(&id, kernel);
     }
 }

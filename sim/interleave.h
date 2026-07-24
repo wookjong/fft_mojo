@@ -46,18 +46,4 @@ static inline m2ndp_u64 m2ndp_core_of(const m2ndp_topology *t, m2ndp_u64 u)
     return m2ndp_addr_of(t, u) / t->stride % t->cores;
 }
 
-/* Its index among the microthreads sharing that core: whole rounds first, then
- * the position within the current block.
- *
- * Well defined because a launch takes a base aligned to `stride * cores` (see
- * __m2ndp_set_task_range), which is what makes every core's share the same
- * size and every block whole. */
-static inline m2ndp_u64 m2ndp_local_of(const m2ndp_topology *t, m2ndp_u64 u)
-{
-    m2ndp_u64 per_block = t->stride / t->packet;
-    m2ndp_u64 block = (m2ndp_addr_of(t, u) - t->base) / t->stride;
-    m2ndp_u64 within = (m2ndp_addr_of(t, u) - t->base) / t->packet % per_block;
-    return block / t->cores * per_block + within;
-}
-
 #endif

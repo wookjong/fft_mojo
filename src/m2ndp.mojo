@@ -447,7 +447,8 @@ trait NDPTask:
 def local_uthread_id() -> Int:
     """This µthread's index within its group (Arachne `LocalUThreadID()`).
 
-    Doubles as the scratchpad slot index.
+    Counted out as a core receives its µthreads, so it is dense on every core
+    whatever the range's spread comes to.
     """
     return Int(external_call["__m2ndp_local_uthread_id", Int32]())
 
