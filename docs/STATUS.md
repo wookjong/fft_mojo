@@ -125,7 +125,42 @@ confined to one table: a provisional choice can be measured now and
 corrected in one place later, the same bargain taken for the AMO
 encodings.
 
-## 3. Toolchain constraint
+## 3. What the frontend cannot express
+
+Three things the launch interface would be better for, each tried against
+Mojo `1.0.0b2.dev2026061203` and each blocked. Recorded so the same ground is
+not covered again, and so that a toolchain that lifts one of them is
+recognised when it arrives.
+
+**A task's parameters are declared twice, and nothing ties the two together.**
+The host names them positionally at the call site, the device names them as
+fields of a struct, and a mismatch in count, order or type is found by the
+program going wrong. Collapsing the two into one declaration needs either a
+`device_main` whose signature varies per task -- impossible, because
+`__m2ndp_rt_launch_task` must be `@export`ed and `@export` rejects a
+parametric function -- or the host deriving order from the struct, which
+needs field reflection. `__fields__`, `__field_names__`, `fields_of[T]()` and
+`__type_of(T).__fields__` were all tried; none exists.
+
+What *is* available: traits carry associated types (`comptime Params:
+AnyType` compiles), and `size_of[T.Params]()` is a compile-time value. Since
+the parameter block is all addresses, that gives the field count, so an arity
+check is possible. It is not implemented, because it catches the least
+dangerous of the three mistakes and would read as a guarantee it is not.
+
+**Kernel launches cannot be wrapped.** A workload writes them out as
+`external_call` to `__m2ndp_launch_serial` and `__m2ndp_launch_parallel`,
+padding the unused argument slots with zeros. A library wrapper would hide
+both, and cannot: `external_call` accepts a function only where it is named
+at the call site. Passed on through a wrapper it fails to convert, as a
+runtime argument and as a compile-time parameter alike, and with every
+spelling of the function type.
+
+**A variadic's length is not a compile-time value.** `comptime n =
+len(args)` is rejected as a dynamic value, so anything derived from how many
+arguments a call was given has to be checked at run time.
+
+## 4. Toolchain constraint
 
 | Version | RISC-V backend | `stdlib_plugin` target field |
 |---------|----------------|------------------------------|
@@ -147,7 +182,7 @@ if it comes back in a plugin-capable build, the long-term path opens up.
 
 ---
 
-## 4. Decisions worth not relitigating
+## 5. Decisions worth not relitigating
 
 Recorded because each was reached by measuring something that contradicted
 an earlier assumption.
@@ -180,7 +215,7 @@ evaluated once and shared.
 
 ---
 
-## 5. Open work
+## 6. Open work
 
 **Benchmarks** — 6 of ~23 ported. Next, roughly in order of what new ground
 they cover:
