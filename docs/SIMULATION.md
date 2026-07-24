@@ -22,12 +22,19 @@ apt-get install -y device-tree-compiler
 [smoke] checking
   RVV through the pipeline     OK
   indexed vector atomic        OK
-  all 64 instructions          OK
-  vector_add (compiled)        OK
-  histogram (compiled)         OK
+```
+```
+[host-run] histogram, cores=1 interleave=1
+[host] histogram ok
 ```
 
-The split is deliberate. The first uses no M²NDP instruction at all — it
+Two scripts, because they answer different questions. `spike-smoke.sh` asks
+whether the instructions do what they say, from hand-written assembly.
+`host-run.sh` asks whether a compiled workload runs, launched the way the
+device launches one -- a host program in Mojo names a task, and the task is
+compiled, run and checked from there.
+
+The split is deliberate. The first check uses no M²NDP instruction at all — it
 exists so the pipeline (assemble → link → load → execute → report) is known
 good on its own, and a later failure means the extension rather than the
 plumbing.
@@ -36,37 +43,216 @@ The second runs `m2ndp.vamoaddei32.v` by hand. Four lanes hit bins 1, 1, 3
 and 0, so the array must come out `{1, 2, 0, 1}`; two lanes deliberately
 collide, which is what a broken indexed atomic gets wrong.
 
-The third is every instruction: 52 indexed vector atomics and 12 scalar
-floating-point ones, 188 checks. `sim/gen-tests.py` emits it, computing the
-expected results in Python — writing 64 of these by hand would be 64 chances
-to work the answer out the same wrong way the simulator does. **The exit code
-is the first test that disagreed**, so a failure names the instruction rather
-than saying only that something is wrong.
+`host-run.sh` is where the compiled workloads run: `histogram` exercises the
+whole set at once — scratchpad globals at compiler-assigned offsets, an
+indexed vector atomic, and three kernels sharing one scratchpad across
+launches. The host program fills the inputs, launches the task, and folds its
+own histogram to check against, so the result being checked does not come from
+the same place as the result being produced.
 
-The last two are the ones that matter: compiled kernels, launched the way
-the contract says a task is launched, checked against results computed in
-Python. `histogram` exercises the whole set at once — scratchpad globals at
-compiler-assigned offsets, an indexed vector atomic, and three phases sharing
-one scratchpad across kernel launches.
+The scratchpad-per-core property had been agreed and written down but never
+tested. Running the same workload at one core and at four is what tests it —
+`./scripts/host-run.sh histogram 4 8` against `... histogram 1 1` --
+four cores at an interleave of eight, against one core.
 
-That last property had been agreed and written down but never tested. It is
-now.
+## Launching from the host
+
+The device code is compiled Mojo; so is the program that launches it. A host
+program names a task and gets it compiled, for the target the task declares,
+run, and its results back:
+
+```mojo
+var hist = List[Int32](length=256, fill=0)
+_ = Histogram.launch(PooledRange.over(samples),
+                     Buffer.input(samples), Buffer.output(hist))
+# hist now holds the result
+```
+
+A launch takes what it is mapped over and what it is given, and nothing else.
+`PooledRange` is the region of the pool the task covers -- divided by the
+task's packet, that is the microthread count -- and saying it as
+`PooledRange.over(samples)` beats two bare integers whose meaning a reader has
+to reconstruct.
+
+There is deliberately no argument for the machine. How many cores exist and
+how finely work is interleaved across them is the hardware's, so the runtime reads
+`config/machine.conf` and configures itself; `M2NDP_MACHINE_CONFIG` points at
+a different description. Host code that genuinely depends on the machine can
+read the same file -- `Config.load().get("cores")` -- which exactly one
+benchmark does, and only because of the limitation below.
+
+Launching is a method on the task, not a free function taking one: it is the
+other half of `device_main`, and a reader of a workload should not have to go
+elsewhere to find how it is run. `NDPTask.launch` compiles the task through
+`compile_info` for `Histogram.target`, finishes the lowering with our llc,
+links against the device-side launcher, runs it under Spike, and downloads the
+outputs into the caller's lists. The target and the packet size are the task's; the
+machine is the config's. Varying the machine means varying the config, which is what
+`scripts/host-run.sh` does to show an answer does not depend on the hardware.
+
+`src/m2ndp_host.mojo` holds the machinery under it — files, processes, the
+toolchain — and knows nothing about tasks. That is what keeps the dependency
+one-way: the model reaches for the machinery, never the reverse.
+
+A benchmark is **one file**, the way a `.cu` is: its kernels, its
+`device_main`, and the host `main` that fills the inputs, launches and checks
+the answer. Nothing splits them, because nothing has to — `compile_info`
+compiles only what the entry point reaches, which is the same thing nvcc's
+device pass does with a single source.
+
+What that costs is a whole-module device build: `mojo build --target-triple
+riscv64` on such a file fails, since it would compile the host `main` for the
+device too. So `build.sh` asks the task instead —
+
+```bash
+./spmv --emit-ir          # NDPTask.device_ir(), through compile_info
+```
+
+— and gets exactly the IR a launch compiles, rather than an approximation of
+it. `out/*.s` then comes from our llc, so for the first time the checked
+assembly is the assembly that runs: identity values as register reads,
+`m2ndp.vamoaddei32.v` as one instruction, and no frame on a kernel.
+
+`launch` and `device_ir` are host-side methods on a device-side trait, which
+sounds worse than it is: a device build reaches neither, so neither is
+instantiated, and none of the host machinery has to exist on a core.
+
+Five things about this are not obvious, and each cost a debugging session:
+
+- **`compile_info` is a run-time call, not a comptime one.** Folding it at
+  compile time fails inside the stdlib with nothing pointing at the cause.
+- **It has to emit IR, not assembly.** Mojo's own LLVM has never heard of the
+  vendor extension, so its assembly is unfinished — kernels with frames, calls
+  where there should be register reads. Our llc is what finishes it.
+- **An input buffer copies its bytes up front.** A buffer that only kept an
+  address would not keep its list alive: nothing mentions the list after
+  `Buffer.input(xs)`, so it can be freed before the upload reads it. See
+  `Buffer` in `src/m2ndp_host.mojo`.
+- **Commands to `system()` are NUL-terminated by hand.** `String.unsafe_ptr()`
+  promises no terminator, and the shell reads one command plus whatever
+  followed it in memory otherwise — a syntax error on a well-formed line.
+- **A defaulted `comptime` member needs a declared type to be overridable.**
+  Written `comptime machine = Machine(1, 1)`, a conforming task cannot override
+  it and the default is the only value it can ever have; written
+  `comptime machine: Machine = Machine(1, 1)`, it can. The failure is a
+  conformance error pointing at the task, not at the trait.
 
 ## The launcher
 
-`sim/gen-kernel-test.py` implements the launcher half of the contract:
+`sim/` implements the launcher half of the contract in C:
 
 - **the scratchpad region is the launcher's to provide.** `.spad` only
   reserves a size; `__m2ndp_spad_size` says how much, and the base pointer
   goes at `region + __m2ndp_spad_size` with the arguments written upwards
   from there. The globals sit below at the negative offsets the compiler
-  already emitted.
+  already emitted. See `sim/launch.h`.
 - **the identity values arrive in registers**, one per value. The assignment
-  is provisional and lives in `RISCVM2ndpArgInfo.h`; the generator is the
+  is provisional and lives in `RISCVM2ndpArgInfo.h`; `sim/launch.h` is the
   only other place that knows it, so settling the hardware ABI changes two
   files.
-- **microthreads run one at a time**, and the loop counter lives in memory
-  rather than a register, because a kernel preserves nothing.
+- **microthreads run one at a time**, sequentially. The contract has no
+  barrier and combining happens through atomics, so that is a legal schedule
+  — but it is one schedule out of many, and a race it does not happen to
+  expose is a race this cannot find.
+
+## Who decides what runs
+
+Not the launcher. A task is a struct holding its kernels, the scratchpad they
+share, and the `device_main` that says which of them runs in what order:
+
+```mojo
+struct Histogram(NDPTask):
+    comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
+
+    @staticmethod
+    def initialize(): ...
+    @staticmethod
+    def body(samples): ...
+    @staticmethod
+    def finalize(out_hist): ...
+
+    @staticmethod
+    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
+        var p = params.bitcast[HistogramParams]()
+        external_call["__m2ndp_launch_serial", NoneType](
+            Histogram.initialize, Int(0), Int(0), Int(0), Int(0), Int(0), Int(0))
+        external_call["__m2ndp_launch_parallel", NoneType](
+            Histogram.body, Int(p[].samples), Int(0), Int(0), Int(0), Int(0), Int(0))
+        external_call["__m2ndp_launch_serial", NoneType](
+            Histogram.finalize, Int(p[].out_hist), Int(0), Int(0), Int(0), Int(0), Int(0))
+```
+
+The launches are spelled out rather than wrapped. A helper would have to take
+the kernel as an argument and pass it on, and `external_call` will not convert
+a function value that arrives as a parameter — only one named at the call
+site. So the six slots stay visible; see below for where they come from.
+
+Conforming to `NDPTask` is the whole interface to the host. The trait carries
+a default `__m2ndp_rt_launch_task`, so every task gets the entry point it is
+launched through without a workload writing any launch glue — and that entry
+point is the only symbol a task exports. `device_main` and the kernels stay
+internal, which is what keeps one task per ELF from colliding with the next.
+
+A launch has two halves, and only one of them is the machine's:
+
+- **`__m2ndp_set_task_range(base, size)`**, in `sim/launcher.c`. A task runs
+  over a memory range, and that range is what settles how many microthreads
+  there are — one per packet. Nothing can be launched until this is known,
+  which is why the runtime calls it before handing over.
+- **`device_main`**, in the workload. Which kernels, in what order.
+
+Underneath, `__m2ndp_launch_parallel` and `__m2ndp_launch_serial` are the
+machine again. A `parallel` launch spreads one microthread per packet of the
+range over the cores; a `serial` launch runs one microthread on each core,
+which is what a kernel walking the scratchpad rather than the data needs —
+alone on its core, so a strided walk from `local_uthread_id()` by
+`group_size()` covers all of it. Both return only once every microthread has
+retired, so a launch is synchronous and the order written is the order that
+happens. Neither takes a size: how much work there is was settled when the
+task was launched.
+
+The topology — how many cores, how microthreads map to them, where the
+scratchpads are — is not passed in. It is state the machine already holds
+when a kernel is launched, so the model holds it the same way: file statics
+in `launcher.c`, set before the task runs.
+
+### What falls out of the frontend rather than the design
+
+**Arguments arrive as one pointer**, the way CUDA's do, and the task casts it
+to a struct of its own. `@export` cannot be applied to a parametric function,
+so the runtime entry point has one fixed signature; a parameter per argument
+would then cap how many a task could take.
+
+**Kernel arguments travel in a fixed six slots**, because `external_call`
+allows one signature per symbol name, so a kernel taking five buffers and one
+taking none reach the same entry and the difference is zeros. Six is what
+`spmv` needs plus one spare.
+
+**A kernel named as a value becomes a closure copy**, and that copy is what
+runs. The frontend names it after the function the value appeared in, so a
+kernel launched from `device_main` is called something like
+`Histogram::device_main(...)_closure_0` — a name that says the opposite of
+what the function is.
+
+Which is why the backend does not read names at all. A kernel is a function
+whose address reaches one of the launch symbols:
+
+```llvm
+call void @__m2ndp_launch_serial(ptr @"Histogram::device_main(...)_closure_0", ...)
+```
+
+`isM2ndpKernel` looks for exactly that, in the function's own use list. Those
+symbol names are this project's contract — the same ones `sim/launcher.c`
+implements — so nothing outside the repository can change what the predicate
+reads, which is not true of a mangling scheme. Everything not launched is
+controller code, which is the right default: a function nothing spawns is not
+a kernel in any useful sense.
+
+Getting this backwards is not a diagnostic but a fault — a kernel would read
+its arguments out of registers nobody filled in — so
+`xm2ndp-device-main.ll` pins it with the two kinds deliberately misnamed:
+a launched `device_main_lookalike` that must get the kernel ABI, and a
+launching `kernel_closure_0` that must not.
 
 ## The extension is loadable, not a fork
 

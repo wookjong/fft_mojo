@@ -13,8 +13,16 @@ between the two.
 ```bash
 git clone <this-repo> && cd mojo-m2ndp
 ./scripts/setup.sh          # install the Mojo toolchain (./toolchain)
-./scripts/build.sh          # benchmarks -> out/*.ll, out/*.s
+./scripts/build.sh          # each benchmark's device IR -> out/*.ll (+ .s with our llc)
 ./scripts/verify.sh         # check the artifacts
+```
+
+To actually run one, under Spike, with the workload's own host code:
+
+```bash
+./scripts/build-llvm.sh     # our LLVM, with the vendor extension
+./scripts/build-spike.sh    # the simulator and the extension library
+./scripts/host-run.sh       # every benchmark, checked against its own answer
 ```
 
 Or take the development image, which carries both toolchains already built,
@@ -23,7 +31,7 @@ and skip the setup entirely:
 ```bash
 docker run --rm -it ghcr.io/psal-postech/mojo-m2ndp:main
 ./scripts/build.sh && ./scripts/verify.sh
-./scripts/spike-smoke.sh    # run what came out — see docs/SIMULATION.md
+./scripts/host-run.sh       # run what came out — see docs/SIMULATION.md
 ```
 
 Do not mount over `/work`: the toolchains live there and a mount hides them.
@@ -112,7 +120,7 @@ Three phases of one kernel share a per-core bin array. Declaring the
 scratchpad at struct level is what keeps them on the same storage:
 
 ```mojo
-struct Histogram:
+struct Histogram(NDPTask):
     comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
 ```
 ```llvm
@@ -130,7 +138,8 @@ phases would silently use different memory.
 ## Layout
 
 ```
-src/m2ndp.mojo        M²NDP primitive library + compile target definition
+src/m2ndp.mojo        the model: kernels' primitives, NDPTask, launching a task
+src/m2ndp_host.mojo   host-side machinery a launch runs on (files, processes, tools)
 benchmarks/           ports of M2NDP-public/examples/benchmarks
   memcpy.mojo         vector load + store, nothing else
   memset.mojo         scalar splat to a vector store
@@ -138,11 +147,18 @@ benchmarks/           ports of M2NDP-public/examples/benchmarks
   imdb_lt_int64.mojo  predicate scan -> bitmap (vmslt.vx)
   spmv.mojo           CSR SpMV — indirect access + atomic combine
   histogram.mojo      scratchpad shared across INIT/BODY/FINAL phases
+config/machine.conf   the NDP hardware a run is modelled on
+sim/                  the device-side launcher, and the Spike extension
 scripts/
   setup.sh            install the Mojo toolchain
   env.sh              environment variables (source it)
-  build.sh            compile benchmarks -> out/
+  build.sh            each benchmark's device IR + assembly -> out/
   verify.sh           check the artifacts
+  build-llvm.sh       our LLVM (vendor extension) + lld
+  build-spike.sh      the simulator and sim/ext/ as a loadable extension
+  spike-smoke.sh      does the pipeline, and the extension, stand up
+  host-run.sh         run a workload from its host program
+docs/SIMULATION.md    running compiled workloads, and what that does not catch
 docs/INTERFACE.md     the backend contract in detail
 docs/EXAMPLES.md      annotated source -> LLVM IR -> assembly walkthrough
 docs/STATUS.md        what works, what the backend must supply, open work
@@ -156,20 +172,20 @@ from m2ndp import global_uthread_id, atomic_add, scratchpad
 
 comptime BINS = 256
 
-struct Histogram:
-    # Declared once at struct level so every phase shares one allocation.
+struct Histogram(NDPTask):
+    # Declared once at struct level so every kernel shares one allocation.
     comptime bins = scratchpad[BINS, Int32, name="hist_bins"]()
 
-@export                               # kernels are entry points, not called
-def histogram_body(samples: UnsafePointer[Int32, MutAnyOrigin]):
-    var bin = Int(samples[global_uthread_id()])
-    _ = atomic_add(Histogram.bins + bin, Int32(1))
+    @staticmethod
+    def body(samples: UnsafePointer[Int32, MutAnyOrigin]):
+        var bin = Int(samples[global_uthread_id()])
+        _ = atomic_add(Histogram.bins + bin, Int32(1))
 ```
 
 Kernels take ordinary parameters and index them; recovering the hardware's
-mapped-address form is the compiler's job. `@export` is required — nothing
-in the module calls a kernel, so it would otherwise be eliminated as dead
-code.
+mapped-address form is the compiler's job. Nothing is exported: conforming
+to `NDPTask` gives the task the one entry point the host launches it
+through, and naming a kernel from `device_main` is what keeps it alive.
 
 ## Backend interface contract
 

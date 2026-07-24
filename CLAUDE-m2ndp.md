@@ -26,7 +26,8 @@ repo is the interface contract between the two.
 ## Repository layout
 
 ```
-src/m2ndp.mojo        primitive library + compile target definition (the key file)
+src/m2ndp.mojo        the model: kernels' primitives, NDPTask, launching a task
+src/m2ndp_host.mojo   host-side machinery a launch runs on (files, processes, tools)
 benchmarks/           ports of M2NDP-public/examples/benchmarks
   memcpy.mojo         vector load + store, nothing else
   memset.mojo         scalar splat to a vector store
@@ -34,11 +35,18 @@ benchmarks/           ports of M2NDP-public/examples/benchmarks
   imdb_lt_int64.mojo  predicate scan -> bitmap (vmslt.vx)
   spmv.mojo           CSR SpMV — indirect access + atomic combine
   histogram.mojo      scratchpad shared across INIT/BODY/FINAL phases
+config/machine.conf   the NDP hardware a run is modelled on
+sim/                  the device-side launcher, and the Spike extension
 scripts/
   setup.sh            install the Mojo toolchain (merge 3 nightly wheels -> ./toolchain)
   env.sh              environment variables (source it)
-  build.sh            compile benchmarks -> out/*.ll, out/*.s
+  build.sh            each benchmark's device IR + assembly -> out/*.ll, out/*.s
   verify.sh           automated artifact checks
+  build-llvm.sh       our LLVM (vendor extension) + lld
+  build-spike.sh      the simulator and sim/ext/ as a loadable extension
+  spike-smoke.sh      does the pipeline, and the extension, stand up
+  host-run.sh         run a workload from its host program
+docs/SIMULATION.md    running compiled workloads, and what that does not catch
 docs/INTERFACE.md     the backend contract in detail
 docs/EXAMPLES.md      annotated source -> LLVM IR -> assembly walkthrough
 docs/STATUS.md        what works, what the backend must supply, open work
@@ -54,6 +62,12 @@ toolchain/            installed Mojo (not tracked by git)
 ./scripts/build.sh spmv         # one benchmark only
 EMISSION=asm ./scripts/build.sh # one emission only (llvm|asm)
 ./scripts/verify.sh             # check the artifacts
+
+./scripts/build-llvm.sh         # our LLVM; `check` also runs the RISC-V lit suite
+./scripts/build-spike.sh        # simulator + sim/ext/ extension library
+./scripts/spike-smoke.sh        # pipeline and extension stand up
+./scripts/host-run.sh           # run both workloads from their host programs
+./scripts/host-run.sh histogram 4 8   # one, at a given cores/interleave
 ```
 
 If Mojo is already available, skip setup and just point at it:
@@ -89,11 +103,11 @@ up unable to build.
 
 README's "How it works" covers this; the operationally relevant parts:
 
-- `_compile_code`'s `target` parameter is a `!kgen.target` MLIR attribute
-  that can be written by hand, so `std.sys.info`'s closed vendor detection is
+- `compile_info`'s `target` parameter is a `!kgen.target` MLIR attribute that
+  can be written by hand, so `std.sys.info`'s closed vendor detection is
   simply not consulted. `m2ndp_target()` in `src/m2ndp.mojo` is that
-  attribute. The format was derived from stdlib `std/gpu/host/info.mojo`'s
-  `_get_a100_target()`.
+  attribute, and `NDPTask.target` defaults to it. The format was derived from
+  stdlib `std/gpu/host/info.mojo`'s `_get_a100_target()`.
 - The same move applies to stdlib routines that branch on `is_gpu()`: where
   one takes a different path for GPUs, open-code the MLIR operation that
   path emits. `scratchpad()` does this with `pop.global_alloc`.
@@ -160,11 +174,18 @@ The reasoning behind 3-5, and the measurements that produced it, is in
   them, and recovering the hardware form is the compiler's job.
 - Mojo 1.0 syntax: `fn` is gone — use `def`. The parameter name `out` is
   reserved (use `res` etc.).
-- A workload must print a `_compile_code[fn, emission_kind=...,
-  target=m2ndp_target()]` result for `build.sh` to handle it.
-- `build.sh` copies `src/` and the workload into a temp directory together
-  before compiling (because of Mojo's module search path). It assumes the
-  workload imports `m2ndp`.
+- Two ways a workload gets compiled, and they are not interchangeable.
+  `build.sh` builds the whole module with target flags, for `out/*.ll` and
+  the artifact checks. `NDPTask.launch` compiles the task itself through
+  `compile_info` at launch time, for the target the task declares. Only the
+  second is how a workload actually runs.
+- `compile_info` must be called at run time; folding it at comptime fails
+  inside the stdlib with nothing pointing at the cause. And it must emit IR,
+  not assembly: Mojo's own LLVM does not know the vendor extension, so its
+  assembly is unfinished.
+- `build.sh` and `host-run.sh` both copy `src/` and the workload into a temp
+  directory before compiling (because of Mojo's module search path). They
+  assume the workload imports `m2ndp`.
 - `build.sh` writes to a temp file and only replaces `out/*` on success, so
   a failed build never destroys artifacts from a previous good run.
 - All comments, documentation and commit messages in this repo are in

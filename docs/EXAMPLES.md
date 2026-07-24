@@ -19,10 +19,11 @@ Contents:
 ```mojo
 comptime W = 8
 
-@export
-def vector_add(a: ..., b: ..., c: ...):
-    var i = global_uthread_id() * W
-    c.store(i, a.load[width=W](i) + b.load[width=W](i))
+struct VectorAdd(NDPTask):
+    @staticmethod
+    def body(a: ..., b: ..., c: ...):
+        var i = global_uthread_id() * W
+        c.store(i, a.load[width=W](i) + b.load[width=W](i))
 ```
 
 ```llvm
@@ -157,15 +158,15 @@ struct Histogram:
 Exactly one addrspace(3) global, and all three functions index off it:
 
 ```llvm
-; histogram_init
+; Histogram.initialize
 %9  = getelementptr inbounds i32, ptr addrspace(3) @memory_blob_..., i64 %4
       store i32 0, ptr addrspace(3) %9, align 4
 
-; histogram_body
+; Histogram.body
 %8  = getelementptr inbounds i32, ptr addrspace(3) @memory_blob_..., i64 %7
 %9  = atomicrmw add ptr addrspace(3) %8, i32 1 monotonic, align 4
 
-; histogram_final
+; Histogram.finalize
 %11 = getelementptr inbounds i32, ptr addrspace(3) @memory_blob_..., i64 %5
 %12 = load i32, ptr addrspace(3) %11, align 4
 %13 = atomicrmw add ptr %10, i32 %12 monotonic, align 4

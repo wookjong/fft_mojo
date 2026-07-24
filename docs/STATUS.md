@@ -7,7 +7,7 @@ on the artifacts in `out/`; nothing is projected. Regenerate with
 The backend-facing contract is in [`INTERFACE.md`](INTERFACE.md); this file
 does not repeat it.
 
-Last updated: 2026-07-23, against Mojo `1.0.0b2.dev2026061203`.
+Last updated: 2026-07-24, against Mojo `1.0.0b2.dev2026061203`.
 
 ---
 
@@ -21,25 +21,41 @@ Last updated: 2026-07-23, against Mojo `1.0.0b2.dev2026061203`.
 | Atomics | `atomicrmw add` / `fadd`, on ordinary memory and on `addrspace(3)`, at `monotonic` ordering; `fadd` selects a real instruction with `+xm2ndp` rather than a cmpxchg loop |
 | Indirect access | plain load → sext → GEP → load; no special construct needed |
 | Predicate scan | `v.lt(x)` selects `vmslt.vx` |
-| Multi-kernel modules | `mojo build --emit llvm` with `@export`; several kernels per file |
+| Multi-kernel modules | several kernels per file, held by one task struct; none exported — naming a kernel from `device_main` is what keeps it alive |
+| Tasks | a struct conforming to `NDPTask` carries its kernels, its `device_main`, and the target, machine and packet size it runs with |
+| Launching from the host | `Histogram.launch(base, size, Buffer.input(xs), Buffer.output(ys))` — compiled for the task's target, run under Spike, results downloaded into the caller's lists |
 
 Benchmarks ported from
-[M2NDP-public](https://github.com/PSAL-POSTECH/M2NDP-public) — 6 of ~23:
+[M2NDP-public](https://github.com/PSAL-POSTECH/M2NDP-public) — 6 of ~23. All
+six are tasks, and all six run: `./scripts/host-run.sh` compiles each for its
+target, runs it under Spike and checks the answer against one the host
+computes itself.
 
 | Benchmark | Exercises |
 |---|---|
 | `memcpy` | vector load + store |
-| `memset` | scalar splat to vector store |
+| `memset` | scalar splat to vector store; a scalar kernel argument, and a range that is an output buffer |
 | `vector_add` | RVV vectorization |
 | `imdb_lt_int64` | predicate scan → bitmap |
-| `spmv` | indirect access, atomic combine |
+| `spmv` | indirect access, atomic combine, one group per row |
 | `histogram` | scratchpad shared across INIT/BODY/FINAL phases |
+
+Checked at 1, 4 and 8 cores and several interleavings; the answers agree,
+which is what tests the per-core scratchpad claim.
+
+**`spmv` does not fit the launch model cleanly.** Its kernel keys off
+`group_id()`, and a group is a core here, so a run computes exactly as many
+rows as there are cores — the host has to set `cores` to the row count, and
+the range it passes describes a microthread count rather than any buffer. A
+launch that could say "spawn G groups of N" independently of the core count is
+what is missing.
 
 ### LLVM baseline
 
 `./scripts/build-llvm.sh check`, against the pinned submodule (LLVM 23.1.0,
-`release/23.x`, RISC-V only, assertions on): **3209/3209 RISC-V lit tests
-pass**, CodeGen and MC together.
+`release/23.x`, RISC-V only, assertions on): **3210/3210 RISC-V lit tests
+pass**, CodeGen and MC together. The 3210th is `xm2ndp-device-main.ll`, which
+pins the split between controller-side code and kernels.
 
 The CodeGen baseline before `FeatureVendorXM2ndp` was 2595/2595. Adding the
 feature broke exactly one test — `features-info.ll`, which checks the full

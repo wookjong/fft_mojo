@@ -133,11 +133,11 @@ top and small positive offsets fit in a load's immediate. The globals sit
 below at negative offsets; they are reached inside loops, where an address
 computation would hoist out anyway.
 
-That ordering is also what keeps a global in the same place in every phase.
-`histogram_init` takes no arguments, `histogram_body` takes one — so
-anything placed *after* the arguments would sit at a different offset in
-each phase, and the phases would stop sharing it. Placing them before the
-base makes the offset depend only on the task.
+That ordering is also what keeps a global in the same place in every kernel
+of a task. `Histogram.initialize` takes no arguments, `Histogram.body` takes
+one — so anything placed *after* the arguments would sit at a different
+offset in each, and the kernels would stop sharing it. Placing them before
+the base makes the offset depend only on the task.
 
 ### Who decides the offsets, and why it is the compiler
 
@@ -348,7 +348,7 @@ this is the pattern to match.
 
 There is no vector atomic; see "Operations with no spelling at this level".
 
-**Kernel boundaries**, for ordering between phases. Launches from
+**Kernel boundaries**, for ordering between kernels. Launches from
 `device_main` are synchronous, so anything that would need `__syncthreads()`
 on a GPU is split into two kernels here.
 

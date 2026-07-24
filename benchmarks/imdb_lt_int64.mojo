@@ -35,22 +35,93 @@ Like the vector atomic in histogram.mojo, closing this gap needs a
 primitive, not a rewrite of the benchmark.
 """
 
-from m2ndp import global_uthread_id
+from std.ffi import external_call
+from std.sys import argv, size_of
+
+from m2ndp import NDPTask, PooledRange, global_uthread_id
+from m2ndp_host import Buffer
 
 comptime W = 8   # int64 lanes per chunk; one bitmap byte covers exactly these
 
 
-@export
-def imdb_lt_int64(column: UnsafePointer[Int64, MutAnyOrigin],
-                  bitmap: UnsafePointer[UInt8, MutAnyOrigin],
-                  predicate: Int64):
-    var i = global_uthread_id()
-    var v = column.load[width=W](i * W)
-    var mask = v.lt(predicate)            # SIMD[bool, W]
+@fieldwise_init
+struct ImdbParams(Copyable, Movable):
+    """What the host passes. `predicate` comes as a one-element buffer,
+    since the parameter block is addresses; `device_main` reads it and hands
+    the kernel the value."""
 
-    # Pack the lanes into one bitmap byte.
-    var bits = UInt8(0)
-    comptime for lane in range(W):
-        if mask[lane]:
-            bits |= UInt8(1 << lane)
-    bitmap[i] = bits
+    var column: UnsafePointer[Int64, MutAnyOrigin]
+    var bitmap: UnsafePointer[UInt8, MutAnyOrigin]
+    var predicate: UnsafePointer[Int64, MutAnyOrigin]
+
+
+struct ImdbLtInt64(NDPTask):
+    comptime packet = W * size_of[Int64]()
+
+    @staticmethod
+    def body(column: UnsafePointer[Int64, MutAnyOrigin],
+             bitmap: UnsafePointer[UInt8, MutAnyOrigin],
+             predicate: Int64):
+        var i = global_uthread_id()
+        var v = column.load[width=W](i * W)
+        var mask = v.lt(predicate)            # SIMD[bool, W]
+
+        # Pack the lanes into one bitmap byte.
+        var bits = UInt8(0)
+        comptime for lane in range(W):
+            if mask[lane]:
+                bits |= UInt8(1 << lane)
+        bitmap[i] = bits
+
+    @staticmethod
+    def device_main(params: UnsafePointer[NoneType, MutAnyOrigin]):
+        var p = params.bitcast[ImdbParams]()
+        external_call["__m2ndp_launch_parallel", NoneType](
+            ImdbLtInt64.body, Int(p[].column), Int(p[].bitmap),
+            Int(p[].predicate[0]), Int(0), Int(0), Int(0)
+        )
+
+
+# ------------------------------------------------------------ the host
+#
+#     ./scripts/host-run.sh imdb_lt_int64
+#
+# Each microthread compares W int64 rows against a constant and writes one
+# bitmap byte, so the host's check is the bit pattern rather than a value per
+# row -- which is the part the reference gets free from an RVV mask register
+# and this does not. See the module docstring above.
+
+
+def main() raises:
+    if ImdbLtInt64.emit_ir_if_asked():
+        return
+
+    var rows = W * 64 * 8        # one bitmap byte per W rows
+
+    var column = List[Int64](length=rows, fill=0)
+    var bitmap = List[UInt8](length=rows // W, fill=0)
+    var predicate = List[Int64](length=1, fill=0)
+    predicate[0] = 0
+
+    var state: Int = 20260724
+    for i in range(rows):
+        state = (state * 1103515245 + 12345) & 0xFFFFFFFF
+        column[i] = Int64((state >> 8) % 2000 - 1000)
+
+    var rc = ImdbLtInt64.launch(
+        PooledRange.over(column),
+        Buffer.input(column), Buffer.output(bitmap), Buffer.input(predicate)
+    )
+    if rc != 0:
+        print("[host] imdb_lt_int64 failed, exit", rc)
+        return
+
+    for i in range(rows // W):
+        var want = UInt8(0)
+        for lane in range(W):
+            if column[i * W + lane] < predicate[0]:
+                want |= UInt8(1 << lane)
+        if bitmap[i] != want:
+            print("[host] wrong at byte", i, ":", bitmap[i], "expected", want)
+            return
+    print("[host] imdb_lt_int64 ok")

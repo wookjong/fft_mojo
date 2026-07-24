@@ -1,16 +1,19 @@
-/* The launcher, described rather than written.
+/* The launcher: the machine's half of running a task.
  *
- * Every task does the same things: read its inputs, work out how many
- * microthreads that is, spread them over the cores, run each phase, write the
- * outputs. Only the shape differs -- which files, which kernels, how much
- * data one microthread takes. So a benchmark declares that shape and the
- * common launcher does the rest.
+ *   spike ... task.elf <cores> <interleave> <packet> <base> <size> <nbufs> \
+ *             [<dir> <bytes> <file>]...
  *
- *   spike ... task.elf <cores> <chunk> <files...>
+ * A task no longer describes itself here. The host owns the data and says, on
+ * the command line, how many buffers there are, which way each goes, how big
+ * it is, and which file it lives in. The launcher lays them out in memory,
+ * reads the inputs, hands control to the task's runtime entry point, and
+ * writes the outputs back. Everything specific to a workload -- how many
+ * buffers, how they are used, what the answer should be -- is the host's.
  *
- * One binary per task, not one for all of them: the compiler assigns
- * scratchpad offsets per module on the assumption that the module owns the
- * scratchpad, so two tasks cannot share an ELF. See docs/INTERFACE.md.
+ * One binary per task still, because the compiler assigns scratchpad offsets
+ * per module on the assumption that one task owns the scratchpad. But the
+ * binary is now the launcher plus one compiled task and nothing else: no
+ * per-benchmark C. See docs/INTERFACE.md.
  */
 
 #ifndef M2NDP_SIM_LAUNCHER_H
@@ -19,65 +22,50 @@
 #include "launch.h"
 #include "topology.h"
 
-#define M2NDP_MAX_BUFS 6
-#define M2NDP_MAX_ARGS 6
-#define M2NDP_MAX_PHASES 4
+/* How many argument slots a kernel launch carries. Fixed rather than
+ * per-kernel: the frontend allows one signature per external symbol name, so
+ * a kernel taking five buffers and one taking none reach the same entry and
+ * the difference is zeros. Six because spmv wants five and one spare costs a
+ * word of scratchpad. */
+#define M2NDP_LAUNCH_ARGS 6
 
-typedef enum { M2NDP_IN, M2NDP_OUT } m2ndp_dir;
+/* Ceilings the launcher reserves for. A task with more than this does not fit
+ * this build; the alternative is allocation, which a bare-metal launcher has
+ * no allocator for. */
+#define M2NDP_MAX_BUFS 8
+#define M2NDP_MAX_CORES 64
+#define M2NDP_SPAD_BYTES (64 * 1024)
+#define M2NDP_POOL_BYTES (4 * 1024 * 1024)
 
-/* A file the task reads or writes, and the memory behind it. Buffers appear
- * on the command line in declaration order, after the core count and chunk. */
-typedef struct {
-    m2ndp_dir dir;
-    void *mem;
-    u64 capacity;    /* bytes of `mem` */
-    u64 fixed_bytes; /* an output of a size the input does not decide; 0 means
-                      * it comes out the same size as the sizing buffer */
-    u64 bytes;       /* filled in at run time */
-} m2ndp_buffer;
-
-/* How a phase's microthreads are counted.
+/* Launching a task: the runtime's entry point, compiled from the workload.
  *
- *   OVER_DATA  one per chunk of the input, spread across cores by the
- *              topology. The kernel keys off global_uthread_id.
- *   OVER_CORE  one per microthread of each core, every core covered. For the
- *              phases that walk the scratchpad rather than the data -- an
- *              initializer or a finalizer, striding by group_size from
- *              local_uthread_id.
- */
-typedef enum { M2NDP_OVER_DATA, M2NDP_OVER_CORE } m2ndp_shape;
+ * A task conforms to `NDPTask` and gains this; nothing in a workload is
+ * written to make it appear. The host's part of a launch is the range the
+ * task runs over and a block of parameters whose layout the task declares --
+ * one signature for every workload, so the launcher needs no per-benchmark
+ * glue. */
+extern void __m2ndp_rt_launch_task(u64 base, u64 size, const u64 *params);
 
-typedef struct {
-    void (*kernel)(void);
-    m2ndp_shape shape;
-    /* Buffer indices, in the order the kernel's parameters take them.
-     * Terminated by -1; a phase taking no arguments starts with -1. */
-    int args[M2NDP_MAX_ARGS];
-} m2ndp_phase;
+/* The machine's half of the same launch, called by the runtime before it
+ * hands over to device_main: how many microthreads the range comes to.
+ * Implemented in launcher.c. */
+void __m2ndp_set_task_range(u64 base, u64 size);
 
-typedef struct {
-    const char *usage;
-
-    m2ndp_buffer *bufs;
-    int nbufs;
-
-    const m2ndp_phase *phases;
-    int nphases;
-
-    /* Which buffer's length decides how much work there is, and how much of
-     * it one microthread takes. Both come from the kernel source. */
-    int sizing_buf;
-    u64 elem_bytes;
-    u64 elems_per_uthread;
-
-    /* The scratchpad regions are the launcher's to provide; .spad only
-     * reserves a size. One region per core, `stride` bytes apart. */
-    void *spad;
-    u64 spad_stride;
-    u64 max_cores;
-} m2ndp_task;
-
-/* Each benchmark defines this; launcher.c runs it. */
-extern const m2ndp_task m2ndp_this_task;
+/* How `device_main` reaches the machine. Both run a kernel to completion
+ * before returning -- launches are synchronous, and with no barrier inside a
+ * kernel the launch boundary is the model's only synchronization point.
+ *
+ *   parallel  one microthread per packet of the task's range, spread over the
+ *             cores by the topology. The kernel keys off global_uthread_id().
+ *   serial    one microthread per core, for the kernels whose work is
+ *             per-core rather than per-packet.
+ *
+ * Neither takes a size: how much work there is was settled when the task was
+ * launched. The backend also reads these names -- a function whose address
+ * reaches one of them is a kernel. */
+void __m2ndp_launch_parallel(void (*kernel)(void), u64 a0, u64 a1, u64 a2,
+                             u64 a3, u64 a4, u64 a5);
+void __m2ndp_launch_serial(void (*kernel)(void), u64 a0, u64 a1, u64 a2,
+                           u64 a3, u64 a4, u64 a5);
 
 #endif

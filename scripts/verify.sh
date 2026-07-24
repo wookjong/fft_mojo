@@ -50,14 +50,17 @@ check "RVV vector load/add/store" \
       "test \$(grep -cE 'vle32\.v|vadd\.vv|vse32\.v' out/vector_add.s) -ge 3 && echo yes" "yes"
 check "indirect access chain" \
       "grep -q 'getelementptr inbounds float, ptr %2, i64' out/spmv.ll && echo yes" "yes"
-check "histogram: 3 phases in one module" \
-      "grep -c '^define dso_local void @histogram_' out/histogram.ll | tr -d ' '" "3"
+# The task's three kernels. None is exported: a kernel named as a value becomes
+# a closure, and that closure is what device_main launches, so the exported
+# original would only be a second unused copy of the same code.
+check "histogram: 3 kernels in one module" \
+      "grep -c '^define internal void @\"histogram::Histogram::device_main.*_closure_' out/histogram.ll | tr -d ' '" "3"
 check "histogram: one shared scratchpad global" \
       "grep -c 'addrspace(3) global' out/histogram.ll | tr -d ' '" "1"
-# One use per phase, on top of the definition. Counting uses rather than
+# One use per kernel, on top of the definition. Counting uses rather than
 # occurrences: the body used to unroll into sixteen of them and now needs
 # exactly one, so a threshold would have hidden the change either way.
-check "histogram: all phases hit that global" \
+check "histogram: all kernels hit that global" \
       "grep -c 'memory_blob' out/histogram.ll | tr -d ' '" "4"
 # INIT/FINAL still combine with scalar atomics; BODY is the vector one, and
 # it keeps the scratchpad address space through the call.
@@ -65,10 +68,32 @@ check "histogram: scratchpad atomic" \
       "grep -q '@__m2ndp_vamoadd_i32(ptr addrspace(3)' out/histogram.ll && echo yes" "yes"
 check "histogram: one vector atomic, not 16 scalar" \
       "grep -c 'atomicrmw add ptr addrspace(3)' out/histogram.ll | tr -d ' '" "0"
-check "memcpy: one vector load + store" \
-      "test \$(grep -cE 'load <8 x i32>|store <8 x i32>' out/memcpy.ll) -eq 2 && echo yes" "yes"
+# The schedule lives in the workload, not the launcher: device_main launches
+# init serially, the body in parallel, then final serially.
+check "device_main: 1 parallel + 2 serial launches" \
+      "grep -c 'call void @__m2ndp_launch_' out/histogram.ll | tr -d ' '" "3"
+# Conforming to NDPTask is the whole interface to the host: the task exports
+# the runtime entry point and nothing else. device_main and the kernels are
+# internal, which is what keeps one task per ELF from colliding with another.
+check "task exports only its launch entry" \
+      "grep -c '^define dso_local[^@]*@[a-z_]' out/histogram.ll | tr -d ' '" "1"
+# One load and one store in the kernel, and nothing else.
+check "memcpy: one vector load, one store" \
+      "test \$(grep -c 'load <8 x i32>' out/memcpy.ll) -eq \$(grep -c 'store <8 x i32>' out/memcpy.ll) && grep -c 'load <8 x i32>' out/memcpy.ll | tr -d ' '" "1"
 check "memset: splat via shufflevector" \
       "grep -q 'shufflevector <32 x i8>' out/memset.ll && echo yes" "yes"
+# The assembly is now our llc's, so it shows the M2NDP lowering rather than
+# what a stock LLVM would have made of the same IR. These three could not be
+# checked at all while out/*.s came from the frontend's own backend.
+check "IDs are register reads, not calls" \
+      "grep -c 'call.*__m2ndp_\(local\|global\|group\)' out/*.s | grep -v ':0' | wc -l | tr -d ' '" "0"
+# The kernel keeps no frame. Scoped to the launched copy on purpose: the
+# runtime entry point above it is controller code and has one, because it
+# calls.
+check "the kernel keeps no frame" \
+      "awk '/_closure_0/,/Lfunc_end0/' out/memcpy.s | grep -c 'addi.*sp, sp, -' | tr -d ' '" "0"
+check "histogram: the vector atomic is one instruction" \
+      "grep -c 'm2ndp.vamoaddei32.v' out/histogram.s | tr -d ' '" "1"
 check "imdb: predicate selects vmslt.vx" \
       "grep -q 'vmslt.vx' out/imdb_lt_int64.s && echo yes" "yes"
 
