@@ -28,13 +28,11 @@ repo is the interface contract between the two.
 ```
 src/m2ndp.mojo        the model: kernels' primitives, NDPTask, launching a task
 src/m2ndp_host.mojo   host-side machinery a launch runs on (files, processes, tools)
-benchmarks/           ports of M2NDP-public/examples/benchmarks
-  memcpy.mojo         vector load + store, nothing else
-  memset.mojo         scalar splat to a vector store
-  vector_add.mojo     confirms RVV vectorization
-  imdb_lt_int64.mojo  predicate scan -> bitmap (vmslt.vx)
-  spmv.mojo           CSR SpMV — indirect access + atomic combine
-  histogram.mojo      scratchpad shared across INIT/BODY/FINAL phases
+benchmarks/           ports of M2NDP-public/examples/benchmarks, 24 of them.
+                      docs/STATUS.md lists what each one exercises; the ones to
+                      read first are vector_add (the shape they all share),
+                      histogram (scratchpad across three kernels) and softmax
+                      (a reduction, so three kernels in order)
 config/machine.conf   the NDP hardware a run is modelled on
 sim/                  the device-side launcher, and the Spike extension
 scripts/
@@ -66,7 +64,7 @@ EMISSION=asm ./scripts/build.sh # one emission only (llvm|asm)
 ./scripts/build-llvm.sh         # our LLVM; `check` also runs the RISC-V lit suite
 ./scripts/build-spike.sh        # simulator + sim/ext/ extension library
 ./scripts/spike-smoke.sh        # pipeline and extension stand up
-./scripts/host-run.sh           # run both workloads from their host programs
+./scripts/host-run.sh           # run every workload from its host program
 ./scripts/host-run.sh histogram 4 8   # one, at a given cores/interleave
 ```
 

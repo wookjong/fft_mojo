@@ -178,14 +178,9 @@ nothing standard to lower to. Sixteen scalar atomics were the alternative.
 ```
 src/m2ndp.mojo        the model: kernels' primitives, NDPTask, launching a task
 src/m2ndp_host.mojo   host-side machinery a launch runs on (files, processes, tools)
-benchmarks/           ports of M2NDP-public/examples/benchmarks -- each one
-                      holds its kernels, its device_main and its host main
-  memcpy.mojo         vector load + store, nothing else
-  memset.mojo         scalar splat to a vector store
-  vector_add.mojo     confirms RVV vectorization
-  imdb_lt_int64.mojo  predicate scan -> bitmap (vmslt.vx)
-  spmv.mojo           CSR SpMV — indirect access + atomic combine
-  histogram.mojo      scratchpad shared across INIT/BODY/FINAL phases
+benchmarks/           ports of M2NDP-public/examples/benchmarks -- 24 of them,
+                      each holding its kernels, its device_main and its host
+                      main. docs/STATUS.md lists what each one exercises
 config/machine.conf   the NDP hardware a run is modelled on
 sim/                  the device-side launcher, and the Spike extension
 scripts/
