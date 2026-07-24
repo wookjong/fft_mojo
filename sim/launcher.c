@@ -83,18 +83,37 @@ void __m2ndp_launch_serial(void (*kernel)(void))
  * no error path, and the caller is a device. So it stops the run. */
 void __m2ndp_set_task_range(u64 base, u64 size)
 {
-    (void)base; /* the kernels index it; Addr/Offset say where a µthread landed */
+    /* Which core a microthread runs on is decided from the address it was
+     * mapped to, so the range's own address is part of the topology. */
+    cur_topo.base = base;
 
+    if (cur_topo.stride % cur_topo.packet) {
+        say("the stride is not a whole number of packets\n");
+        htif_exit(2);
+    }
     if (size % cur_topo.packet) {
         say("the task's range is not a whole number of packets\n");
         htif_exit(2);
     }
-    u64 threads = size / cur_topo.packet;
-    if (threads == 0 || threads % cur_topo.cores) {
-        say("microthreads do not divide evenly over the cores\n");
+    /* Aligned to a whole round, so every core takes the same number of whole
+     * blocks. That is what makes group_size one number and local_uthread_id a
+     * dense index, and it also means no core is left without work -- which the
+     * hardware model tolerates and ours, running a finalizer on every core,
+     * would get wrong. */
+    if (base % (cur_topo.stride * cur_topo.cores)) {
+        say("the task's range does not start on a round of the interleave\n");
         htif_exit(2);
     }
-    cur_topo.per_core = threads / cur_topo.cores;
+    /* And a whole number of rounds of it, so the last one is not partial and
+     * every core ends up with the same share. Without this the spread is
+     * lopsided -- with a stride wider than the range, one core takes all of it
+     * -- while per_core below would still claim an even split. */
+    u64 round = cur_topo.stride * cur_topo.cores;
+    if (size == 0 || size % round) {
+        say("the task's range is not a whole number of interleave rounds\n");
+        htif_exit(2);
+    }
+    cur_topo.per_core = size / cur_topo.packet / cur_topo.cores;
 }
 
 int launcher_main(void)

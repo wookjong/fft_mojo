@@ -90,7 +90,7 @@ struct PooledRange(Copyable, Movable):
         return PooledRange(Int(at), n)
 
 
-comptime PACKET = 64
+comptime PACKET = 32
 """Bytes of a task's range one microthread is mapped to.
 
 The hardware's granule, not a workload's: a kernel is written against it, so
@@ -108,17 +108,17 @@ known at compile time, which a file read cannot be.
 struct Machine(Copyable, Movable):
     """The NDP hardware a run is modelled on.
 
-    Not the workload's, and not a launch argument: how many cores exist and
-    how finely work is interleaved across them is a property of the machine, so the
-    runtime reads it from config/machine.conf and configures itself. A task
-    that could name a core count would be saying something it cannot know.
+    Not the workload's, and not a launch argument: how many cores exist and how
+    finely work spreads over them is the machine's, so the runtime reads
+    config/machine.conf and configures itself. A task that could name a core
+    count would be saying something it cannot know.
 
     Not the toolchain either -- where llc and the simulator live is where they
     are installed, which is `Toolchain`'s business.
     """
 
     var cores: Int
-    var interleave: Int
+    var stride: Int
     var packet: Int
 
     @staticmethod
@@ -126,10 +126,15 @@ struct Machine(Copyable, Movable):
         """The machine the environment points at. See `Config` for where."""
         var config = Config.load()
         var cores = config.get("cores")
-        var interleave = config.get("interleave")
+        var stride = config.get("stride")
         var packet = config.get("packet")
-        if cores <= 0 or interleave <= 0:
-            raise Error("cores and interleave must both be positive")
+        if cores <= 0 or stride <= 0:
+            raise Error("cores and stride must both be positive")
+        if stride % packet:
+            raise Error(
+                String("the stride (") + String(stride)
+                + ") is not a whole number of packets (" + String(packet) + ")"
+            )
         if packet != PACKET:
             # The kernels were compiled against PACKET. A machine with another
             # granule would take the same code and hand each microthread the
@@ -138,7 +143,7 @@ struct Machine(Copyable, Movable):
                 String("this build's kernels are compiled for packet ")
                 + String(PACKET) + ", but the machine says " + String(packet)
             )
-        return Machine(cores, interleave, packet)
+        return Machine(cores, stride, packet)
 
 
 # --------------------------------------------------------------- launching
@@ -417,7 +422,7 @@ trait NDPTask:
                 + " --device=m2ndp_pool," + pool.path() + ","
                 + String(pool.base()) + "," + String(pool.bytes())
                 + " --isa=" + tc.isa + " " + elf + " "
-                + String(machine.cores) + " " + String(machine.interleave) + " "
+                + String(machine.cores) + " " + String(machine.stride) + " "
                 + String(machine.packet) + " " + String(region.base) + " "
                 + String(region.size) + " " + String(Int(block)) + " "
                 + String(nbytes)

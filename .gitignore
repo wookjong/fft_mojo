@@ -4,3 +4,4 @@ toolchain/
 __pycache__/
 .mojo_cache/
 build/
+build

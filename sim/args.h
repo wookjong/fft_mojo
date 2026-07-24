@@ -1,6 +1,6 @@
 /* Reading the command line, with no libc under us.
  *
- *   spike ... task.elf <cores> <interleave> <packet> <base> <size> \
+ *   spike ... task.elf <cores> <stride> <packet> <base> <size> \
  *             <params> <params_bytes>
  *
  * How the hardware is configured, where in the pool the task is mapped, and
@@ -27,7 +27,7 @@ static inline u64 m2ndp_atou(const char *s)
 }
 
 typedef struct {
-    m2ndp_topology topo; /* cores, interleave, packet */
+    m2ndp_topology topo; /* cores, stride, packet */
     u64 base;            /* where in the pool the task's work starts */
     u64 size;            /* bytes of it; divided by packet, the microthread count */
     u64 params;          /* the parameter block, also a pool address */
@@ -40,20 +40,20 @@ typedef struct {
 static inline int m2ndp_cmdline_parse(m2ndp_cmdline *c)
 {
     if (htif_argc() < M2NDP_ARGC) {
-        htif_print("usage: task.elf <cores> <interleave> <packet> <base> "
+        htif_print("usage: task.elf <cores> <stride> <packet> <base> "
                    "<size> <params> <params_bytes>\n");
         return -1;
     }
     c->topo.cores = m2ndp_atou(htif_argv(1));
-    c->topo.interleave = m2ndp_atou(htif_argv(2));
+    c->topo.stride = m2ndp_atou(htif_argv(2));
     c->topo.packet = m2ndp_atou(htif_argv(3));
     c->base = m2ndp_atou(htif_argv(4));
     c->size = m2ndp_atou(htif_argv(5));
     c->params = m2ndp_atou(htif_argv(6));
     c->params_bytes = m2ndp_atou(htif_argv(7));
 
-    if (c->topo.cores == 0 || c->topo.interleave == 0 || c->topo.packet == 0) {
-        htif_print("cores, interleave and packet must all be positive\n");
+    if (c->topo.cores == 0 || c->topo.stride == 0 || c->topo.packet == 0) {
+        htif_print("cores, stride and packet must all be positive\n");
         return -1;
     }
     if (c->params == 0) {

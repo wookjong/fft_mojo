@@ -4,7 +4,7 @@
 #
 #   ./scripts/host-run.sh                    # every benchmark, default topology
 #   ./scripts/host-run.sh vector_add
-#   ./scripts/host-run.sh histogram 4 8      # cores interleave
+#   ./scripts/host-run.sh histogram 4 256    # cores stride(bytes)
 #
 # A benchmark is one file holding its kernels, its device_main and the host
 # main that launches them and checks the answer -- single source, the way a
@@ -46,7 +46,7 @@ fi
 
 bench="${1:-vector_add}"
 cores="${2:-${CORES:-1}}"
-interleave="${3:-${INTERLEAVE:-1}}"
+stride="${3:-${STRIDE:-256}}"
 
 fail() { echo "  $*"; exit 1; }
 
@@ -60,7 +60,7 @@ command -v "$GCC" >/dev/null || fail "$GCC not found"
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
-echo "[host-run] $bench, cores=$cores interleave=$interleave"
+echo "[host-run] $bench, cores=$cores stride=$stride"
 
 # The device-side launcher, once. The task itself is compiled by the host
 # program at launch; this is only the machine's half -- start, htif, panic and
@@ -89,9 +89,9 @@ cp "benchmarks/$bench.mojo" "$STAGE/"
 # The machine is config, not an argument: the runtime reads a description and
 # configures itself. Varying it is varying the file, which is what checking
 # that an answer does not depend on the hardware actually means.
-# Only cores and interleave vary per run; the packet and the pool come from
+# Only cores and stride vary per run; the packet and the pool come from
 # the checked-in description.
-{ echo "cores = $cores"; echo "interleave = $interleave"
+{ echo "cores = $cores"; echo "stride = $stride"
   grep -E '^[[:space:]]*(packet|pool_base|pool_bytes)[[:space:]]*=' config/machine.conf
 } > "$OUT/machine.conf"
 

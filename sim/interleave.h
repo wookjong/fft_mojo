@@ -1,0 +1,63 @@
+/* Which NDP core a microthread runs on.
+ *
+ * Mirrors M2NDP-public (fe418e8), src/m2ndp_config.h get_matched_unit_id:
+ *
+ *     addr / stride % units
+ *
+ * with the address the one that microthread was mapped to, `base + u * packet`
+ * (src/ndp_unit.cc). Matching on the address rather than on the microthread's
+ * index is what makes an unaligned base rotate the assignment, which a rule
+ * counting from zero cannot express.
+ *
+ * `stride` is bytes, as the reference's is. Saying it in packets would change
+ * meaning whenever the packet did.
+ *
+ * Separate from topology.h so it can be compiled for the host: test/ checks it
+ * against a table taken from the reference. Nothing here touches the machine.
+ */
+
+#ifndef M2NDP_SIM_INTERLEAVE_H
+#define M2NDP_SIM_INTERLEAVE_H
+
+typedef unsigned long m2ndp_u64;
+
+typedef struct {
+    m2ndp_u64 cores;      /* NDP cores modelled */
+    m2ndp_u64 packet;     /* bytes of the range one microthread is mapped to */
+    m2ndp_u64 stride;     /* bytes handed to a core before moving to the next */
+    m2ndp_u64 base;       /* where the task's range starts */
+    m2ndp_u64 per_core;   /* microthreads resident on each, once launched */
+} m2ndp_topology;
+
+static inline m2ndp_u64 m2ndp_total(const m2ndp_topology *t)
+{
+    return t->cores * t->per_core;
+}
+
+/* The address microthread `u` was mapped to. */
+static inline m2ndp_u64 m2ndp_addr_of(const m2ndp_topology *t, m2ndp_u64 u)
+{
+    return t->base + u * t->packet;
+}
+
+/* Which core it runs on. */
+static inline m2ndp_u64 m2ndp_core_of(const m2ndp_topology *t, m2ndp_u64 u)
+{
+    return m2ndp_addr_of(t, u) / t->stride % t->cores;
+}
+
+/* Its index among the microthreads sharing that core: whole rounds first, then
+ * the position within the current block.
+ *
+ * Well defined because a launch takes a base aligned to `stride * cores` (see
+ * __m2ndp_set_task_range), which is what makes every core's share the same
+ * size and every block whole. */
+static inline m2ndp_u64 m2ndp_local_of(const m2ndp_topology *t, m2ndp_u64 u)
+{
+    m2ndp_u64 per_block = t->stride / t->packet;
+    m2ndp_u64 block = (m2ndp_addr_of(t, u) - t->base) / t->stride;
+    m2ndp_u64 within = (m2ndp_addr_of(t, u) - t->base) / t->packet % per_block;
+    return block / t->cores * per_block + within;
+}
+
+#endif
