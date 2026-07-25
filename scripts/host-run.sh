@@ -34,10 +34,11 @@ export LD_LIBRARY_PATH="$REPO/build/spike/install/lib${LD_LIBRARY_PATH:+:$LD_LIB
 CFLAGS="-march=rv64gc -mabi=lp64d -ffreestanding -nostdlib -fomit-frame-pointer
         -msmall-data-limit=0 -O2 -Isim"
 
-# With no benchmark named, run each in turn.
+# With no benchmark named, run each in turn -- whatever is in benchmarks/,
+# the same way build.sh finds them.
 if [ $# -eq 0 ]; then
     rc=0
-    for b in memcpy memset vector_add imdb_lt_int64 spmv histogram; do
+    for b in $(ls benchmarks/*.mojo | xargs -n1 basename | sed 's/\.mojo$//'); do
         "$0" "$b" || rc=1
     done
     exit "$rc"

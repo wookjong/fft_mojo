@@ -26,22 +26,45 @@ Last updated: 2026-07-24, against Mojo `1.0.0b2.dev2026061203`.
 | Launching from the host | `Histogram.launch(PooledRange.over(xs), HistogramParams(xs, ys))` — compiled for the task's target, run under Spike, results downloaded into the caller's lists |
 
 Benchmarks ported from
-[M2NDP-public](https://github.com/PSAL-POSTECH/M2NDP-public) — 6 of ~23. All
-six are tasks, and all six run: `./scripts/host-run.sh` compiles each for its
-target, runs it under Spike and checks the answer against one the host
-computes itself.
+[M2NDP-public](https://github.com/PSAL-POSTECH/M2NDP-public) — **24 workloads,
+covering 20 of its 23 directories**. Every one is a task and every one runs:
+`./scripts/host-run.sh` compiles each for its target, runs it under Spike and
+checks the answer against one the host computes itself.
 
 | Benchmark | Exercises |
 |---|---|
 | `memcpy` | vector load + store |
 | `memset` | scalar splat to vector store; a scalar kernel argument, and a range that is an output buffer |
 | `vector_add` | RVV vectorization |
+| `residual` | the same shape over fp32 — a transformer skip connection |
+| `relu` | mask and merge (`vmfge.vf`, `vmerge.vvm`) |
+| `vector_exp` | a transcendental with no vendor instruction behind it |
+| `gelu` | that exponent inside a longer float expression |
+| `narrow` / `wide` | fp16 conversion, one instruction each way |
 | `imdb_lt_int64` | predicate scan → bitmap |
+| `imdb_gteq_lt_int64` | two bounds, and'd |
+| `imdb_gt_lt_fp32` | the same over floats, two bitmap bytes per microthread |
+| `imdb_two_col_and` / `imdb_three_col_and` | combining scan results |
+| `kmeans_assign` | reduce to a minimum, then find its lane |
+| `gemv_aggregation` | float vector atomic (`vfamoaddei32.v`) |
+| `gemv` | fp16 weights, fp32 accumulation, atomic combine |
 | `spmv` | indirect access, atomic combine, one group per row |
+| `dlrm_sls` | a data-dependent loop: gather a variable-length list of rows |
+| `pagerank_inicsr` | gather/scatter over CSR |
+| `sssp` | one Bellman-Ford pass |
 | `histogram` | scratchpad shared across INIT/BODY/FINAL phases |
+| `softmax` | three kernels in order; scalar float atomics (`famomax.w`, `famoadd.w`) |
+| `layernorm` | both moments in one pass, then a rescale kernel |
 
 Checked at 1, 4 and 8 cores and several interleavings; the answers agree,
-which is what tests the per-core scratchpad claim.
+which is what tests the per-core scratchpad claim. `.github/workflows/test.yml`
+runs the whole set on every push and pull request, at two configurations.
+
+Three of the upstream directories are not ported. `naive_bayes`'s kernel body
+is a single vector load — the workload is unfinished upstream, so there is
+nothing to port. `opt/fc` and `opt/attention` are 600 and 950 lines of
+generated assembly apiece, and the rest of `opt` is covered: `activation` is
+`relu`, `residual` is `residual`, `layernom` is `layernorm`.
 
 **`spmv` does not fit the launch model cleanly.** Its kernel keys off
 `group_id()`, and a group is a core here, so a run computes exactly as many
@@ -68,7 +91,7 @@ the build did not produce, never a codegen difference: 31 the first time
 when MC was added (`yaml2obj`, `llvm-otool`, `split-file`, `llvm-nm`).
 `build-llvm.sh check` builds all of them now.
 
-The artifacts also round-trip through that build: `llc` accepts all six
+The artifacts also round-trip through that build: `llc` accepts every
 `out/*.ll` and `llvm-mc -filetype=obj` assembles what it produces. So the
 frontend and backend LLVM versions are compatible in practice, not only by
 version number.

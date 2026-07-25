@@ -496,6 +496,23 @@ def atomic_add[
 
 
 @always_inline
+def atomic_max[
+    dtype: DType, address_space: AddressSpace, //
+](
+    ptr: UnsafePointer[Scalar[dtype], MutAnyOrigin, address_space=address_space],
+    val: Scalar[dtype],
+):
+    """Atomically raise `ptr[0]` to `val` if `val` is larger.
+
+    The other combine a reduction needs: `softmax` takes a maximum where
+    `histogram` takes a sum. Float and integer are different instructions --
+    `m2ndp.famomax.w` against `amomax.w` -- and the element type picks between
+    them.
+    """
+    Atomic.max[ordering = Ordering.RELAXED](ptr, val)
+
+
+@always_inline
 def atomic_add_lanes[
     dtype: DType, width: Int, address_space: AddressSpace, //
 ](
@@ -534,8 +551,22 @@ def atomic_add_indexed[
     emit `llvm.riscv.m2ndp.*`; RISCVM2ndpLowerExternalOps rewrites it.
     """
     return external_call[
-        "__m2ndp_vamoadd_" + _amo_type_suffix[dtype](), SIMD[dtype, width]
+        _amo_op_prefix[dtype]() + "add_" + _amo_type_suffix[dtype](),
+        SIMD[dtype, width],
     ](base, byte_offsets, val)
+
+
+@always_inline
+def _amo_op_prefix[dtype: DType]() -> StaticString:
+    """Which vector-atomic family the element type belongs to.
+
+    Integer and float are separate instructions -- `vamoadd` against
+    `vfamoadd` -- so the type picks the family as well as the suffix.
+    """
+    comptime if dtype.is_floating_point():
+        return "__m2ndp_vfamo"
+    else:
+        return "__m2ndp_vamo"
 
 
 @always_inline
@@ -631,7 +662,7 @@ def m2ndp_target() -> __mlir_type.`!kgen.target`:
     return __mlir_attr[
         `#kgen.target<triple = "riscv64-unknown-elf", `,
         `arch = "generic-rv64", `,
-        `features = "+m,+a,+f,+d,+v,+zvl128b,+xm2ndp", `,
+        `features = "+m,+a,+f,+d,+v,+zvl128b,+zfh,+zvfh,+xm2ndp", `,
         `data_layout = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128",`,
         `index_bit_width = 64,`,
         `simd_bit_width = 128`,

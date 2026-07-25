@@ -296,8 +296,8 @@ struct Toolchain(Copyable, Movable):
         self.lld = root + "/build/llvm/bin/ld.lld"
         self.spike = root + "/build/spike/install/bin/spike"
         self.extlib = root + "/build/spike/libm2ndp_ext.so"
-        self.isa = String("rv64gcv_zvl128b")
-        self.features = String("+m,+a,+f,+d,+v,+zvl128b,+xm2ndp")
+        self.isa = String("rv64gcv_zvl128b_zfh_zvfh")
+        self.features = String("+m,+a,+f,+d,+v,+zvl128b,+zfh,+zvfh,+xm2ndp")
         # scripts/m2ndp.lds puts code at 0x10000, below where Spike puts
         # memory by default, and short of the CLINT at 0x2000000.
         self.memory = String("-m0x10000:0x1ff0000")

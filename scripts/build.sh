@@ -27,7 +27,7 @@ cd "$REPO"
 . "$REPO/scripts/env.sh"
 
 LLC="${LLC:-$REPO/build/llvm/bin/llc}"
-FEATURES="+m,+a,+f,+d,+v,+zvl128b,+xm2ndp"
+FEATURES="+m,+a,+f,+d,+v,+zvl128b,+zfh,+zvfh,+xm2ndp"
 
 if [ ! -x "$MOJO_BIN" ]; then
     echo "Mojo not found. Run ./scripts/setup.sh first." >&2

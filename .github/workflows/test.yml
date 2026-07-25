@@ -1,0 +1,139 @@
+name: test
+
+# Compile every workload and run it under Spike.
+#
+# The tests run on GitHub-hosted runners and build no toolchain: the image
+# carries Mojo, our LLVM and the simulator, so a job pulls it and runs the
+# scripts. Building that image is the part that needs the self-hosted runner
+# (25 minutes and a lot of disk), and it is the one job here that uses it.
+#
+# The image comes from image.yml, called rather than named: what the tests run
+# on is the image built from this same commit, by digest. Naming a tag instead
+# is how a branch ends up tested against an image built from something else --
+# including, for a while, an image with no compiler in it at all.
+#
+# The checkout is what is tested, not the copy baked into the image: the
+# workspace is its own directory and `build` is a link to the image's tools.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One run per branch. The image build holds the only self-hosted runner there
+# is, so a superseded run should not be sitting on it.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The toolchains, and the image that carries them. Everything below runs
+  # inside what this publishes.
+  image:
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+
+  # The artifacts: device IR and assembly for every workload, and the checks
+  # that read them. This is where a codegen regression shows up -- an atomic
+  # that stopped being one instruction, a kernel that grew a frame -- without
+  # anything having to run.
+  artifacts:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image's toolchains, at the path the scripts look for them at. Not a
+      # mount over /work: that is where they live.
+      - name: Point at the image's toolchains
+        run: ln -s /work/build build
+
+      - run: ./scripts/build.sh
+      - run: ./scripts/verify.sh
+
+      # Kept when a check fails, that being when the generated code is what you
+      # want to read. Never fatal: the artifact store is a shared quota that
+      # can be full for reasons that have nothing to do with this branch, and
+      # losing the upload is not losing the result.
+      - if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-code
+          path: out/
+          retention-days: 7
+
+  # The workloads themselves: each host program fills the pool, launches its
+  # task under Spike and checks the result against one it computes itself.
+  #
+  # Twice over, at two machine configurations. The second is the one that
+  # exercises the block-cyclic mapping -- with one core every microthread is on
+  # it, so a mapping bug cannot show.
+  run:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cores: 1
+            interleave: 1
+          - cores: 4
+            interleave: 2
+
+    name: run (cores=${{ matrix.cores }}, interleave=${{ matrix.interleave }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Point at the image's toolchains
+        run: ln -s /work/build build
+
+      - name: Run every workload
+        env:
+          CORES: ${{ matrix.cores }}
+          INTERLEAVE: ${{ matrix.interleave }}
+        run: ./scripts/host-run.sh
+
+  # Does the pipeline stand up at all: assemble, link, run, and does the
+  # simulator load the vendor extension. Cheap, and it fails with a clearer
+  # message than a workload does when the extension is the thing that broke.
+  smoke:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Point at the image's toolchains
+        run: ln -s /work/build build
+      - run: ./scripts/spike-smoke.sh

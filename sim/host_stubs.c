@@ -49,11 +49,12 @@ void __m2ndp_declare_params(void *g) { (void)g; host_side("__m2ndp_declare_param
 
 /* The indexed vector atomics. Declared without their real signatures, which
  * involve vectors and differ per element type: nothing here is ever entered,
- * and the linker only needs the names. */
+ * and the linker only needs the names. Integer and float are separate
+ * instructions, hence separate symbols. */
 void __m2ndp_vamoadd_i32(void) { host_side("__m2ndp_vamoadd_i32"); }
 void __m2ndp_vamoadd_i64(void) { host_side("__m2ndp_vamoadd_i64"); }
-void __m2ndp_vamoadd_f32(void) { host_side("__m2ndp_vamoadd_f32"); }
-void __m2ndp_vamoadd_f64(void) { host_side("__m2ndp_vamoadd_f64"); }
+void __m2ndp_vfamoadd_f32(void) { host_side("__m2ndp_vfamoadd_f32"); }
+void __m2ndp_vfamoadd_f64(void) { host_side("__m2ndp_vfamoadd_f64"); }
 
 int __m2ndp_global_uthread_id(void) { host_side("__m2ndp_global_uthread_id"); return 0; }
 int __m2ndp_local_uthread_id(void) { host_side("__m2ndp_local_uthread_id"); return 0; }

@@ -2,9 +2,10 @@ name: image
 
 # Build the development image and publish it to GHCR.
 #
-# Pull requests build the image but do not push, so a broken Dockerfile is
-# caught without publishing anything. Pushes to main publish :main and :<sha>;
-# tags publish the tag name and :latest.
+# Pushes to main publish :main and :<sha>; tags publish the tag name and
+# :latest; pull requests publish :pr-<n>, which their own tests then run on.
+# test.yml calls this workflow rather than naming a tag, so the image a branch
+# is tested against is the image that branch produces.
 #
 # Runs on a self-hosted runner. The image builds both toolchains, and LLVM
 # alone is around 25 minutes on 30 cores -- on a 4-core hosted runner that is
@@ -15,39 +16,16 @@ name: image
 # The LLVM submodule is a private repository, so checkout needs SUBMODULE_TOKEN
 # -- a PAT with read access. Without it the job fails at checkout.
 
+# Branches and pull requests reach this through test.yml, which calls it and
+# then tests what came out. Only a release tag builds an image on its own --
+# there is nothing to test it against that publishing it does not already do.
+#
+# Nothing here is path-filtered any more. A filtered build is what leaves a
+# tag pointing at an image older than the branch it names, and every caller
+# wants the image for the commit it is testing.
 on:
   push:
-    branches: [main]
     tags: ['v*']
-    paths:
-      # What goes into the image, not just what builds it. The toolchains are
-      # baked in, so what decides them belongs here too -- the build scripts,
-      # the Spike extension, and the submodule pointers. Leaving those out
-      # publishes an image whose compiler is not main's, which is worse than
-      # having no image at all.
-      - Dockerfile
-      - .dockerignore
-      - .github/workflows/image.yml
-      - scripts/setup.sh
-      - scripts/build-llvm.sh
-      - scripts/build-spike.sh
-      - sim/ext/**
-      - third_party
-  pull_request:
-    paths:
-      # What goes into the image, not just what builds it. The toolchains are
-      # baked in, so what decides them belongs here too -- the build scripts,
-      # the Spike extension, and the submodule pointers. Leaving those out
-      # publishes an image whose compiler is not main's, which is worse than
-      # having no image at all.
-      - Dockerfile
-      - .dockerignore
-      - .github/workflows/image.yml
-      - scripts/setup.sh
-      - scripts/build-llvm.sh
-      - scripts/build-spike.sh
-      - sim/ext/**
-      - third_party
   workflow_dispatch:
     inputs:
       build_toolchains:
@@ -57,6 +35,13 @@ on:
           produces has no compiler in it.
         type: boolean
         default: true
+  # test.yml calls this, so what it tests is the image this branch produces
+  # rather than whatever :main happens to point at. The digest comes back out.
+  workflow_call:
+    outputs:
+      image:
+        description: The image this run published, by digest.
+        value: ${{ jobs.build.outputs.image }}
 
 env:
   REGISTRY: ghcr.io
@@ -69,20 +54,55 @@ jobs:
       contents: read
       packages: write
 
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+
     steps:
       # Both submodules have to be in the build context: the image cannot clone
       # the private one without carrying a token in a layer.
-      - uses: actions/checkout@v4
+      # Blobless. The submodule is a fork of llvm-project and its history is
+      # gigabytes of file contents nothing here reads -- the image builds one
+      # commit. `blob:none` fetches the blobs that commit needs and leaves the
+      # rest on the server, which is the difference between a clone measured in
+      # gigabytes and one measured in hundreds of megabytes.
+      - id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
         with:
           submodules: recursive
+          filter: blob:none
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+
+      # A self-hosted runner keeps its workspace, which is what makes the
+      # submodules cheap -- and what makes a wedged one permanent. A run
+      # cancelled inside `git submodule update` leaves the module store
+      # half-written, and every checkout after it fails the same way:
+      #
+      #   fatal: Unable to checkout '<sha>' in submodule path
+      #          'third_party/llvm-project'
+      #
+      # until someone logs into the machine. So throw the store away and clone
+      # it again -- blobless, so recovering costs a fresh clone and not a
+      # fresh clone of every version of every file.
+      - if: steps.checkout.outcome == 'failure'
+        name: Clear a wedged submodule store
+        run: rm -rf .git/modules third_party/llvm-project third_party/riscv-isa-sim
+
+      - if: steps.checkout.outcome == 'failure'
+        name: Check out again, from nothing
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          filter: blob:none
           token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
 
       - uses: docker/setup-buildx-action@v3
 
-      # Skipped on pull_request: forks have no write access to the registry,
-      # and nothing is pushed from a PR anyway.
+      # On pull requests too, now that they publish. A pull request's image is
+      # what its tests run on, and a hosted runner can only get it by pulling
+      # it -- it is built on the self-hosted machine and exists nowhere else.
+      # Tagged pr-<n>, so it is replaced rather than accumulated.
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -100,13 +120,47 @@ jobs:
             type=sha,format=long
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Skipping the toolchains is a workflow_dispatch choice and nothing
+          # else. Testing `inputs.build_toolchains == false` on its own does
+          # not say that: on a push there is no such input, and an expression
+          # comparing null against false casts both to 0 and comes out true --
+          # so every image published from main was built with the skip branch
+          # taken, and had no compiler in it.
           build-args: |
-            BUILD_TOOLCHAINS=${{ inputs.build_toolchains == false && '0' || '1' }}
+            BUILD_TOOLCHAINS=${{ github.event_name == 'workflow_dispatch' && inputs.build_toolchains == false && '0' || '1' }}
+
+      # By digest, not by tag: this is the image this run built, whatever else
+      # has since been pushed to the same tag. It is what a caller gets back
+      # and what the tests then run on.
+      #
+      # The registry path has to be lowercase and the repository name is not.
+      - id: ref
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+          echo "image=${image,,}" >> "$GITHUB_OUTPUT"
+
+      # An image without a compiler in it is what this job exists to not
+      # publish, and nothing noticed when it did: the build succeeds either
+      # way, the skip branch leaving the directories behind empty. So ask the
+      # image whether the tools are in it. Skipped only for a deliberate skip.
+      - name: The published image carries the toolchains
+        if: >-
+          !(github.event_name == 'workflow_dispatch'
+            && inputs.build_toolchains == false)
+        run: |
+          docker run --rm "${{ steps.ref.outputs.image }}" sh -c '
+            set -e
+            test -x /work/build/llvm/bin/llc
+            test -x /work/build/llvm/bin/ld.lld
+            test -x /work/build/spike/install/bin/spike
+            test -s /work/build/spike/libm2ndp_ext.so
+          '

@@ -37,7 +37,7 @@ check "indexed vector atomic symbol" \
 # subtarget, but it copies the feature string into target-features verbatim.
 # That is how the marker reaches our llc, so check every module carries it.
 check "xm2ndp in target-features" \
-      "grep -lc 'target-features\"=\"[^\"]*+xm2ndp' out/*.ll | wc -l | tr -d ' '" "6"
+      "grep -Lc 'target-features\"=\"[^\"]*+xm2ndp' out/*.ll | wc -l | tr -d ' '" "0"
 check "atomic combine, not a barrier" \
       "grep -c 'atomicrmw fadd' out/spmv.ll | tr -d ' '" "1"
 check "relaxed ordering" \
@@ -109,6 +109,20 @@ check "histogram: the vector atomic is one instruction" \
       "grep -c 'm2ndp.vamoaddei32.v' out/histogram.s | tr -d ' '" "1"
 check "imdb: predicate selects vmslt.vx" \
       "grep -q 'vmslt.vx' out/imdb_lt_int64.s && echo yes" "yes"
+# Half precision is part of the modelled machine, so a conversion is one
+# instruction rather than a call into compiler-rt -- which a kernel could not
+# make.
+check "narrow: fp32 -> fp16 in one instruction" \
+      "grep -c 'vfncvt.f.f.w' out/narrow.s | tr -d ' '" "1"
+check "wide: fp16 -> fp32 in one instruction" \
+      "grep -c 'vfwcvt.f.f.v' out/wide.s | tr -d ' '" "1"
+# Float and integer vector atomics are different instructions. This is the
+# float one, which the integer symbol name would not have reached.
+check "gemv: float vector atomic" \
+      "grep -c 'm2ndp.vfamoaddei32.v' out/gemv_aggregation.s | tr -d ' '" "1"
+# softmax reduces with both scalar float atomics, one per kernel.
+check "softmax: scalar float max and add atomics" \
+      "grep -cE 'm2ndp.famo(max|add).w' out/softmax.s | tr -d ' '" "2"
 
 echo ""
 if [ "$FAIL" = 0 ]; then
