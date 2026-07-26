@@ -567,15 +567,55 @@ Benchmarks index ordinary parameters:
 ```
 
 The hardware already handed the µthread the address it was mapped to
-(`ADDR`) and its byte offset within the pool (`OFFSET`), and kernel
-arguments arrive through the scratchpad. Turning `base[id * W]` back into
-that form is a backend optimization, and it is where the Arachne paper's
-22.2% static instruction reduction comes from.
+(`ADDR`, in `a2`) and its byte offset within the range (`OFFSET`, in `a1`),
+and kernel arguments arrive through the scratchpad. `id * W` scaled by the
+element size is `OFFSET`, so `base + id*W` is `base + OFFSET` for every array,
+and for the array the range was taken over it is `ADDR` outright. Rewriting
+the index into that form is where the Arachne paper's static instruction
+reduction comes from.
 
 This is deliberately not surfaced in the source: the mapping is a calling
 convention, and putting it in benchmark code would bake the convention into
 every kernel and break the rule that `benchmarks/` survives the backend
-switchover unchanged.
+switchover unchanged. Recovering the hardware form is the compiler's job.
+
+`RISCVM2ndpMapAddress` does it, after `RISCVM2ndpLowerExternalOps` so the id
+is already an intrinsic. It matches a GEP whose index is the µthread id
+scaled to a **byte stride equal to the packet** — anything else is not the
+mapping — and reads `OFFSET`/`ADDR` from two intrinsics,
+`llvm.riscv.m2ndp.offset` and `llvm.riscv.m2ndp.addr`, that lower to the
+live-in registers.
+
+Two things bound it:
+
+- **Only parallel kernels.** In a serial launch `a1` is a slot index rather
+  than a byte offset, so an address folded into it would be wrong.
+  `m2ndpLaunchKind` tells the two apart by the launch symbol.
+- **The range parameter is named, not guessed.** For `base + id*W` to be
+  `ADDR`, `base` has to be the pointer the range was taken over. Which
+  parameter that is is a runtime fact — the host chooses it with
+  `PooledRange.over` — so it cannot be read off the compiled-once IR. The
+  device code is compiled at launch, though, where the host knows both the
+  range's base and the parameter block: it scans the block for the pointer
+  equal to that base and passes its byte offset to the backend. With none
+  named, only the offset rewrite runs.
+
+### The switch
+
+`M2NDP_MAP_ADDRESS` selects how far a launch takes this, defaulting to the
+full recovery:
+
+```
+M2NDP_MAP_ADDRESS=addr     mapped address where it fits (default)
+M2NDP_MAP_ADDRESS=offset   base + mapped offset only, safe for any array
+M2NDP_MAP_ADDRESS=off      leave indices as written
+```
+
+The host turns that into the backend's `-m2ndp-map-address`, and — except in
+`off` — passes `-m2ndp-packet` from `config/machine.conf` and, in `addr`, the
+`-m2ndp-range-param` byte offset it found. `off` is what the code compiles to
+without the pass at all, so it is the baseline the other two are measured
+against.
 
 ## Compile target
 

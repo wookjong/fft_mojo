@@ -19,13 +19,20 @@
 /* The identity for microthread `u` of a task, with `regions` the array of
  * per-core scratchpad regions, `stride` the size of one, and `local` its
  * number on the core it lands on -- which the launcher counts as it spawns,
- * so it is dense however lopsided the spread turns out to be. */
+ * so it is dense however lopsided the spread turns out to be.
+ *
+ * `addr` is the address this microthread was mapped to and `offset` its
+ * distance from the range's start -- the two the address rule already gives,
+ * handed on so a kernel can reach its own chunk (addr) and another array's
+ * (that array's base + offset) without rebuilding either from the id. */
 static inline m2ndp_ids m2ndp_id_of(const m2ndp_topology *t, u64 u, u64 local,
                                     void *regions, u64 stride)
 {
     u64 core = m2ndp_core_of(t, u);
     m2ndp_ids id = {
         .scratchpad_base = m2ndp_base((char *)regions + core * stride),
+        .offset = m2ndp_addr_of(t, u) - t->base,
+        .addr = m2ndp_addr_of(t, u),
         .ndp_id = core,
         .group_id = core,
         .local_uthread_id = local,

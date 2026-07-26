@@ -123,7 +123,12 @@ how much is blocked on each:
    `atomicrmw fadd` is a cmpxchg loop; `famoadd`/`famomin`/`famomax` at
    `.h`/`.w`/`.d` replace it with one instruction. No benchmark exercises it
    -- none has µthreads sharing a float — so its coverage is the lit suite's
-6. **Recovering `ADDR`/`OFFSET`** from `base[id * W]`
+6. **Recovering `ADDR`/`OFFSET` — done.** `RISCVM2ndpMapAddress` rewrites
+   `base[id * W]` into the offset and address the hardware already handed the
+   µthread, reading them from two new live-in intrinsics. It fires only on a
+   parallel kernel's packet-strided access, and the host names the range
+   parameter it cannot guess. `M2NDP_MAP_ADDRESS` switches the level; `off` is
+   the baseline. See INTERFACE.md
 
 Kernel arguments now come from the scratchpad rather than from registers,
 and every kernel is call-free and frame-free: across the six benchmarks,
