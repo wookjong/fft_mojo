@@ -49,9 +49,20 @@ void __m2ndp_launch_parallel(void (*kernel)(void))
 {
     set_args();
 
+    /* A microthread's number on its core is counted out as the core receives
+     * them, rather than derived from where it sits in the range: counting
+     * holds whatever the spread is, deriving assumes every core gets an equal
+     * share of it. Static because a launcher has no allocator and this is
+     * larger than the stack wants. */
+    static u64 local[M2NDP_MAX_CORES];
+    for (u64 core = 0; core < cur_topo.cores; core++)
+        local[core] = 0;
+
     u64 total = m2ndp_total(&cur_topo);
     for (u64 u = 0; u < total; u++) {
-        m2ndp_ids id = m2ndp_id_of(&cur_topo, u, spad, M2NDP_SPAD_BYTES);
+        u64 core = m2ndp_core_of(&cur_topo, u);
+        m2ndp_ids id =
+            m2ndp_id_of(&cur_topo, u, local[core]++, spad, M2NDP_SPAD_BYTES);
         m2ndp_launch(&id, kernel);
     }
 }
@@ -59,8 +70,11 @@ void __m2ndp_launch_parallel(void (*kernel)(void))
 /* One microthread per core, not one per resident slot: a serial kernel's work
  * is per-core -- zeroing this core's bins, folding them out again -- and doing
  * it once per slot would either repeat it or need the kernel to divide it up.
- * So group_size() is 1 here and local_uthread_id() is 0, which leaves a
- * strided walk over the scratchpad covering all of it. */
+ * So the microthread is number zero on its core and the scratchpad is all
+ * its own.
+ *
+ * Every core runs it, including one the range left no work for: its bins were
+ * zeroed by the same launch and fold back out as zeros. */
 void __m2ndp_launch_serial(void (*kernel)(void))
 {
     set_args();
@@ -83,18 +97,12 @@ void __m2ndp_launch_serial(void (*kernel)(void))
  * no error path, and the caller is a device. So it stops the run. */
 void __m2ndp_set_task_range(u64 base, u64 size)
 {
-    (void)base; /* the kernels index it; Addr/Offset say where a µthread landed */
-
-    if (size % cur_topo.packet) {
-        say("the task's range is not a whole number of packets\n");
-        htif_exit(2);
-    }
-    u64 threads = size / cur_topo.packet;
-    if (threads == 0 || threads % cur_topo.cores) {
-        say("microthreads do not divide evenly over the cores\n");
-        htif_exit(2);
-    }
-    cur_topo.per_core = threads / cur_topo.cores;
+    /* Which core a microthread runs on is decided from the address it was
+     * mapped to, so the range's own address is part of the topology. Nothing
+     * is demanded of either: a range that starts mid-round or ends mid-packet
+     * spreads lopsidedly, and lopsided is what the reference does too. */
+    cur_topo.base = base;
+    cur_topo.size = size;
 }
 
 int launcher_main(void)

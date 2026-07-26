@@ -13,9 +13,8 @@ Every symbol comes out as a C-ABI function taking no arguments.
 
 | Symbol | LLVM signature | Returns | Meaning |
 |--------|----------------|---------|---------|
-| `__m2ndp_local_uthread_id` | `declare i32 @__m2ndp_local_uthread_id()` | `i32` | index within the group, `[0, group_size)`; also the scratchpad slot |
+| `__m2ndp_local_uthread_id` | `declare i32 @__m2ndp_local_uthread_id()` | `i32` | index among the µthreads on this core |
 | `__m2ndp_global_uthread_id` | `declare i32 @__m2ndp_global_uthread_id()` | `i32` | index across all cores; identifies the mapped data |
-| `__m2ndp_group_size` | `declare i32 @__m2ndp_group_size()` | `i32` | µthreads sharing one scratchpad |
 | `__m2ndp_group_id` | `declare i32 @__m2ndp_group_id()` | `i32` | which group this µthread belongs to |
 
 The IDs are `i32` and get sign-extended to `i64` at every use site, since
@@ -23,11 +22,10 @@ the index type is 64-bit (`index_bit_width = 64`).
 
 ### Loop invariance — fixed
 
-These used to be opaque external calls, which LLVM cannot hoist out of a
-loop: `__m2ndp_group_size` was re-called on every iteration of the SpMV
-accumulation loop. The intrinsics they now become are `IntrNoMem` and
-speculatable, so the read happens once before the loop and the loop body
-just uses the value.
+An opaque external call cannot be hoisted out of a loop, so a kernel reading
+its own identity inside one paid for the read on every iteration. The
+intrinsics these become are `IntrNoMem` and speculatable, so the read happens
+once before the loop and the body just uses the value.
 
 ### Group index
 
@@ -36,13 +34,19 @@ one across all cores, one within a core. Both come from the hardware — a
 µthread is handed its identity in scalar registers when spawned.
 
 "Group" means the set of µthreads sharing one scratchpad, i.e. those
-resident on one NDP core. `local_uthread_id()` indexes into it,
-`group_size()` is its size, `group_id()` says which one it is.
+resident on one NDP core. `local_uthread_id()` indexes into it and
+`group_id()` says which one it is.
+
+M2NDP-public gives a µthread three values and no more: the address it was
+mapped to, that address less the range's base, and which core it is on. A
+kernel there works out everything else from its offset. `local_uthread_id()`
+is ours; the reference has no per-core index and no count of the µthreads
+sharing a core.
 
 ### How the IDs arrive — live-in registers
 
 The values are placed in registers when the microthread is spawned, so the
-four symbols lower to reads of those registers. They are **not reserved**:
+symbols lower to reads of those registers. They are **not reserved**:
 each is copied into a virtual register at function entry, after which the
 physical register goes back into the allocation pool. A kernel that never
 reads a value produces no copy at all.
@@ -61,7 +65,7 @@ use identity values:
 | | calls before | calls after | kernel frames before | after |
 |---|---|---|---|---|
 | `vector_add` | 1 | 0 | 1 | 0 |
-| `spmv` | 3 | 0 | 1 | 0 |
+| `spmv` | 1 | 0 | 1 | 0 |
 | `histogram` | 5 | 0 | 3 | 0 |
 
 **Which register carries which value is provisional.** The assignment lives
@@ -103,7 +107,7 @@ Two properties of that global the backend cannot assume away:
   The element type appears only on the GEPs and the accesses.
 
 `histogram` is the only one of the six benchmarks that allocates a
-scratchpad. `spmv` combines through atomics on ordinary memory and has none.
+scratchpad. `spmv` writes its answer straight to ordinary memory and has none.
 
 Address space 3 follows the GPU shared-memory convention. If M²NDP wants a
 different number, change it in `src/m2ndp.mojo`; ordinary memory stays in
@@ -468,8 +472,7 @@ Plus floating-point forms, which the draft never had: `vfamoadd`,
 `vfamoswap`, `vfamomin`, `vfamomax`. Only the operations that mean anything
 for floats, so no `xor`/`and`/`or` and no signed/unsigned split. These matter
 because RISC-V has **no** floating-point atomic add anywhere, scalar or
-vector -- which is why `spmv`'s `atomicrmw fadd` becomes an LR/SC retry loop
-today.
+vector -- so an `atomicrmw fadd` becomes an LR/SC retry loop without them.
 
 52 instructions in total. `llvm.riscv.m2ndp.*` intrinsics select into them,
 one intrinsic to one instruction with a `vsetvli` in front.
@@ -488,7 +491,7 @@ so `atomicrmw fadd` becomes a cmpxchg loop. `famoadd`, `famoswap`, `famomin`
 and `famomax` at `.h`, `.w` and `.d`, with the usual `.aq`/`.rl`/`.aqrl`
 forms, and `atomicrmw` selects into them directly.
 
-`spmv`'s accumulation, which is what pays for that loop today:
+An accumulation into shared memory, one instruction against a retry loop:
 
 ```asm
 .LBB0_7:                                  ; without +xm2ndp
@@ -500,8 +503,6 @@ forms, and `atomicrmw` selects into them directly.
 ```asm
     m2ndp.famoadd.w fa5, fs0, (s0)        ; with it
 ```
-
-99 instructions to 89 for the kernel.
 
 `fsub` is deliberately not covered — it is not one of the four operations, so
 it still expands. Neither is `xchg`: `ATOMIC_SWAP`'s node profile is

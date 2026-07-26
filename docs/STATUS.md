@@ -43,12 +43,12 @@ checks the answer against one the host computes itself.
 | `narrow` / `wide` | fp16 conversion, one instruction each way |
 | `imdb_lt_int64` | predicate scan → bitmap |
 | `imdb_gteq_lt_int64` | two bounds, and'd |
-| `imdb_gt_lt_fp32` | the same over floats, two bitmap bytes per microthread |
+| `imdb_gt_lt_fp32` | the same over floats, a bitmap byte per microthread |
 | `imdb_two_col_and` / `imdb_three_col_and` | combining scan results |
 | `kmeans_assign` | reduce to a minimum, then find its lane |
 | `gemv_aggregation` | float vector atomic (`vfamoaddei32.v`) |
 | `gemv` | fp16 weights, fp32 accumulation, atomic combine |
-| `spmv` | indirect access, atomic combine, one group per row |
+| `spmv` | indirect access; one row to a µthread |
 | `dlrm_sls` | a data-dependent loop: gather a variable-length list of rows |
 | `pagerank_inicsr` | gather/scatter over CSR |
 | `sssp` | one Bellman-Ford pass |
@@ -56,9 +56,11 @@ checks the answer against one the host computes itself.
 | `softmax` | three kernels in order; scalar float atomics (`famomax.w`, `famoadd.w`) |
 | `layernorm` | both moments in one pass, then a rescale kernel |
 
-Checked at 1, 4 and 8 cores and several interleavings; the answers agree,
-which is what tests the per-core scratchpad claim. `.github/workflows/test.yml`
-runs the whole set on every push and pull request, at two configurations.
+Checked at 1 to 16 cores and interleave strides from 32 to 4096 bytes,
+including strides wider than a whole range and strides that split a packet;
+the answers agree, which is what tests the per-core scratchpad claim.
+`.github/workflows/test.yml` runs the whole set on every push and pull
+request, at two configurations.
 
 Three of the upstream directories are not ported. `naive_bayes`'s kernel body
 is a single vector load — the workload is unfinished upstream, so there is
@@ -66,12 +68,9 @@ nothing to port. `opt/fc` and `opt/attention` are 600 and 950 lines of
 generated assembly apiece, and the rest of `opt` is covered: `activation` is
 `relu`, `residual` is `residual`, `layernom` is `layernorm`.
 
-**`spmv` does not fit the launch model cleanly.** Its kernel keys off
-`group_id()`, and a group is a core here, so a run computes exactly as many
-rows as there are cores — the host has to set `cores` to the row count, and
-the range it passes describes a microthread count rather than any buffer. A
-launch that could say "spawn G groups of N" independently of the core count is
-what is missing.
+Every benchmark takes its position from its own index in the range, which is
+what the reference gives its kernels as well. How that index maps onto a core
+is M2NDP-public's rule; `test/interleave.cases` is the table that pins it.
 
 ### LLVM baseline
 
@@ -105,7 +104,7 @@ placement and addressing, synchronization, the two operations that have no
 spelling at this level, and recovering the mapped address. In rough order of
 how much is blocked on each:
 
-1. **The four ID symbols — done.** They lower to reads of live-in registers,
+1. **The ID symbols — done.** They lower to reads of live-in registers,
    not to calls. Every kernel that used one lost its stack frame with the
    call; the loop-invariance problem went with it. The register assignment
    is provisional and lives in `RISCVM2ndpArgInfo.h`
@@ -120,10 +119,10 @@ how much is blocked on each:
    from Mojo through an external symbol. `histogram`'s body is one
    instruction where it was sixteen. See INTERFACE.md
 4. **Mask-to-bitmap** — still needs its own intrinsic; untouched
-5. **FP atomic add — done.** RISC-V has no floating-point AMO at all, so
-   `spmv`'s `atomicrmw fadd` was a cmpxchg loop; `famoadd`/`famomin`/
-   `famomax` at `.h`/`.w`/`.d` replace it with one instruction, 99 kernel
-   instructions down to 89
+5. **FP atomic add — done.** RISC-V has no floating-point AMO at all, so an
+   `atomicrmw fadd` is a cmpxchg loop; `famoadd`/`famomin`/`famomax` at
+   `.h`/`.w`/`.d` replace it with one instruction. No benchmark exercises it
+   -- none has µthreads sharing a float — so its coverage is the lit suite's
 6. **Recovering `ADDR`/`OFFSET`** from `base[id * W]`
 
 Kernel arguments now come from the scratchpad rather than from registers,
@@ -224,9 +223,9 @@ is no well-defined set to synchronize. An earlier version had a
 within a kernel; kernel boundaries order phases, since `device_main`
 launches synchronously.
 
-**IDs are primitives, not derived.** `global_uthread_id()` was computed as
-`group_id() * group_size() + uthread_id()`, a CUDA transliteration. The
-hardware hands a µthread its identity in scalar registers at spawn.
+**IDs are primitives, not derived.** `global_uthread_id()` was computed
+from a group index and a size, a CUDA transliteration. The hardware hands a
+µthread its identity in scalar registers at spawn.
 
 **Kernels take ordinary parameters.** Surfacing the calling convention
 (`kernel_arg(0)`, raw byte offsets) would bake it into every benchmark and

@@ -1,0 +1,39 @@
+# Which NDP unit each packet of a range belongs to.
+#
+# Taken from M2NDP-public at fe418e8c30d7c3821f7c91293c74c5c34939a063:
+#
+#   src/m2ndp_config.h:48   get_matched_unit_id(addr) = addr / stride % units
+#   src/ndp_unit.cc:145     target_addr = base + count * PACKET_SIZE
+#
+# with that build's defaults -- stride 256 (m_stride_size, a literal; no config
+# sets it) and packet 32 (MEM_ACCESS_SIZE, CMakeLists.txt:70).
+#
+# A case is
+#
+#   base size packet stride units : unit of each packet, in address order
+#
+# test/interleave_test.c asserts sim/interleave.h says the same. Regenerate
+# against a newer reference and the diff is the drift.
+
+
+# aligned: eight packets to a unit before moving on
+0x40000000 1024 32 256 4 : 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 3 3 3 3 3 3 3 3
+
+# base one block in: the whole assignment rotates
+0x40000100 1024 32 256 4 : 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 3 3 3 3 3 3 3 3 0 0 0 0 0 0 0 0
+
+# stride equal to the packet: one each, round robin
+0x40000000 512 64 64 4 : 0 1 2 3 0 1 2 3
+
+# twice around
+0x40000000 2048 32 256 4 : 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 3 3 3 3 3 3 3 3 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 3 3 3 3 3 3 3 3
+
+# a single unit takes all of it
+0x40000000 256 32 256 1 : 0 0 0 0 0 0 0 0
+
+# a range that ends mid-packet: the loop condition is count * PACKET < size,
+# so the part-packet gets a microthread of its own (ndp_unit.cc:145)
+0x40000000 300 32 64 2 : 0 0 1 1 0 0 1 1 0 0
+
+# a stride wider than the whole range: one unit takes it, the rest get nothing
+0x40000000 256 32 4096 4 : 0 0 0 0 0 0 0 0

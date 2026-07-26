@@ -104,39 +104,29 @@ kernel that takes no arguments and reads the task's parameters out of the
 scratchpad, the identity values as live-in registers rather than calls, and no
 frame because nothing resumes after a kernel.
 
-### spmv — indirect access, atomic combine
+### spmv — indirect access
 
-One group per row; its µthreads take a strided slice of the nonzeros.
-Indirect access (`x[col_idx[k]]`) is just a dependent load chain — no
-special construct needed:
-
-```llvm
-%28 = load i32, ptr %27, align 4                     ; col_idx[k]
-%29 = sext i32 %28 to i64
-%30 = getelementptr inbounds float, ptr %2, i64 %29  ; &x[col_idx[k]]
-%32 = load float, ptr %30, align 4                   ; x[col_idx[k]]
-%33 = fmul contract float %31, %32
-%34 = fadd contract float %20, %33                   ; -> fmadd.s in asm
-```
-
-The partial sums are combined with an atomic, not a barrier:
+One row to a µthread: it walks the row itself and stores the answer once, so
+nothing has to be combined. Indirect access (`x[col_idx[k]]`) is just a
+dependent load chain — no special construct needed:
 
 ```llvm
-%40 = atomicrmw fadd ptr %39, float %38 monotonic, align 4
+%36 = load i32, ptr %35, align 4                     ; col_idx[k]
+%37 = sext i32 %36 to i64
+%38 = getelementptr inbounds float, ptr %3, i64 %37  ; &x[col_idx[k]]
+%40 = load float, ptr %38, align 4                   ; x[col_idx[k]]
+%41 = fmul contract float %39, %40
+%42 = fadd contract float %16, %41                   ; -> fmadd.s in asm
 ```
+
+Every call left in `out/spmv.s` is controller-side -- the launch and the range
+the runtime sets before it -- and none is in a kernel, where a call is
+rejected outright.
 
 **M²NDP has no barrier.** µthreads are created and retired by hardware FGMT,
-so there is no well-defined set to synchronize; atomics combine within a
-kernel and kernel boundaries synchronize between them. RISC-V has no
-floating-point AMO at all, so that `fadd` was a compare-exchange loop until
-the extension gave it `famoadd.w`.
-
-`__m2ndp_group_size` used to be re-called on every loop iteration -- an
-opaque external call cannot be proven loop-invariant -- which was the real
-cost of the external-symbol approach. It is a live-in register now, so the
-loop reads it once. Every call left in `out/spmv.s` is controller-side -- the
-launch and the range the runtime sets before it -- and none is in a kernel,
-where a call is rejected outright.
+so there is no well-defined set to synchronize; where µthreads do share an
+output, as histogram's do, they combine with an atomic, and kernel boundaries
+synchronize between phases.
 
 ### histogram — scratchpad across three kernels, and an indexed vector atomic
 
@@ -325,9 +315,8 @@ The seam between workload and compiler is a set of names. Details in
 
 | Symbol | Signature | Meaning |
 |--------|-----------|---------|
-| `__m2ndp_local_uthread_id` | `i32 ()` | index within the group; also the scratchpad slot |
+| `__m2ndp_local_uthread_id` | `i32 ()` | index among the µthreads on this core |
 | `__m2ndp_global_uthread_id` | `i32 ()` | index across all cores; identifies the mapped data |
-| `__m2ndp_group_size` | `i32 ()` | µthreads sharing one scratchpad |
 | `__m2ndp_group_id` | `i32 ()` | which group this µthread belongs to |
 | `__m2ndp_declare_params` | `void (ptr addrspace(3))` | which global the host fills; the backend exports its offset and drops the call |
 

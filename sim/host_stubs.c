@@ -58,5 +58,4 @@ void __m2ndp_vfamoadd_f64(void) { host_side("__m2ndp_vfamoadd_f64"); }
 
 int __m2ndp_global_uthread_id(void) { host_side("__m2ndp_global_uthread_id"); return 0; }
 int __m2ndp_local_uthread_id(void) { host_side("__m2ndp_local_uthread_id"); return 0; }
-int __m2ndp_group_size(void) { host_side("__m2ndp_group_size"); return 0; }
 int __m2ndp_group_id(void) { host_side("__m2ndp_group_id"); return 0; }
