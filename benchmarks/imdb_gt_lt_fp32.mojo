@@ -19,8 +19,9 @@ Reference kernel:
     sb x10, 1(x6)
 
 The int64 range filter over floats: same two compares, `vmsgt.vf`/`vmslt.vf`
-selected by the operand type. A packet holds twice as many fp32 rows as int64
-ones, so a µthread writes two bitmap bytes rather than one.
+selected by the operand type. A µthread packs its `W` mask bits into `W / 8`
+bitmap bytes -- one at the 32-byte packet this build uses, where fp32 gives
+eight lanes, and two at the reference's 64.
 """
 
 from std.sys import argv, size_of
