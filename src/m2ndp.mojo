@@ -188,7 +188,43 @@ def launch_serial[F: ImplicitlyDeletable, //, kernel: F]():
     external_call["__m2ndp_launch_serial", NoneType](materialize[kernel]())
 
 
-def _dump(ir: String, ll: String, work: String, tc: Toolchain) raises:
+def _map_address_flags(machine: Machine, range_param: Int) raises -> String:
+    """The llc flags that turn an index back into the hardware's mapping.
+
+        M2NDP_MAP_ADDRESS=addr     mapped address where it fits (default)
+        M2NDP_MAP_ADDRESS=offset   base + mapped offset only
+        M2NDP_MAP_ADDRESS=off      leave indices as written
+
+    A kernel indexes a parameter by the microthread's id, but the hardware
+    already handed it the offset that index rebuilds and the address of its own
+    chunk. `packet` is what the id scales by, so the backend needs it to
+    recognize the stride. `addr` additionally names the parameter the range was
+    taken over -- `range_param`, its byte offset in the block, or -1 if none is
+    it -- so that parameter's accesses fold to the mapped address outright. See
+    docs/INTERFACE.md.
+    """
+    var mode = _getenv("M2NDP_MAP_ADDRESS")
+    if not mode:
+        mode = String("addr")
+    if mode != "off" and mode != "offset" and mode != "addr":
+        raise Error(
+            "M2NDP_MAP_ADDRESS must be off, offset or addr, not " + mode
+        )
+    if mode == "off":
+        return String(" -m2ndp-map-address=off")
+
+    var flags = (
+        String(" -m2ndp-map-address=") + mode
+        + " -m2ndp-packet=" + String(machine.packet)
+    )
+    if mode == "addr" and range_param >= 0:
+        flags += " -m2ndp-range-param=" + String(range_param)
+    return flags
+
+
+def _dump(
+    ir: String, ll: String, work: String, tc: Toolchain, flags: String
+) raises:
     """Print the device code, if `M2NDP_DUMP` asks for it.
 
         M2NDP_DUMP=ir    the LLVM a launch hands to llc
@@ -196,7 +232,8 @@ def _dump(ir: String, ll: String, work: String, tc: Toolchain) raises:
         M2NDP_DUMP=all   both
 
     A module is the task and nothing else -- its kernels, its device_main and
-    the entry point -- so this is every function of it, in order.
+    the entry point -- so this is every function of it, in order. The asm is
+    compiled with the same `flags` a launch uses, so it is what actually runs.
     """
     var want = _getenv("M2NDP_DUMP")
     if not want:
@@ -210,7 +247,7 @@ def _dump(ir: String, ll: String, work: String, tc: Toolchain) raises:
         var asm = work + "/task.s"
         if _run(
             tc.llc + " -mtriple=riscv64-unknown-elf -mattr=" + tc.features
-            + " " + ll + " -o " + asm
+            + flags + " " + ll + " -o " + asm
         ) == 0:
             print("──── riscv ────")
             with open(asm, "r") as f:
@@ -398,11 +435,26 @@ trait NDPTask:
             f.write(ir)
         _add_export_alias(ir, ll)
 
-        _dump(ir, ll, work, tc)
+        # The mapping the hardware supplies is recovered here, at the one llc a
+        # launch runs: the range's base and the parameter block are both known
+        # now, and neither is in the compiled-once IR. The block is read as raw
+        # words -- neither side has the field types -- and the byte offset of
+        # the first pointer equal to the range's base names the parameter it
+        # was taken over. See _map_address_flags.
+        var range_param = -1
+        var words = nbytes // size_of[UInt64]()
+        var wp = src.bitcast[UInt64]()
+        for w in range(words):
+            if wp[w] == UInt64(region.base):
+                range_param = w * size_of[UInt64]()
+                break
+        var mapflags = _map_address_flags(machine, range_param)
+
+        _dump(ir, ll, work, tc, mapflags)
 
         var rc = _run(
             tc.llc + " -mtriple=riscv64-unknown-elf -mattr=" + tc.features
-            + " -filetype=obj " + ll + " -o " + obj
+            + mapflags + " -filetype=obj " + ll + " -o " + obj
         )
         if rc == 0:
             rc = _run(

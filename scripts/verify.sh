@@ -8,6 +8,8 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
+LLC="${LLC:-$REPO/build/llvm/bin/llc}"
+
 FAIL=0
 check() {
     local desc="$1" cmd="$2" expect="$3"
@@ -126,6 +128,20 @@ check "gemv: float vector atomic" \
 # softmax reduces with both scalar float atomics, one per kernel.
 check "softmax: scalar float max and add atomics" \
       "grep -cE 'm2ndp.famo(max|add).w' out/softmax.s | tr -d ' '" "2"
+
+# Mapped-address recovery. The artifacts are the baseline -- build.sh runs llc
+# with the pass off -- so the baseline reconstructs the id (a shift by the
+# log2 of the 32-byte packet) and materializes the mapped array's base. Then
+# the same IR compiled with the pass on drops the shift and reads the array
+# straight from the mapped-address register a2. See INTERFACE.md.
+M="+m,+a,+f,+d,+v,+zvl128b,+xm2ndp"
+vaddr() { "$LLC" -mtriple=riscv64-unknown-elf -mattr="$M" "$@" out/vector_add.ll -o - 2>/dev/null \
+    | awk '/^"vector_add::VectorAdd::body\(\)":/{f=1} f&&/^\t[a-z]/{print} f&&/^\tret$/{exit}'; }
+check "map-address: baseline rebuilds the id" \
+      "vaddr | grep -c 'slli.*5' | tr -d ' '" "1"
+check "map-address: addr fold reads a2, no rebuild" \
+      "vaddr -m2ndp-map-address=addr -m2ndp-packet=32 -m2ndp-range-param=0 \
+       | grep -qE 'vle32.v\s+v[0-9]+, \(a2\)' && ! vaddr -m2ndp-map-address=addr -m2ndp-packet=32 -m2ndp-range-param=0 | grep -q 'slli' && echo yes" "yes"
 
 echo ""
 if [ "$FAIL" = 0 ]; then
