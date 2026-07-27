@@ -44,7 +44,7 @@ from m2ndp import (
     atomic_add_indexed,
     scratchpad,
 )
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime BINS = 256
 comptime UNROLL = PACKET // size_of[Int32]()   # samples in one packet
@@ -126,9 +126,8 @@ def main() raises:
     # One packet is UNROLL samples; the count has to divide over the cores.
     var n = UNROLL * 64 * 8
 
-    var pool = Pool()
-    var samples = pool.alloc[Int32](n)
-    var hist = pool.alloc[Int32](BINS)
+    var samples = cxl_alloc[Int32](n)
+    var hist = cxl_alloc[Int32](BINS)
     var expect = List[Int32](length=BINS, fill=0)
 
     seed(0)
@@ -139,7 +138,7 @@ def main() raises:
         expect[s] += 1
 
     var rc = Histogram.launch(
-        pool, PooledRange.over(samples, n), HistogramParams(samples, hist)
+        PooledRange.over(samples, n), HistogramParams(samples, hist)
     )
     if rc != 0:
         print("[host] histogram failed, exit", rc)

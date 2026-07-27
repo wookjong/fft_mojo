@@ -16,7 +16,7 @@ from m2ndp import (
     global_uthread_id,
     launch_parallel,
 )
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 
 @fieldwise_init
@@ -72,12 +72,11 @@ def main() raises:
 
     comptime nnz = ROWS * NNZ_PER_ROW
 
-    var pool = Pool()
-    var row_ptr = pool.alloc[Int32](ROWS + 1)
-    var values = pool.alloc[Float32](nnz)
-    var col_idx = pool.alloc[Int32](nnz)
-    var x = pool.alloc[Float32](NCOLS)
-    var y = pool.alloc[Float32](ROWS)
+    var row_ptr = cxl_alloc[Int32](ROWS + 1)
+    var values = cxl_alloc[Float32](nnz)
+    var col_idx = cxl_alloc[Int32](nnz)
+    var x = cxl_alloc[Float32](NCOLS)
+    var y = cxl_alloc[Float32](ROWS)
 
     seed(0)
     for i in range(NCOLS):
@@ -89,7 +88,7 @@ def main() raises:
         row_ptr[r] = Int32(r * NNZ_PER_ROW)
 
     var rc = Spmv.launch(
-        pool, PooledRange.of_bytes(row_ptr, ROWS * PACKET),
+        PooledRange.of_bytes(row_ptr, ROWS * PACKET),
         SpmvParams(values, col_idx, x, row_ptr, y),
     )
     if rc != 0:

@@ -29,7 +29,7 @@ from m2ndp import (
     global_uthread_id,
     launch_parallel,
 )
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Float32]()   # lanes in one packet
 
@@ -89,11 +89,10 @@ def main() raises:
 
     var n = W * 64 * 8
 
-    var pool = Pool()
-    var input = pool.alloc[Float32](n)
-    var output = pool.alloc[Float32](n)
-    var maximum = pool.alloc[Float32](1)
-    var total = pool.alloc[Float32](1)
+    var input = cxl_alloc[Float32](n)
+    var output = cxl_alloc[Float32](n)
+    var maximum = cxl_alloc[Float32](1)
+    var total = cxl_alloc[Float32](1)
 
     seed(0)
     for i in range(n):
@@ -102,7 +101,7 @@ def main() raises:
     total[0] = 0
 
     var rc = Softmax.launch(
-        pool, PooledRange.over(input, n),
+        PooledRange.over(input, n),
         SoftmaxParams(input, output, maximum, total)
     )
     if rc != 0:

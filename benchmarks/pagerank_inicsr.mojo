@@ -26,7 +26,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Int32]()   # nodes in one packet of the row array
 
@@ -73,11 +73,10 @@ def main() raises:
     var degree = 8
     var edges = nodes * degree
 
-    var pool = Pool()
-    var rows = pool.alloc[Int32](nodes + 1)
-    var cols = pool.alloc[Int32](edges)
-    var counts = pool.alloc[Int32](nodes)
-    var data = pool.alloc[Float32](edges)
+    var rows = cxl_alloc[Int32](nodes + 1)
+    var cols = cxl_alloc[Int32](edges)
+    var counts = cxl_alloc[Int32](nodes)
+    var data = cxl_alloc[Float32](edges)
 
     seed(0)
     for i in range(nodes + 1):
@@ -88,7 +87,7 @@ def main() raises:
         counts[i] = Int32(random_si64(1, 16))
 
     var rc = PagerankInicsr.launch(
-        pool, PooledRange.over(rows, nodes),
+        PooledRange.over(rows, nodes),
         InicsrParams(rows, cols, counts, data)
     )
     if rc != 0:

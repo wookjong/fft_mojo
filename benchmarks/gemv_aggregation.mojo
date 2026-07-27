@@ -30,7 +30,7 @@ from m2ndp import (
     global_uthread_id,
     launch_parallel,
 )
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Float32]()   # lanes in one packet
 
@@ -76,9 +76,8 @@ def main() raises:
 
     var n = W * 64 * 8
 
-    var pool = Pool()
-    var partial = pool.alloc[Float32](n)
-    var acc = pool.alloc[Float32](n)
+    var partial = cxl_alloc[Float32](n)
+    var acc = cxl_alloc[Float32](n)
     var expect = List[Float32](length=n, fill=0)
 
     seed(0)
@@ -88,7 +87,7 @@ def main() raises:
         expect[i] = acc[i] + partial[i]
 
     var rc = GemvAggregation.launch(
-        pool, PooledRange.over(partial, n), AggregationParams(partial, acc)
+        PooledRange.over(partial, n), AggregationParams(partial, acc)
     )
     if rc != 0:
         print("[host] gemv_aggregation failed, exit", rc)

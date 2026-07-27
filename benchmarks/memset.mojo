@@ -16,7 +16,7 @@ is the same splat.
 from std.sys import argv
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET   # uint8 lanes in one packet
 
@@ -62,12 +62,11 @@ def main() raises:
 
     var n = W * 64 * 8          # bytes; one packet is W of them
 
-    var pool = Pool()
-    var dst = pool.alloc[UInt8](n)
+    var dst = cxl_alloc[UInt8](n)
     var value = UInt8(0xAB)
 
     var rc = Memset.launch(
-        pool, PooledRange.over(dst, n), MemsetParams(dst, value)
+        PooledRange.over(dst, n), MemsetParams(dst, value)
     )
     if rc != 0:
         print("[host] memset failed, exit", rc)

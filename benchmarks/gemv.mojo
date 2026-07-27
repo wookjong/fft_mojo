@@ -32,7 +32,7 @@ from m2ndp import (
     global_uthread_id,
     launch_parallel,
 )
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Float16]()   # weight lanes in one packet
 comptime COLS = 256                         # output length
@@ -86,10 +86,9 @@ def main() raises:
     if Gemv.emit_ir_if_asked():
         return
 
-    var pool = Pool()
-    var weight = pool.alloc[Float16](ROWS * COLS)
-    var input = pool.alloc[Float16](ROWS)
-    var output = pool.alloc[Float32](COLS)
+    var weight = cxl_alloc[Float16](ROWS * COLS)
+    var input = cxl_alloc[Float16](ROWS)
+    var output = cxl_alloc[Float32](COLS)
 
     seed(0)
     for i in range(ROWS * COLS):
@@ -98,7 +97,7 @@ def main() raises:
         input[i] = Float16(random_si64(-8, 8)) / 16
 
     var rc = Gemv.launch(
-        pool, PooledRange.over(weight, ROWS * COLS),
+        PooledRange.over(weight, ROWS * COLS),
         GemvParams(weight, input, output)
     )
     if rc != 0:

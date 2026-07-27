@@ -29,7 +29,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Float32]()   # lanes in one packet
 comptime EMB_DIM = 256                      # elements in an embedding row
@@ -84,11 +84,10 @@ def main() raises:
     var rows = 4096
     var n = batch * EMB_DIM
 
-    var pool = Pool()
-    var table = pool.alloc[Float32](rows * EMB_DIM)
-    var index = pool.alloc[Int32](batch * lookups)
-    var offset = pool.alloc[Int32](batch + 1)
-    var output = pool.alloc[Float32](n)
+    var table = cxl_alloc[Float32](rows * EMB_DIM)
+    var index = cxl_alloc[Int32](batch * lookups)
+    var offset = cxl_alloc[Int32](batch + 1)
+    var output = cxl_alloc[Float32](n)
 
     seed(0)
     for i in range(rows * EMB_DIM):
@@ -99,7 +98,7 @@ def main() raises:
         offset[i] = Int32(i * lookups)
 
     var rc = DlrmSls.launch(
-        pool, PooledRange.over(output, n),
+        PooledRange.over(output, n),
         SlsParams(table, index, offset, output)
     )
     if rc != 0:

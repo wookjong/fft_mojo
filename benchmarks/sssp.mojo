@@ -26,7 +26,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Int32]()   # nodes in one packet of the row array
 comptime UNREACHED = Int32(0x3FFFFFFF)    # far enough that no path is longer
@@ -80,12 +80,11 @@ def main() raises:
     var degree = 8
     var edges = nodes * degree
 
-    var pool = Pool()
-    var rows = pool.alloc[Int32](nodes + 1)
-    var cols = pool.alloc[Int32](edges)
-    var weights = pool.alloc[Int32](edges)
-    var distance = pool.alloc[Int32](nodes)
-    var updated = pool.alloc[Int32](nodes)
+    var rows = cxl_alloc[Int32](nodes + 1)
+    var cols = cxl_alloc[Int32](edges)
+    var weights = cxl_alloc[Int32](edges)
+    var distance = cxl_alloc[Int32](nodes)
+    var updated = cxl_alloc[Int32](nodes)
 
     seed(0)
     for i in range(nodes + 1):
@@ -98,7 +97,7 @@ def main() raises:
         distance[i] = UNREACHED
 
     var rc = Sssp.launch(
-        pool, PooledRange.over(rows, nodes),
+        PooledRange.over(rows, nodes),
         SsspParams(rows, cols, weights, distance, updated)
     )
     if rc != 0:
