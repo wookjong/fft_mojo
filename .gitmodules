@@ -8,3 +8,8 @@
 	url = https://github.com/riscv-software-src/riscv-isa-sim.git
 	branch = master
 	shallow = true
+[submodule "third_party/m2ndp-detour"]
+	path = third_party/m2ndp-detour
+	url = https://github.com/PSAL-POSTECH/M2NDP-Detour.git
+	branch = detour
+	shallow = true
