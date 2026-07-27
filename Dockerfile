@@ -37,12 +37,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # compiler the image cannot run what it is for. Note that linking still goes
 # through lld: this binutils is older than the LLVM in the image and rejects
 # the ISA string it emits.
+#
+# flex and bison generate M²NDP-Detour's config/trace grammar; its CMake calls
+# them at configure time, so the timing build cannot start without them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        bison \
         build-essential \
         ca-certificates \
         cmake \
         curl \
         device-tree-compiler \
+        flex \
         gcc-riscv64-unknown-elf \
         git \
         libxml2-dev \
@@ -53,6 +58,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# conan fetches M²NDP-Detour's C++ dependencies. Pinned to the 1.x line: its
+# CMake uses conan_basic_setup()/conanbuildinfo.cmake, which conan 2 dropped.
+# The default profile links libstdc++11 (the C++11 string ABI): Detour and the
+# LLVM its decoder links against both build with _GLIBCXX_USE_CXX11_ABI=1, so
+# the dependencies must match or std::string symbols do not resolve at link time.
+RUN python3 -m pip install --no-cache-dir "conan==1.56.0" \
+    && rm -rf /root/.cache/pip \
+    && conan profile new default --detect \
+    && conan profile update settings.compiler.libcxx=libstdc++11 default
 
 # Mojo, pinned to the nightly the repo targets. Pinned rather than latest
 # because the RISC-V backend was dropped partway through the b3 series — see
