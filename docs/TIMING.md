@@ -5,225 +5,124 @@ timing comes from [M²NDP-Detour](https://github.com/PSAL-POSTECH/M2NDP-Detour),
 the microarchitecture simulator behind the MICRO'24 model, wired in as the
 `third_party/m2ndp-detour` submodule.
 
-Detour upstream reads a hand-written assembly dialect (`.traceg`) plus text
-memory-image and launch files. This integration replaces that whole text
-front-end: a real compiled kernel drives the timing model directly. It is a fork
-of Detour's front-end, not an added mode — the text path is removed.
+Detour keeps its own functional execution and microarchitecture models. What
+changes is the instruction front end: instead of parsing a hand-written
+`.traceg` dialect into `NdpInstruction` up front, Detour decodes the compiled
+binary **on demand** with LLVM and runs on that decode directly.
 
-Work starts from the current stable point of Detour's `detour` branch. A
-shared-pool memory (`PooledMemory`) is landing there separately; until that
-version is complete, memory uses Detour's existing map, and the pool is adopted
-when it is ready.
+## The idea
 
-## Scope: a machine that runs a launched kernel
+A real CPU simulator fetches, decodes, and issues one instruction at a time.
+Detour instead pre-parses the whole kernel into an `NdpInstruction` array before
+executing. The one thing that forces this up-front pass is register accounting:
+`count_required_regs` scans every instruction to size each µthread's register
+footprint (occupancy) before dispatch.
 
-The first target is deliberately narrow. Detour is a machine that **executes one
-launched kernel**: given a compiled kernel body and a launch descriptor, it runs
-the µthreads against the shared pool and reports cycles. It does not run
-`device_main`, does not intercept launch intrinsics, and does not sequence
-multiple kernels — those are deferred (see the end).
-
-The launch descriptor — kernel entry, `base`, `size`, `packet`, `stride`,
-parameter block — is supplied by the host, reusing the argument contract the
-Spike path already passes.
-
-## What is reused and what is replaced
-
-Detour is already a combined functional+timing simulator: it executes each
-instruction functionally at the timed issue point, against shared memory, and
-its microarchitecture model (caches, TLB, DRAM via Ramulator, interconnect via
-BookSim, in-order sub-core pipeline, register-limited µthread occupancy)
-produces the cycles. That engine stays. Only the front-end — how instructions,
-memory, and launches enter it — changes.
-
-| Layer | Disposition |
-|---|---|
-| Text parser (`m2ndp_parser` `.traceg` path, `parse_kernel_launch`) | **removed** |
-| String opcode tables (`rvv_material.h` `opcode_type_map`/`operand_type_map`) | **removed** (enums kept) |
-| Special-token registers (`ADDR`/`OFFSET`/`NDPID`/`UTHREADID`…) | **removed** (ABI seeding) |
-| `_input.data` / `_output.data` text memory images | **removed** (shared mmap pool) |
-| Shared-pool / scratchpad memory | **from Detour** once `PooledMemory` lands; existing map until then |
-| `NdpInstruction` / `NdpKernel`, `Execute*`, timing core | **kept** |
-| µthread enumeration, rename, register-limited occupancy | **kept** |
-| Cache / TLB / DRAM / interconnect models | **kept** |
-
-## Why detour's own engine, not Spike co-simulation
-
-Producer-consumer and other value/timing-dependent behavior is modelled
-correctly only when functional execution happens *at the timed issue point* —
-Detour's engine already does this (issue-order memory visibility). Feeding a
-pre-extracted trace would lose it; delegating execution to Spike in lock-step
-would reproduce it, but at the cost of rebuilding one simulator on top of the
-other.
-
-An opcode census of every benchmark's real compiled `.text` (102 distinct
-opcodes, decoded with the LLVM `xm2ndp` disassembler, zero decode failures)
-shows Detour's executor already covers all but a handful. Within a kernel body
-the gaps are the `frm` rounding-mode CSR and `vrgather`; `AUIPC` appears only in
-the launch entry, which this scope does not run. With the gap that small,
-Detour's own engine is the target and Spike stays out of the timing loop.
-
-## Pipeline
+The compiler already knows that footprint -- its register allocator assigned the
+registers, `LMUL` groups included. So it emits the footprint per kernel, the
+up-front scan disappears, and Detour decodes on demand like any pipeline
+simulator. That removes the pre-parse, the `NdpInstruction` translation, and the
+static `vtype`/`LMUL` reconstruction in one move.
 
 ```
-kernel ELF ──► MCDisassembler decode ──► NdpKernel ──► Detour engine
-   │              (structured, no text)   (pre-decoded    (execute at issue
-launch args         from build/llvm        array +          + microarch timing)
-(host) ─────────────────────────────────   byte-PC)
-                                              │
-shared mmap pool + scratchpad ◄───────────────┘
-(host stages, Detour maps at the same base)
+kernel ELF ──► fetch(PC) ──► decode one McInsn (LLVM, cached by PC) ──► issue ──► execute
+                                                                          │
+compiler-emitted per-kernel {x,f,v} footprint ──► occupancy sizing        ▼
+dynamic CSR (Detour executes vset) ──► LMUL for dependencies        shared mmap pool
 ```
 
-## Decode front-end
+## Why on-demand decode works here
 
-Decoding is a one-time pass that fills the pre-decoded instruction array the
-executor already indexes by PC — the same shape the text parser produced, from
-structured decode instead of text. It is not decode-on-fetch; the executor's
-"read at PC" is unchanged.
+- **Dependencies are dynamic.** Detour is a simulator, not a static analyzer.
+  The scoreboard is checked at issue, where the µthread's CSR already holds the
+  real `vtype` (Detour executed the preceding `vsetvli`). `GetIssueCount` already
+  reads `context.csr->vtype_vlmul` on demand, so `LMUL`-aware register grouping
+  needs no static analysis.
+- **Occupancy is static, and the compiler owns it.** The per-kernel register
+  footprint is the same for every µthread and is fixed at compile time. The
+  compiler emits it; nothing needs to scan instructions to recover it.
+- **Control flow is resolved.** The disassembler gives branch targets as numeric
+  offsets, so on-demand fetch follows them without a label table.
 
-The decoder uses the LLVM `MCDisassembler` from this project's toolchain
-(`build/llvm`, i.e. `third_party/llvm-project`), which knows the `xm2ndp`
-extension. Setup is standard: `llvm-config` supplies flags; link
-`mcdisassembler riscvdisassembler riscvdesc riscvinfo mc object support`. No LLVM
-source change is needed for decoding.
+## Compiler: per-kernel register footprint
 
-Per kernel it emits:
+The mojo LLVM fork emits, per kernel function, the register footprint the
+allocator produced: the number of scalar (`x`), floating-point (`f`), and
+vector (`v`) registers used, with vector registers counted by their `LMUL` group
+(a `VRM4` value is four physical vector registers).
 
-1. `vector<NdpInstruction>` for the kernel function and the device helpers it
-   calls, each annotated with its real byte-PC (needed by instruction-cache
-   timing, and by `AUIPC` if the scope later grows).
-2. `map<byte_addr → array index>` so branch/jump/call targets — which the
-   disassembler gives as resolved offsets — resolve to array indices. The old
-   label model (`.LOOP`/`.SKIP`) disappears: targets are numeric.
-3. Symbol metadata read from the ELF, not reconstructed (see below).
+- **Source:** after register allocation, the used physical registers per class,
+  read from the function's register usage. `LMUL` comes from the vector register
+  class, which the allocator already assigned -- no `vtype` tracking.
+- **Emission:** a `.m2ndp.kinfo` section holding one record per kernel:
+  `{ function symbol, nx, nf, nv }`. The function symbol (a relocation) keys the
+  record; Detour matches it to the kernel it is running.
 
-The `MCInst → NdpInstruction` mapping is a table keyed on the LLVM opcode
-(e.g. `RISCV::VFMACC_VV → {Opcode::VFMACC, OperandType::VV}`), roughly 102
-entries, plus register-number and operand-order mapping. `x0` maps to the zero
-register and is never renamed.
+This is small -- a few numbers per kernel -- and authoritative, since it is the
+allocation the binary was built against.
 
-## Metadata comes from the compiler, not reconstruction
+## Detour: on-demand decode
 
-The ELF carries what the text parser used to rebuild. The decoder reads it:
+- **Fetch → decode.** At each fetch, decode one instruction from the bytes at the
+  current PC with the `xm2ndp`-aware LLVM `MCDisassembler`, into a `McInsn`
+  (opcode, operand roles and register classes from `MCInstrDesc`, byte-PC). A
+  decode cache keyed by PC decodes each address once and reuses it.
+- **Execute and time on `McInsn`.** The executor and scoreboard read `McInsn`
+  directly: definitions and uses come from `MCInstrDesc` (`getNumDefs`, register
+  class), so there is no operand-slot convention to reproduce. `LMUL`-expanded
+  register groups come from the dynamic CSR at issue.
+- **Occupancy** is sized from the compiler footprint (`.m2ndp.kinfo`), replacing
+  `count_required_regs`.
+- **Per-µthread register offset** stays: each µthread's architectural registers
+  map to its own physical slice, exactly as today, now applied to `McInsn`
+  register numbers.
 
-| Fact | Source |
+## Kept and dropped
+
+| Kept | Dropped |
 |---|---|
-| Kernel entry point and size | symbol table (`…::body()` FUNC symbol) |
-| Device helpers called by the kernel | symbol table + call targets |
-| Scratchpad / params layout | `__m2ndp_spad_size`, `__m2ndp_spad_globals`, `__m2ndp_params_offset` |
-| ISA features for the decoder | `.attribute` string |
-
-### Register footprint
-
-Register-limited occupancy — how many µthreads run concurrently before the
-physical register file is exhausted — depends on each kernel's register
-footprint (`x`/`f`/`v` counts). This is a timing input, not cosmetic.
-
-The compiler is the authoritative source. Detour's rename confirms it: each
-µthread's architectural registers map to a private physical slice with a static
-one-to-one mapping (`// Believe in compiler`), reserving exactly the
-architectural count — Detour does no dynamic renaming to break false
-dependencies. Anti-dependency avoidance — spending extra registers so writes do
-not stall on earlier readers — is the compiler's doing and is already in the
-architectural allocation. More registers means fewer false dependencies but
-lower occupancy; modelling that trade-off needs the exact count.
-
-Detour's reconstruction of the count (in `uthread_generator`) rests on two
-assumptions that hand-written kernels satisfy but real compiled code breaks:
-linear `vtype`/`LMUL` tracking (assumes vector-config placement is independent
-of control flow), and destination-oriented counting (misses read-only ABI
-inputs). For simple kernels the reconstruction is correct, so this scope uses it
-as-is; emitting the footprint from the mojo backend, and feeding
-`NdpKernel::kernel_body_{x,f,v}regs` directly, is a later robustness step for
-kernels with branchy `vtype` usage.
-
-## Kernel launch setup
-
-Given the launch descriptor, Detour sets up:
-
-1. **µthread enumeration and mapping** — `count = ⌈size/packet⌉`; for µthread
-   `u`: `addr = base + u·packet`, `offset = u·packet`, `global_id = u`,
-   `core = addr/stride mod cores`. Detour's existing interleave and
-   `get_uthread_size` are reused.
-2. **Per-µthread ABI register seeding** — the launch writes the µthread's
-   initial architectural registers per the calling convention (`sim/launch.h`):
-   `a0` scratchpad base, `a1` offset, `a2` mapped addr, `a3` ndp id, `a4` local
-   uthread id, `a5` global uthread id, `a6` group id, `t0`/`pc` kernel entry.
-   This replaces the special-token registers: compiled code reads `a2`, so `a2`
-   must hold the mapped address.
-3. **Scratchpad** — a per-core `Scratchpad` is created; the parameter block is
-   copied from the pool into scratchpad at `__m2ndp_params_offset`, where the
-   kernel reads its arguments.
-4. **Occupancy and rename** — automatic: per-µthread register demand partitions
-   the physical register file and gates dispatch.
-
-Detour's section model (`INITIALIZER`/`KERNELBODY`/…) is dropped; a kernel is a
-single body.
+| Detour's functional execution semantics | Pre-parse into an `NdpInstruction` array |
+| Timing / cache / DRAM / interconnect models | `mc_to_ndp` mapping and operand-slot swaps |
+| Per-µthread register offset (rename), occupancy | `operand_type_map`-based operand placement |
+| `mc_decoder` (now a single-instruction decode) | `count_required_regs` and static `vtype` scan |
 
 ## Memory
 
-Memory is the shared CXL pool, `mmap`ed by both host and Detour at the same
-fixed base (`MAP_SHARED`) — the near-data model Spike uses, where a pointer
-means the same thing on both sides. The host stages the pool before the run and
-checks the answer against it after; there are no `_input.data`/`_output.data`
-files. Detour's memory backend is polymorphic (`Context::memory_map`), so the
-pool is a map behind that interface, with a per-core scratchpad alongside.
+Memory is the shared CXL pool, `mmap`ed by both host and Detour at the same base
+-- the near-data model Spike uses, where a pointer means the same thing on both
+sides. The host stages the pool before the run and checks the answer against it
+after; there are no `_input.data`/`_output.data` files. Detour's `detour` branch
+is growing a `PooledMemory` that is exactly this, adopted once complete.
 
-Detour's `detour` branch is growing a `PooledMemory` that is exactly this — an
-`mmap` at a fixed base whose `Load`/`Store` dereference the address directly.
-This adopts it once that version is complete; until then a small pool-backed map
-serves the same role.
+## Phases
 
-## Execute-coverage gaps
+1. **Compiler footprint** (LLVM fork): compute per-kernel `{nx, nf, nv}` after
+   register allocation, emit `.m2ndp.kinfo`. Verify the section on a benchmark.
+2. **Decoder**: single-instruction on-demand decode + PC-keyed cache; read
+   `.m2ndp.kinfo`.
+3. **Detour fetch**: replace array-index fetch with on-demand decode.
+4. **Detour execute/timing**: read `McInsn` (def/use + dynamic CSR `LMUL`); size
+   occupancy from the footprint.
+5. Remove the pre-parse, `mc_to_ndp`, and `count_required_regs`.
+6. End-to-end per benchmark, gated on the golden answer.
 
-Within a kernel body, Detour's executor covers the real opcode set except:
+## Scope
 
-- **`frm` rounding-mode CSR** (`fsrmi`/`fsrm`) — appears in floating-point
-  kernels; Detour models only `vxrm`. Add an `frm` field, honor it in softfloat,
-  or default round-to-nearest and let the golden check confirm.
-- **`vrgather`** — one kernel uses it; implement in `ExecuteVector` on the
-  pattern of the adjacent `VCOMPRESS`.
-
-`AUIPC` is out of scope (launch-entry only). Operand-type variants that fall
-through to `UnimplementedError` are the remaining scan. These gaps were surveyed
-on this base commit.
+A real Detour rework -- fetch and the instruction interface move to `McInsn` --
+plus a focused compiler change (footprint emission). It removes more than it
+adds: no pre-parse, no operand mapping, no static `vtype` reconstruction, and
+Detour fetches and decodes like a pipeline simulator. Editing the backend uses
+the LLVM submodule as its own worktree with a private `llc` build.
 
 ## Correctness
 
-Detour executes functionally, so its result is checkable: a run must match the
-Mojo golden answer, and that match validates the timing demand (correct
-addresses and control flow). The fork does not consume `.traceg`, so upstream
-trace parity is not a reference — the golden answer is the anchor.
+Detour executes functionally, so a run must match the Mojo golden answer, and
+that match validates the decode and the register/dependency handling. The
+compiler footprint is cross-checked against a reference count.
 
-## Milestones
+## Superseded
 
-- **M0** — submodule on a stable `detour` commit that builds, an `mc-frontend`
-  working branch, and `llvm-config` linked into the build.
-- **M1** — `mc_decoder`: kernel ELF + entry symbol → `NdpKernel` (kernel and
-  helpers, byte-PC, `byte→index` map).
-- **M2** — `MCInst → NdpInstruction` mapping (opcode/operand/register), `x0`.
-- **M3** — launch feeding (host args → launch), ABI register seeding, the shared
-  pool, scratchpad parameter copy: `vector_add` runs standalone and matches its
-  golden answer.
-- **M4** — remove the text path; fill the execute gaps (`frm`, `vrgather`);
-  operand-type scan.
-- **M5** — broaden to every benchmark; invoke Detour from the host launch path
-  in place of Spike; produce timing.
-
-## Deferred
-
-- `device_main` orchestration executed on Detour, launch-intrinsic interception,
-  and multi-kernel sequencing (which subsumes `AUIPC` and host-argument/HTIF
-  handling).
-- Compiler-emitted register footprint, for kernels whose `vtype` usage defeats
-  the reconstructed count.
-- Adopting Detour's `PooledMemory` once its complete version lands upstream, in
-  place of the interim pool-backed map.
-
-## Risks
-
-- **Operand mapping** — `MCInst` operand order versus Detour's `src[]`/`dest`
-  convention, per instruction format; the golden check catches errors.
-- **No trace parity** — the golden answer is the only validation; a few kernels
-  may warrant manual cross-checks.
+The `mc-frontend` work that maps decoded instructions onto `NdpInstruction`
+(`mc_to_ndp`, the opcode/operand tables) is kept only as the reference decode
+path; the on-demand architecture above replaces it. `mc_decoder` -- LLVM decode
+into `McInsn` -- carries forward.
