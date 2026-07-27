@@ -11,5 +11,5 @@
 [submodule "third_party/m2ndp-detour"]
 	path = third_party/m2ndp-detour
 	url = https://github.com/PSAL-POSTECH/M2NDP-Detour.git
-	branch = detour
+	branch = mc-frontend
 	shallow = true
