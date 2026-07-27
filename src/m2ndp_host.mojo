@@ -8,8 +8,9 @@ A host program that names a task has to be linked against sim/host_stubs.c.
 See there for why.
 """
 
-from std.ffi import external_call
+from std.ffi import _Global, external_call
 from std.memory import Span, UnsafePointer
+from std.os import abort
 from std.sys import size_of
 
 
@@ -67,8 +68,7 @@ struct Pool(Movable):
     that for free, so the pool is a file both sides map -- spike through the
     `m2ndp_pool` device, the host here at the same address.
 
-        var pool = Pool()
-        var a = pool.alloc[Int32](n)
+        var a = cxl_alloc[Int32](n)     # the process's pool
         a[0] = ...                      # the device reads exactly this
 
     Allocation bumps a pointer and there is no free: a run is short and the
@@ -140,6 +140,35 @@ comptime _PROT_READ = 1
 comptime _PROT_WRITE = 2
 comptime _MAP_SHARED = 1
 comptime _MAP_FIXED_NOREPLACE = 0x100000
+
+
+# ---------------------------------------------------------------- the pool
+#
+# M2NDP has one CXL pool, so the runtime holds one and hands it out. A workload
+# calls `cxl_alloc` and never names it; `launch` reaches the same one.
+
+def _init_pool() -> Pool:
+    try:
+        return Pool()
+    except e:
+        abort(String("could not open the CXL pool: ") + String(e))
+
+
+comptime _pool = _Global["m2ndp_pool", _init_pool]
+
+
+def cxl_pool(out result: UnsafePointer[Pool, MutUntrackedOrigin]):
+    """The process's CXL pool, created on first use."""
+    try:
+        result = _pool.get_or_create_ptr()
+    except e:
+        abort(String("could not open the CXL pool: ") + String(e))
+
+
+def cxl_alloc[T: Movable](count: Int) raises -> UnsafePointer[T, MutAnyOrigin]:
+    """`count` elements of `T` in the CXL pool, zeroed. The pointer is a device
+    address too, the pool being memory both sides map."""
+    return cxl_pool()[].alloc[T](count)
 
 
 # ---------------------------------------------------------------- running

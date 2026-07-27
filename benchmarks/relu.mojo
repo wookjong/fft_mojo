@@ -21,7 +21,7 @@ from std.sys import argv, size_of
 from std.random import random_float64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Float32]()   # lanes in one packet
 
@@ -58,16 +58,15 @@ def main() raises:
 
     var n = W * 64 * 8
 
-    var pool = Pool()
-    var input = pool.alloc[Float32](n)
-    var output = pool.alloc[Float32](n)
+    var input = cxl_alloc[Float32](n)
+    var output = cxl_alloc[Float32](n)
 
     seed(0)
     for i in range(n):
         input[i] = Float32(random_float64(-1.0, 1.0))
 
     var rc = Relu.launch(
-        pool, PooledRange.over(input, n), ReluParams(input, output)
+        PooledRange.over(input, n), ReluParams(input, output)
     )
     if rc != 0:
         print("[host] relu failed, exit", rc)

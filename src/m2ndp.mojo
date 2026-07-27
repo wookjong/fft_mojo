@@ -30,12 +30,12 @@ from std.collections.string.string_slice import _get_kgen_string
 # the other way round.
 from m2ndp_host import (
     Config,
-    Pool,
     Toolchain,
     _add_export_alias,
     _getenv,
     _mktemp,
     _run,
+    cxl_pool,
 )
 
 
@@ -390,12 +390,10 @@ trait NDPTask:
         return False
 
     @staticmethod
-    def launch(
-        mut pool: Pool, region: PooledRange, ref params: Self.Params
-    ) raises -> Int:
-        """Run this task over `region` of `pool` with this parameter block.
+    def launch(region: PooledRange, ref params: Self.Params) raises -> Int:
+        """Run this task over `region` of the CXL pool with this parameter block.
 
-            _ = Histogram.launch(pool, PooledRange.over(samples, n),
+            _ = Histogram.launch(PooledRange.over(samples, n),
                                  HistogramParams(samples, hist))
 
         The same block `device_main` is handed: one declaration, so the two
@@ -413,12 +411,13 @@ trait NDPTask:
         var machine = Machine.from_config()
         var tc = Toolchain()
         var work = _mktemp()
+        var pool = cxl_pool()
 
         # The block goes in the pool, where both sides can see it. Copied
         # bytewise rather than moved: taking the caller's would raise what
         # happens to it if a later step throws.
         var nbytes = size_of[Self.Params]()
-        var block = pool.alloc[UInt8](nbytes)
+        var block = pool[].alloc[UInt8](nbytes)
         var src = UnsafePointer(to=params).bitcast[UInt8]()
         for i in range(nbytes):
             block[i] = src[i]
@@ -468,8 +467,8 @@ trait NDPTask:
             rc = _run(
                 tc.spike + " " + tc.memory + " --extlib=" + tc.extlib
                 + " --extension=m2ndp"
-                + " --device=m2ndp_pool," + pool.path() + ","
-                + String(pool.base()) + "," + String(pool.bytes())
+                + " --device=m2ndp_pool," + pool[].path() + ","
+                + String(pool[].base()) + "," + String(pool[].bytes())
                 + " --isa=" + tc.isa + " " + elf + " "
                 + String(machine.cores) + " " + String(machine.stride) + " "
                 + String(machine.packet) + " " + String(region.base) + " "

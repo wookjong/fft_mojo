@@ -26,7 +26,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime CLUSTERS = PACKET // size_of[Int32]()   # distances in one packet
 
@@ -71,16 +71,15 @@ def main() raises:
     var points = 64 * 8
     var n = points * CLUSTERS
 
-    var pool = Pool()
-    var distances = pool.alloc[Int32](n)
-    var assignment = pool.alloc[Int32](points)
+    var distances = cxl_alloc[Int32](n)
+    var assignment = cxl_alloc[Int32](points)
 
     seed(0)
     for i in range(n):
         distances[i] = Int32(random_si64(0, 9))
 
     var rc = KmeansAssign.launch(
-        pool, PooledRange.over(distances, n),
+        PooledRange.over(distances, n),
         KmeansParams(distances, assignment)
     )
     if rc != 0:

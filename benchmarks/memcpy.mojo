@@ -18,7 +18,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Int32]()   # lanes in one packet
 
@@ -60,16 +60,15 @@ def main() raises:
 
     var n = W * 64 * 8
 
-    var pool = Pool()
-    var src = pool.alloc[Int32](n)
-    var dst = pool.alloc[Int32](n)
+    var src = cxl_alloc[Int32](n)
+    var dst = cxl_alloc[Int32](n)
 
     seed(0)
     for i in range(n):
         src[i] = Int32(random_si64(-1000, 999))
 
     var rc = Memcpy.launch(
-        pool, PooledRange.over(src, n), MemcpyParams(src, dst)
+        PooledRange.over(src, n), MemcpyParams(src, dst)
     )
     if rc != 0:
         print("[host] memcpy failed, exit", rc)

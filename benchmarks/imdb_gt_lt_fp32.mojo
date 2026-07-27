@@ -28,7 +28,7 @@ from std.sys import argv, size_of
 from std.random import random_float64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Float32]()   # lanes in one packet
 comptime BYTES = W // 8                     # bitmap bytes they fill
@@ -75,9 +75,8 @@ def main() raises:
 
     var rows = W * 64 * 8
 
-    var pool = Pool()
-    var column = pool.alloc[Float32](rows)
-    var bitmap = pool.alloc[UInt8](rows // 8)
+    var column = cxl_alloc[Float32](rows)
+    var bitmap = cxl_alloc[UInt8](rows // 8)
     var lo = Float32(3.0)
     var hi = Float32(5.0)
 
@@ -86,7 +85,7 @@ def main() raises:
         column[i] = Float32(random_float64(1.0, 10.0))
 
     var rc = ImdbGtLtFp32.launch(
-        pool, PooledRange.over(column, rows),
+        PooledRange.over(column, rows),
         GtLtFp32Params(column, bitmap, lo, hi)
     )
     if rc != 0:

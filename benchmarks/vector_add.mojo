@@ -23,7 +23,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Int32]()   # lanes in one packet
 
@@ -82,10 +82,9 @@ def main() raises:
 
     # The pool is memory the device shares, so the host writes its inputs
     # straight into it and reads the results back out of it.
-    var pool = Pool()
-    var a = pool.alloc[Int32](n)
-    var b = pool.alloc[Int32](n)
-    var c = pool.alloc[Int32](n)
+    var a = cxl_alloc[Int32](n)
+    var b = cxl_alloc[Int32](n)
+    var c = cxl_alloc[Int32](n)
     var expect = List[Int32](length=n, fill=0)
 
     seed(0)
@@ -95,7 +94,7 @@ def main() raises:
         expect[i] = a[i] + b[i]
 
     var rc = VectorAdd.launch(
-        pool, PooledRange.over(a, n), VectorAddParams(a, b, c)
+        PooledRange.over(a, n), VectorAddParams(a, b, c)
     )
     if rc != 0:
         print("[host] vector_add failed, exit", rc)

@@ -9,7 +9,7 @@ way a `.cu` is. Naming the task compiles it for the target the task declares
 and runs it under Spike:
 
 ```mojo
-_ = Histogram.launch(pool, PooledRange.over(samples, n),
+_ = Histogram.launch(PooledRange.over(samples, n),
                      HistogramParams(samples, hist))
 ```
 
@@ -222,11 +222,10 @@ struct Histogram(NDPTask):
 def main() raises:
     if Histogram.emit_ir_if_asked():
         return
-    var pool = Pool()                       # the memory the device shares
-    var samples = pool.alloc[Int32](n)      # host writes straight into it
-    var hist = pool.alloc[Int32](BINS)
+    var samples = cxl_alloc[Int32](n)       # the shared pool; host writes here
+    var hist = cxl_alloc[Int32](BINS)
     ...fill samples...
-    _ = Histogram.launch(pool, PooledRange.over(samples, n),
+    _ = Histogram.launch(PooledRange.over(samples, n),
                          HistogramParams(samples, hist))
     ...hist already holds the result; check it here...
 ```
@@ -265,8 +264,10 @@ host                                    spike
                                └───┴──  the same pages
 ```
 
-`pool.alloc[Int32](n)` returns an address that is a device address too, so a
-kernel loads exactly what the host stored. Nothing is uploaded before a run
+`cxl_alloc[Int32](n)` returns an address that is a device address too, so a
+kernel loads exactly what the host stored. There is one pool per process --
+the runtime creates it on the first `cxl_alloc` and `launch` reaches the same
+one -- so a workload never names it. Nothing is uploaded before a run
 and nothing is downloaded after it; results are in the caller's pool because
 they were written there.
 

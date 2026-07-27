@@ -10,7 +10,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Int64]()   # lanes in one packet
 
@@ -51,11 +51,10 @@ def main() raises:
 
     var words = W * 64 * 8          # bitmap words, 64 rows each
 
-    var pool = Pool()
-    var a = pool.alloc[Int64](words)
-    var b = pool.alloc[Int64](words)
-    var c = pool.alloc[Int64](words)
-    var res = pool.alloc[Int64](words)
+    var a = cxl_alloc[Int64](words)
+    var b = cxl_alloc[Int64](words)
+    var c = cxl_alloc[Int64](words)
+    var res = cxl_alloc[Int64](words)
 
     seed(0)
     for i in range(words):
@@ -64,7 +63,7 @@ def main() raises:
         c[i] = random_si64(1, 9)
 
     var rc = ImdbThreeColAnd.launch(
-        pool, PooledRange.over(a, words), ThreeColAndParams(a, b, c, res)
+        PooledRange.over(a, words), ThreeColAndParams(a, b, c, res)
     )
     if rc != 0:
         print("[host] imdb_three_col_and failed, exit", rc)

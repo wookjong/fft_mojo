@@ -24,7 +24,7 @@ from std.math import exp
 from std.random import random_float64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Float32]()   # lanes in one packet
 
@@ -64,16 +64,15 @@ def main() raises:
 
     var n = W * 64 * 8
 
-    var pool = Pool()
-    var input = pool.alloc[Float32](n)
-    var output = pool.alloc[Float32](n)
+    var input = cxl_alloc[Float32](n)
+    var output = cxl_alloc[Float32](n)
 
     seed(0)
     for i in range(n):
         input[i] = Float32(random_float64(-2.0, 2.0))
 
     var rc = VectorExp.launch(
-        pool, PooledRange.over(input, n), ExpParams(input, output)
+        PooledRange.over(input, n), ExpParams(input, output)
     )
     if rc != 0:
         print("[host] vector_exp failed, exit", rc)

@@ -30,7 +30,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Int64]()   # lanes in one packet;
                                           # one bitmap byte covers them
@@ -76,9 +76,8 @@ def main() raises:
 
     var rows = W * 64 * 8        # one bitmap byte per W rows
 
-    var pool = Pool()
-    var column = pool.alloc[Int64](rows)
-    var bitmap = pool.alloc[UInt8](rows // W)
+    var column = cxl_alloc[Int64](rows)
+    var bitmap = cxl_alloc[UInt8](rows // W)
     var lo = Int64(3)
     var hi = Int64(5)
 
@@ -87,7 +86,7 @@ def main() raises:
         column[i] = random_si64(1, 9)
 
     var rc = ImdbGteqLtInt64.launch(
-        pool, PooledRange.over(column, rows),
+        PooledRange.over(column, rows),
         GteqLtParams(column, bitmap, lo, hi)
     )
     if rc != 0:

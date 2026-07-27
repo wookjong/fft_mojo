@@ -31,7 +31,7 @@ from m2ndp import (
     global_uthread_id,
     launch_parallel,
 )
-from m2ndp_host import Pool
+from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Float32]()   # lanes in one packet
 comptime EPS = Float32(1e-5)
@@ -85,9 +85,8 @@ def main() raises:
 
     var n = W * 64 * 8
 
-    var pool = Pool()
-    var data = pool.alloc[Float32](n)
-    var sums = pool.alloc[Float32](2)
+    var data = cxl_alloc[Float32](n)
+    var sums = cxl_alloc[Float32](2)
     var original = List[Float32](length=n, fill=0)
 
     seed(0)
@@ -98,7 +97,7 @@ def main() raises:
     sums[1] = 0
 
     var rc = LayerNorm.launch(
-        pool, PooledRange.over(data, n),
+        PooledRange.over(data, n),
         LayerNormParams(data, sums, Float32(n))
     )
     if rc != 0:
