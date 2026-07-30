@@ -69,7 +69,7 @@ struct VectorAdd(NDPTask):
 #     VectorAdd.launch(PooledRange.over(a), VectorAddParams(a, b, c))
 #
 # Naming the task compiles it, for the target it declares. What hardware it runs
-# on is config/machine.conf's business.
+# on is the simulator config's business.
 
 
 def main() raises:

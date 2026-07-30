@@ -33,17 +33,16 @@ benchmarks/           ports of M2NDP-public/examples/benchmarks, 24 of them.
                       read first are vector_add (the shape they all share),
                       histogram (scratchpad across three kernels) and softmax
                       (a reduction, so three kernels in order)
-config/machine.conf   the NDP hardware a run is modelled on
-sim/                  the device-side launcher, and the Spike extension
+sim/                  the device-side launcher (m2ndp_launcher.c) and host stubs
 scripts/
   setup.sh            install the Mojo toolchain (merge 3 nightly wheels -> ./toolchain)
   env.sh              environment variables (source it)
   build.sh            each benchmark's device IR + assembly -> out/*.ll, out/*.s
   verify.sh           automated artifact checks
   build-llvm.sh       our LLVM (vendor extension) + lld
-  build-spike.sh      the simulator and sim/ext/ as a loadable extension
-  spike-smoke.sh      does the pipeline, and the extension, stand up
+  link-m2ndp.sh       link a task against the controller launcher
   host-run.sh         run a workload from its host program
+  timing-run.sh       run a benchmark on M²NDP-Detour's controller
 docs/SIMULATION.md    running compiled workloads, and what that does not catch
 docs/INTERFACE.md     the backend contract in detail
 docs/EXAMPLES.md      annotated source -> LLVM IR -> assembly walkthrough
@@ -62,10 +61,8 @@ EMISSION=asm ./scripts/build.sh # one emission only (llvm|asm)
 ./scripts/verify.sh             # check the artifacts
 
 ./scripts/build-llvm.sh         # our LLVM; `check` also runs the RISC-V lit suite
-./scripts/build-spike.sh        # simulator + sim/ext/ extension library
-./scripts/spike-smoke.sh        # pipeline and extension stand up
 ./scripts/host-run.sh           # run every workload from its host program
-./scripts/host-run.sh histogram 4 8   # one, at a given cores/interleave
+./scripts/host-run.sh histogram # one workload
 ```
 
 If Mojo is already available, skip setup and just point at it:

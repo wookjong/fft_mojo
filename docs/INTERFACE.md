@@ -612,7 +612,7 @@ M2NDP_MAP_ADDRESS=off      leave indices as written
 ```
 
 The host turns that into the backend's `-m2ndp-map-address`, and — except in
-`off` — passes `-m2ndp-packet` from `config/machine.conf` and, in `addr`, the
+`off` — passes `-m2ndp-packet` from the simulator config and, in `addr`, the
 `-m2ndp-range-param` byte offset it found. `off` is what the code compiles to
 without the pass at all, so it is the baseline the other two are measured
 against.

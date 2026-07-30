@@ -23,12 +23,12 @@ Last updated: 2026-07-24, against Mojo `1.0.0b2.dev2026061203`.
 | Predicate scan | `v.lt(x)` selects `vmslt.vx` |
 | Multi-kernel modules | several kernels per file, held by one task struct; none exported — naming a kernel from `device_main` is what keeps it alive |
 | Tasks | a struct conforming to `NDPTask` carries its kernels, its `device_main`, and the target, machine and packet size it runs with |
-| Launching from the host | `Histogram.launch(PooledRange.over(xs), HistogramParams(xs, ys))` — compiled for the task's target, run under Spike, results downloaded into the caller's lists |
+| Launching from the host | `Histogram.launch(PooledRange.over(xs), HistogramParams(xs, ys))` — compiled for the task's target, run on M²NDP-Detour, results read back from the shared pool |
 
 Benchmarks ported from
 [M2NDP-public](https://github.com/PSAL-POSTECH/M2NDP-public) — **24 workloads,
 covering 20 of its 23 directories**. Every one is a task and every one runs:
-`./scripts/host-run.sh` compiles each for its target, runs it under Spike and
+`./scripts/host-run.sh` compiles each for its target, runs it on M²NDP-Detour and
 checks the answer against one the host computes itself.
 
 | Benchmark | Exercises |

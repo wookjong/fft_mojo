@@ -30,7 +30,7 @@ on:
     inputs:
       build_toolchains:
         description: >-
-          Build LLVM and Spike into the image. Off is for checking that the
+          Build LLVM and the timing simulator into the image. Off is for checking that the
           Dockerfile itself is sound without waiting ~25 minutes; the image it
           produces has no compiler in it.
         type: boolean
@@ -86,7 +86,7 @@ jobs:
       # fresh clone of every version of every file.
       - if: steps.checkout.outcome == 'failure'
         name: Clear a wedged submodule store
-        run: rm -rf .git/modules third_party/llvm-project third_party/riscv-isa-sim
+        run: rm -rf .git/modules third_party/llvm-project
 
       - if: steps.checkout.outcome == 'failure'
         name: Check out again, from nothing

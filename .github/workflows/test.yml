@@ -1,6 +1,6 @@
 name: test
 
-# Compile every workload and run it under Spike.
+# Compile every workload and run it on M²NDP-Detour.
 #
 # The tests run on GitHub-hosted runners and build no toolchain: the image
 # carries Mojo, our LLVM and the simulator, so a job pulls it and runs the
@@ -75,69 +75,6 @@ jobs:
           name: device-code
           path: out/
           retention-days: 7
-
-  # The workloads themselves: each host program fills the pool, launches its
-  # task under Spike and checks the result against one it computes itself.
-  #
-  # Twice over, at two machine configurations. The second is the one that
-  # exercises the block-cyclic mapping -- with one core every microthread is on
-  # it, so a mapping bug cannot show. `stride` is bytes, as machine.conf's is;
-  # 64 is two packets, so four cores each take two before the next.
-  run:
-    needs: image
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    container:
-      image: ${{ needs.image.outputs.image }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - cores: 1
-            stride: 256
-          - cores: 4
-            stride: 64
-
-    name: run (cores=${{ matrix.cores }}, stride=${{ matrix.stride }})
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Point at the image's toolchains
-        run: ln -s /work/build build
-
-      - name: Run every workload
-        env:
-          CORES: ${{ matrix.cores }}
-          STRIDE: ${{ matrix.stride }}
-        run: ./scripts/host-run.sh
-
-  # Does the pipeline stand up at all: assemble, link, run, and does the
-  # simulator load the vendor extension. Cheap, and it fails with a clearer
-  # message than a workload does when the extension is the thing that broke.
-  smoke:
-    needs: image
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    container:
-      image: ${{ needs.image.outputs.image }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    steps:
-      - uses: actions/checkout@v4
-      - name: Point at the image's toolchains
-        run: ln -s /work/build build
-      - run: ./scripts/spike-smoke.sh
 
   # A workload compiled to a controller image and run on M²NDP-Detour's timing
   # core: device_main launches the kernels on the units and the harness checks

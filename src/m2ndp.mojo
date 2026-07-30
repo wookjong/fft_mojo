@@ -93,10 +93,10 @@ comptime PACKET = 32
 """Bytes of a task's range one microthread is mapped to.
 
 The hardware's granule, not a workload's: a kernel is written against it, so
-it appears as a width here rather than a choice a task makes. `machine.conf`
-carries the same number and `launch` refuses a machine that disagrees --
-kernels compiled for one granule would silently get the wrong microthread
-count on another.
+it appears as a width here rather than a choice a task makes. The simulator
+config carries the same number as `packet_size` and `launch` refuses a machine
+that disagrees -- kernels compiled for one granule would silently get the wrong
+microthread count on another.
 
 A constant rather than read from the config because a SIMD width has to be
 known at compile time, which a file read cannot be.
@@ -105,34 +105,17 @@ known at compile time, which a file read cannot be.
 
 @fieldwise_init
 struct Machine(Copyable, Movable):
-    """The NDP hardware a run is modelled on.
-
-    Not the workload's, and not a launch argument: how many cores exist and how
-    finely work spreads over them is the machine's, so the runtime reads
-    config/machine.conf and configures itself. A task that could name a core
-    count would be saying something it cannot know.
-
-    Not the toolchain either -- where llc and the simulator live is where they
-    are installed, which is `Toolchain`'s business.
+    """The NDP hardware a run is modelled on -- read from the simulator config,
+    not the workload nor a launch argument. Only the packet granule reaches the
+    build; the rest of the machine is the device's own config to read.
     """
 
-    var cores: Int
-    var stride: Int
     var packet: Int
 
     @staticmethod
     def from_config() raises -> Machine:
         """The machine the environment points at. See `Config` for where."""
-        var config = Config.load()
-        var cores = config.get("cores")
-        var stride = config.get("stride")
-        var packet = config.get("packet")
-        if cores <= 0 or stride <= 0:
-            raise Error("cores and stride must both be positive")
-        # Nothing else is demanded of the stride. It is a width in bytes and
-        # the interleave divides an address by it; a stride that is not a
-        # whole number of packets simply splits one, as it does in the
-        # reference.
+        var packet = Config.load().get("packet_size")
         if packet != PACKET:
             # The kernels were compiled against PACKET. A machine with another
             # granule would take the same code and hand each microthread the
@@ -141,7 +124,7 @@ struct Machine(Copyable, Movable):
                 String("this build's kernels are compiled for packet ")
                 + String(PACKET) + ", but the machine says " + String(packet)
             )
-        return Machine(cores, stride, packet)
+        return Machine(packet)
 
 
 # --------------------------------------------------------------- launching
@@ -403,7 +386,7 @@ trait NDPTask:
 
         The device code is compiled here for the target the task declares.
         `region` divided by the machine's packet is the microthread count, and
-        the hardware comes from config/machine.conf.
+        the hardware comes from the simulator config (M2NDP_CONFIG).
 
         Returns the simulator's exit code: 0 finished, 2 launcher error, 3 a
         fault in the target.
@@ -456,25 +439,19 @@ trait NDPTask:
             + mapflags + " -filetype=obj " + ll + " -o " + obj
         )
         if rc == 0:
-            rc = _run(
-                tc.lld + " -T " + tc.link_script + " -e _start "
-                + _getenv("M2NDP_COMMON_OBJ") + " " + obj + " -o " + elf
-            )
-        if rc == 0:
-            # The pool is attached as a device at the address the host mapped
-            # it to, which is what makes the addresses on the command line --
-            # the range and the parameter block -- mean the same on both sides.
-            rc = _run(
-                tc.spike + " " + tc.memory + " --extlib=" + tc.extlib
-                + " --extension=m2ndp"
-                + " --device=m2ndp_pool," + pool[].path() + ","
-                + String(pool[].base()) + "," + String(pool[].bytes())
-                + " --isa=" + tc.isa + " " + elf + " "
-                + String(machine.cores) + " " + String(machine.stride) + " "
-                + String(machine.packet) + " " + String(region.base) + " "
-                + String(region.size) + " " + String(Int(block)) + " "
-                + String(nbytes)
-            )
+            # Link against our controller launcher and run on Detour's timing
+            # core: the host staged the pool, m2ndp_run attaches it and runs the
+            # task. The range and the parameter block are pool addresses both
+            # sides map, so they mean the same to the controller.
+            rc = _run("M2NDP_DET='" + tc.det + "' " + tc.link_m2ndp + " " + obj + " " + elf)
+            if rc == 0:
+                rc = _run(
+                    tc.runner + " " + tc.det_config + " " + elf + " "
+                    + pool[].path() + " " + String(pool[].base()) + " "
+                    + String(pool[].bytes()) + " " + String(region.base) + " "
+                    + String(region.size) + " " + String(Int(block)) + " "
+                    + String(nbytes)
+                )
         # Nothing to download: the task wrote into the caller's pool.
         _ = _run(String("rm -rf ") + work)
         return rc

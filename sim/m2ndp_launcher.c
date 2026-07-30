@@ -1,9 +1,9 @@
 /* The m2ndp launcher: the device half of a task launch, for the NdpController
- * timing path (not spike). device_main calls these; each writes a command to
+ * timing path. device_main calls these; each writes a command to
  * the fixed MMIO block and rings the doorbell, then spins on completion so the
  * call returns only once the kernel has finished. The controller recognizes the
  * MMIO accesses -- these bodies are ordinary code it runs, not intercepted at
- * entry. Link it in place of sim/launcher.c with scripts/m2ndp.lds. The launch
+ * entry. Link it into a task as its entry with scripts/m2ndp.lds. The launch
  * ABI is Detour's contract; include it from the submodule (-I <detour>/src). */
 #include "m2ndp_launch_abi.h"
 

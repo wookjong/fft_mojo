@@ -1,11 +1,10 @@
 # Development image for mojo-m2ndp.
 #
-# Carries a built LLVM fork and a built Spike, so a container can compile a
-# benchmark and run it without setting anything up:
+# Carries a built LLVM fork and the M²NDP-Detour timing simulator, so a
+# container can compile a benchmark and run it without setting anything up:
 #
 #   docker run --rm -it ghcr.io/psal-postech/mojo-m2ndp:main
 #   ./scripts/build.sh && ./scripts/verify.sh
-#   ./scripts/spike-smoke.sh
 #
 # Both submodules have to be in the build context -- the LLVM one is private,
 # so the image cannot clone it without carrying a token in a layer:
@@ -27,9 +26,6 @@ FROM ubuntu:22.04 AS base
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
 
-# device-tree-compiler is Spike's: its configure hard-errors without dtc, and
-# says so without saying which package to install.
-#
 # gcc-riscv64-unknown-elf is for the target, not the host: the simulator
 # launchers are compiled with it. It is the largest single package here --
 # about 200 MB, most of it newlib multilib variants -- and it pulls in the
@@ -46,7 +42,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         cmake \
         curl \
-        device-tree-compiler \
         flex \
         gcc-riscv64-unknown-elf \
         git \
@@ -109,27 +104,17 @@ ARG BUILD_TOOLCHAINS=1
 RUN if [ "$BUILD_TOOLCHAINS" = "1" ]; then \
         test -f third_party/llvm-project/llvm/CMakeLists.txt \
           || { echo "LLVM submodule missing from the build context" >&2; exit 1; }; \
-        test -f third_party/riscv-isa-sim/configure \
-          || { echo "riscv-isa-sim submodule missing from the build context" >&2; exit 1; }; \
         ./scripts/build-llvm.sh \
-        && ./scripts/build-spike.sh \
         && cmake -S third_party/m2ndp-detour -B third_party/m2ndp-detour/build \
         && cmake --build third_party/m2ndp-detour/build -j"$(nproc)" \
-             --target dev_launch dev_launch_loop dev_launch_masked; \
+             --target m2ndp_run dev_launch dev_launch_loop dev_launch_masked; \
     else \
-        mkdir -p build/llvm/bin build/spike/install/bin build/spike/install/lib \
-                 third_party/m2ndp-detour/build/bin; \
-        : > build/spike/libm2ndp_ext.so; \
+        mkdir -p build/llvm/bin third_party/m2ndp-detour/build/bin; \
     fi
 
-# Debug symbols are the whole difference between an image you can pull and one
-# you cannot: Spike's install alone is 1.8 GB with them and 70 MB without.
-# Nothing here is debugged with a symbol table -- llvm-objdump and the lit
-# suite work on the target's output, not on the tools.
-RUN find build -type f \( -name 'spike*' -o -name '*.so' -o -name '*.so.*' \) \
-        -exec strip --strip-unneeded {} + 2>/dev/null || true; \
-    find build/llvm/bin build/spike/install/bin -type f -exec strip {} + \
-        2>/dev/null || true; \
+# Strip the tools: nothing here is debugged with a symbol table -- llvm-objdump
+# and the lit suite work on the target's output, not on the tools themselves.
+RUN find build/llvm/bin -type f -exec strip {} + 2>/dev/null || true; \
     find third_party/m2ndp-detour/build/bin -type f -exec strip {} + 2>/dev/null || true
 
 #===----------------------------------------------------------------------===#
@@ -142,8 +127,6 @@ WORKDIR /work
 
 # The built tools, at the paths the scripts look for them at.
 COPY --from=builder /work/build/llvm/bin /work/build/llvm/bin
-COPY --from=builder /work/build/spike/install /work/build/spike/install
-COPY --from=builder /work/build/spike/libm2ndp_ext.so /work/build/spike/
 
 # M²NDP-Detour's controller harnesses (built above), the sim config they read,
 # and src/ for the launch ABI header our launcher includes. The launcher and the
@@ -151,10 +134,6 @@ COPY --from=builder /work/build/spike/libm2ndp_ext.so /work/build/spike/
 COPY --from=builder /work/third_party/m2ndp-detour/build/bin /work/third_party/m2ndp-detour/build/bin
 COPY --from=builder /work/third_party/m2ndp-detour/config /work/third_party/m2ndp-detour/config
 COPY --from=builder /work/third_party/m2ndp-detour/src /work/third_party/m2ndp-detour/src
-
-# Spike's headers, which the M²NDP extension is compiled against. 11 MB, and
-# without them the extension cannot be rebuilt in the container.
-COPY --from=builder /work/third_party/riscv-isa-sim /work/third_party/riscv-isa-sim
 
 # The repository, minus the LLVM submodule. That tree is 2.6 GB and nothing in
 # the documented workflows reads it -- the compiler is already built. Rebuilding

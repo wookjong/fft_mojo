@@ -65,8 +65,8 @@ struct Pool(Movable):
     M2NDP is near-data processing: the data is already in the CXL pool and the
     cores are attached to it, so there is nothing to upload or download and a
     parameter is a plain pointer. A simulator in its own process does not get
-    that for free, so the pool is a file both sides map -- spike through the
-    `m2ndp_pool` device, the host here at the same address.
+    that for free, so the pool is a file both sides map at the same address --
+    the host here, and the simulator when it attaches it.
 
         var a = cxl_alloc[Int32](n)     # the process's pool
         a[0] = ...                      # the device reads exactly this
@@ -78,19 +78,34 @@ struct Pool(Movable):
     var _path: String
     var _base: Int
     var _bytes: Int
+    var _data_limit: Int
     var _next: Int
 
     def __init__(out self) raises:
         var config = Config.load()
         self._path = _mktemp() + "/pool.bin"
-        self._base = config.get("pool_base")
-        self._bytes = config.get("pool_bytes")
+        self._base = _POOL_BASE
+        self._bytes = config.get("memory_expander_size")
         if self._bytes <= 0:
-            raise Error("pool_bytes must be positive")
+            raise Error("memory_expander_size must be positive")
+
+        # The stacks sit at the top of the pool (see address_map.h); the device
+        # sizes them from these same counts, so data must stop below them.
+        var slots = config.get("num_ndp_units") * config.get("num_sub_core") * config.get("uthread_slots")
+        var stack_region = (config.get("controller_stack_size") + _GUARD_SIZE) \
+                         + slots * (config.get("uthread_stack_size") + _GUARD_SIZE)
+        self._data_limit = self._bytes - stack_region
+        if self._data_limit <= 0:
+            raise Error("memory_expander_size is too small for the machine's stacks")
 
         # `open64`, not `open`: the plain name resolves to Mojo's builtin.
+        var cpath = List[UInt8](capacity=self._path.byte_length() + 1)
+        var pp = self._path.unsafe_ptr()
+        for i in range(self._path.byte_length()):
+            cpath.append(pp[i])
+        cpath.append(0)
         var fd = Int(external_call["open64", Int32](
-            self._path.unsafe_ptr(), Int32(_O_RDWR | _O_CREAT), Int32(0o600)))
+            cpath.unsafe_ptr(), Int32(_O_RDWR | _O_CREAT), Int32(0o600)))
         if fd < 0:
             raise Error(String("could not create ") + self._path)
         if Int(external_call["ftruncate", Int32](Int32(fd), self._bytes)) != 0:
@@ -104,7 +119,7 @@ struct Pool(Movable):
         if Int(got) != self._base:
             # Landing elsewhere would leave the two sides disagreeing about
             # what a pointer means, so fail rather than continue.
-            raise Error(String("pool_base ") + String(self._base)
+            raise Error(String("pool base ") + String(self._base)
                         + " is already taken in this process")
         self._next = 0
 
@@ -123,8 +138,8 @@ struct Pool(Movable):
         """`count` elements, zeroed. The pointer is a device address too."""
         var bytes = count * size_of[T]()
         var off = (self._next + _POOL_ALIGN - 1) // _POOL_ALIGN * _POOL_ALIGN
-        if off + bytes > self._bytes:
-            raise Error("the pool is full; raise pool_bytes")
+        if off + bytes > self._data_limit:
+            raise Error("the pool is full; raise memory_expander_size")
         self._next = off + bytes
         var p = UnsafePointer[UInt8, MutAnyOrigin](
             unsafe_from_address=self._base + off)
@@ -134,6 +149,9 @@ struct Pool(Movable):
 
 
 comptime _POOL_ALIGN = 64
+# Mirror of address_map.h: the pool base and guard-page size are fixed there.
+comptime _POOL_BASE = 0x40000000
+comptime _GUARD_SIZE = 0x1000
 comptime _O_RDWR = 2
 comptime _O_CREAT = 0o100
 comptime _PROT_READ = 1
@@ -232,22 +250,40 @@ def _mktemp() raises -> String:
     return String(StringSlice(unsafe_from_utf8=Span(ptr=made, length=n)))
 
 
+def _parse_uint(s: String) raises -> Int:
+    """A decimal or `0x`-prefixed integer; raises on anything else."""
+    var t = String(s.strip())
+    if t.startswith("0x") or t.startswith("0X"):
+        var data = t.as_bytes()
+        var v = 0
+        for i in range(2, len(data)):
+            var c = Int(data[i])
+            var d: Int
+            if c >= ord("0") and c <= ord("9"):
+                d = c - ord("0")
+            elif c >= ord("a") and c <= ord("f"):
+                d = c - ord("a") + 10
+            elif c >= ord("A") and c <= ord("F"):
+                d = c - ord("A") + 10
+            else:
+                raise Error("not a hex digit")
+            v = v * 16 + d
+        return v
+    return Int(t)
+
+
 struct Config(Copyable, Movable):
-    """The machine description a run is configured from.
+    """The machine description a run is configured from -- the same simulator
+    config the device runs on, so the build and the run see one machine.
 
-    Which file is an environment setting, not a program's decision:
-    `M2NDP_MACHINE_CONFIG` names one, and failing that it is
-    `config/machine.conf` under `M2NDP_ROOT`. So the same binary models a
-    different machine by being pointed at a different description.
+    `M2NDP_CONFIG` names the file; failing that it is the M2NDP performance
+    config under the detour submodule (`M2NDP_DET`, else `M2NDP_ROOT`). Host code
+    can read a count from it:
 
-    Host code can read it too. Most workloads have no reason to -- how many
-    cores exist is the runtime's business -- but one that genuinely depends on
-    the machine can ask:
+        var units = Config.load().get("num_ndp_units")
 
-        var cores = Config.load().get("cores")
-
-    Key = value, one per line, `#` starts a comment. Values are integers,
-    because everything the model needs so far is a count.
+    Key = value, one per line, `#` starts a comment. Only integer-valued keys are
+    kept (decimal or `0x` hex); the config's non-integer entries are ignored.
     """
 
     var keys: List[String]
@@ -263,15 +299,18 @@ struct Config(Copyable, Movable):
     @staticmethod
     def load() raises -> Config:
         """Read the description the environment points at."""
-        var path = _getenv("M2NDP_MACHINE_CONFIG")
+        var path = _getenv("M2NDP_CONFIG")
         if not path:
-            var root = _getenv("M2NDP_ROOT")
-            if not root:
-                raise Error(
-                    "M2NDP_ROOT is not set; point it at the repo root, or set"
-                    " M2NDP_MACHINE_CONFIG at a machine description"
-                )
-            path = root + "/config/machine.conf"
+            var det = _getenv("M2NDP_DET")
+            if not det:
+                var root = _getenv("M2NDP_ROOT")
+                if not root:
+                    raise Error(
+                        "set M2NDP_CONFIG at a simulator config, or M2NDP_ROOT at"
+                        " the repo root"
+                    )
+                det = root + "/third_party/m2ndp-detour"
+            path = det + "/config/performance/M2NDP/m2ndp.config"
 
         var text: String
         with open(path, "r") as f:
@@ -286,8 +325,12 @@ struct Config(Copyable, Movable):
             var parts = entry.split("=")
             if len(parts) != 2:
                 continue
-            keys.append(String(String(parts[0]).strip()))
-            values.append(Int(String(String(parts[1]).strip())))
+            try:
+                var v = _parse_uint(String(parts[1]))
+                keys.append(String(String(parts[0]).strip()))
+                values.append(v)
+            except:
+                continue  # a non-integer entry (a path, a mapping string): skip it
         return Config(keys^, values^, path^)
 
     def get(self, key: String) raises -> Int:
@@ -309,25 +352,24 @@ struct Toolchain(Copyable, Movable):
     """
 
     var llc: String
-    var lld: String
-    var spike: String
-    var extlib: String
-    var isa: String
     var features: String
-    var memory: String
-    var link_script: String
+    # M²NDP-Detour, the timing simulator a launch runs on.
+    var det: String
+    var runner: String
+    var det_config: String
+    var link_m2ndp: String
 
     def __init__(out self) raises:
         var root = _getenv("M2NDP_ROOT")
         if not root:
             raise Error("M2NDP_ROOT is not set; point it at the repo root")
         self.llc = root + "/build/llvm/bin/llc"
-        self.lld = root + "/build/llvm/bin/ld.lld"
-        self.spike = root + "/build/spike/install/bin/spike"
-        self.extlib = root + "/build/spike/libm2ndp_ext.so"
-        self.isa = String("rv64gcv_zvl128b_zfh_zvfh")
         self.features = String("+m,+a,+f,+d,+v,+zvl128b,+zfh,+zvfh,+xm2ndp")
-        # scripts/m2ndp.lds puts code at 0x10000, below where Spike puts
-        # memory by default, and short of the CLINT at 0x2000000.
-        self.memory = String("-m0x10000:0x1ff0000")
-        self.link_script = root + "/scripts/m2ndp.lds"
+        self.det = _getenv("M2NDP_DET")
+        if not self.det:
+            self.det = root + "/third_party/m2ndp-detour"
+        self.runner = self.det + "/build/bin/m2ndp_run"
+        self.det_config = _getenv("M2NDP_CONFIG")
+        if not self.det_config:
+            self.det_config = self.det + "/config/performance/M2NDP/m2ndp.config"
+        self.link_m2ndp = root + "/scripts/link-m2ndp.sh"

@@ -89,8 +89,7 @@ allocation the binary was built against.
 ## Memory
 
 Memory is the shared CXL pool, `mmap`ed by both host and Detour at the same base
--- the near-data model Spike uses, where a pointer means the same thing on both
-sides. The host stages the pool before the run and checks the answer against it
+-- the near-data model, where a pointer means the same thing on both sides. The host stages the pool before the run and checks the answer against it
 after; there are no `_input.data`/`_output.data` files. Detour's `detour` branch
 is growing a `PooledMemory` that is exactly this, adopted once complete.
 

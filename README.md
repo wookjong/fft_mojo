@@ -6,7 +6,7 @@ Mojo, compiling them for a RISC-V/RVV target, and running them.
 A workload is one file: its kernels, the `device_main` that launches them,
 and the host code that feeds it and checks the answer -- single source, the
 way a `.cu` is. Naming the task compiles it for the target the task declares
-and runs it under Spike:
+and runs it on the M²NDP-Detour timing simulator:
 
 ```mojo
 _ = Histogram.launch(PooledRange.over(samples, n),
@@ -31,11 +31,10 @@ git clone <this-repo> && cd mojo-m2ndp
 ./scripts/verify.sh         # check the artifacts
 ```
 
-To actually run one, under Spike, with the workload's own host code:
+To actually run one, on the timing simulator, with the workload's own host code:
 
 ```bash
 ./scripts/build-llvm.sh     # our LLVM, with the vendor extension
-./scripts/build-spike.sh    # the simulator and the extension library
 ./scripts/host-run.sh       # every benchmark, checked against its own answer
 ```
 
@@ -171,22 +170,22 @@ src/m2ndp_host.mojo   host-side machinery a launch runs on (files, processes, to
 benchmarks/           ports of M2NDP-public/examples/benchmarks -- 24 of them,
                       each holding its kernels, its device_main and its host
                       main. docs/STATUS.md lists what each one exercises
-config/machine.conf   the NDP hardware a run is modelled on
-sim/                  the device-side launcher, and the Spike extension
+sim/                  the device-side launcher (m2ndp_launcher.c) and host stubs
 scripts/
   setup.sh            install the Mojo toolchain
   env.sh              environment variables (source it)
   build.sh            each benchmark's device IR + assembly -> out/
   verify.sh           check the artifacts
   build-llvm.sh       our LLVM (vendor extension) + lld
-  build-spike.sh      the simulator and sim/ext/ as a loadable extension
-  spike-smoke.sh      does the pipeline, and the extension, stand up
+  link-m2ndp.sh       link a task against the controller launcher
   host-run.sh         run a workload and check its own answer
+  timing-run.sh       run a benchmark on M²NDP-Detour's controller
 docs/SIMULATION.md    running compiled workloads, and what that does not catch
+docs/TIMING.md        the M²NDP-Detour timing model and how a task runs on it
 docs/INTERFACE.md     the backend contract in detail
 docs/EXAMPLES.md      annotated source -> LLVM IR -> assembly walkthrough
 docs/STATUS.md        what works, what the backend must supply, open work
-third_party/          the LLVM fork and Spike, as submodules
+third_party/          the LLVM fork and M²NDP-Detour, as submodules
 out/                  generated artifacts (not tracked by git)
 ```
 
@@ -243,9 +242,8 @@ call site, and a parameter is where it keeps that name.
 
 What a benchmark never says is what hardware it runs on -- not the core count,
 not the interleave, and not the packet its kernels index by, which is `PACKET`
-and comes with the library. That is all `config/machine.conf`, which the
-runtime reads; pointing
-`M2NDP_MACHINE_CONFIG` at another description is how the same program is
+and comes with the library. That is all the simulator config, which the runtime
+reads; pointing `M2NDP_CONFIG` at another description is how the same program is
 shown to give the same answer on a different machine.
 
 ## The pool is shared, not copied
@@ -259,8 +257,8 @@ Two processes do not get that for free, so the pool is a file both sides map
 at the same address:
 
 ```
-host                                    spike
-  mmap(MAP_FIXED, pool_base) ──┐   ┌── --device=m2ndp_pool,<file>,<base>,<size>
+host                                    Detour
+  mmap(MAP_FIXED, pool_base) ──┐   ┌── mmap(MAP_FIXED, pool_base)
                                └───┴──  the same pages
 ```
 
@@ -278,34 +276,29 @@ A launch is then five steps, and only the middle three are compilation:
 2. **Compile.** `Task.device_ir()` asks `compile_info` for the entry point and
    what it reaches, for the target the task declares.
 3. **Finish and link.** Our `llc` does the M²NDP lowering the frontend's LLVM
-   cannot, and `ld.lld` puts the result beside the device-side launcher.
-4. **Run.** The simulator is told where the pool is, and the addresses that
-   cross are pool addresses:
+   cannot, and `ld.lld` puts the result beside the controller launcher.
+4. **Run.** `m2ndp_run` attaches the pool the host mapped and runs the task on
+   Detour's controller; the addresses that cross are pool addresses:
 
    ```
-   spike -m0x10000:0x1ff0000 --extlib=libm2ndp_ext.so --extension=m2ndp \
-         --device=m2ndp_pool,<file>,<pool_base>,<pool_bytes> \
-         --isa=rv64gcv_zvl128b task.elf \
-         <cores> <interleave> <packet> <range_base> <range_size> \
-         <params> <params_bytes>
+   m2ndp_run <config> task.elf <pool_file> <pool_base> <pool_bytes> \
+             <range_base> <range_size> <params> <params_bytes>
    ```
 
-   The launcher configures the machine from those and calls the task's entry
-   point. It reads no files and writes none: the parameter block is already in
-   the pool, and it copies that into each core's scratchpad so a kernel finds
-   it at a constant offset.
+   The controller runs `device_main`, whose launches ring a doorbell to run each
+   kernel on the units. It reads no files and writes none: the parameter block is
+   already in the pool, and the controller copies it into each unit's scratchpad
+   so a kernel finds it at a constant offset.
 5. **Read.** The host reads its own pointers. The process exits; the mapping
    does not need unwinding for the answer to be there.
 
-The device side is 40 lines in `sim/ext/`, registered through the same
-`--extlib` the instruction extension already uses, so the Spike submodule
-stays untouched. It is an `abstract_mem_t` rather than a plain MMIO device on
-purpose: `sim_t::addr_to_mem` only takes the MMU's fast path for a memory, by
-asking it for `contents()`. A device would cost a virtual call per access.
+Nothing else has to be told where the pool is: both sides map the same file at
+the base fixed in `address_map.h`, so no simulator device or MMIO plumbing sits
+between the kernel and the bytes.
 
-`pool_base` and `pool_bytes` are in `config/machine.conf` with the rest of the
-machine — how much memory the device has is the hardware's business, not a
-workload's.
+`pool_bytes` is the simulator config's `memory_expander_size`; the base is fixed
+in `address_map.h`. How much memory the device has is the hardware's business,
+not a workload's.
 
 ## The symbol contract
 
@@ -405,9 +398,9 @@ any. That is nvcc's two-pass model, arrived at from the other direction.
 ## Requirements
 
 `python3` + `pip` for the Mojo toolchain, and that is all `build.sh` and
-`verify.sh` need. Running a workload also wants the LLVM fork and Spike,
-which `build-llvm.sh` and `build-spike.sh` build from the submodules; the
-development image carries both already. `riscv64-unknown-elf-gcc` compiles
-the device-side launcher.
+`verify.sh` need. Running a workload also wants the LLVM fork and M²NDP-Detour:
+`build-llvm.sh` builds the fork from its submodule and CMake builds Detour; the
+development image carries both already. `riscv64-unknown-elf-gcc` compiles the
+device-side launcher.
 
 Verified on Linux x86-64.
