@@ -5,3 +5,4 @@ __pycache__/
 .mojo_cache/
 build/
 build
+ramulator.stats

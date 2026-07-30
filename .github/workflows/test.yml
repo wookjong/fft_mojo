@@ -138,3 +138,28 @@ jobs:
       - name: Point at the image's toolchains
         run: ln -s /work/build build
       - run: ./scripts/spike-smoke.sh
+
+  # A workload compiled to a controller image and run on M²NDP-Detour's timing
+  # core: device_main launches the kernels on the units and the harness checks
+  # the answer. The Detour harnesses are baked into the image; M2NDP_DET points
+  # at them.
+  timing:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Point at the image's toolchains
+        run: ln -s /work/build build
+      - name: Run vector_add on Detour's controller
+        env:
+          M2NDP_DET: /work/third_party/m2ndp-detour
+        run: ./scripts/timing-run.sh vector_add

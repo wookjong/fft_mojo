@@ -112,9 +112,13 @@ RUN if [ "$BUILD_TOOLCHAINS" = "1" ]; then \
         test -f third_party/riscv-isa-sim/configure \
           || { echo "riscv-isa-sim submodule missing from the build context" >&2; exit 1; }; \
         ./scripts/build-llvm.sh \
-        && ./scripts/build-spike.sh; \
+        && ./scripts/build-spike.sh \
+        && cmake -S third_party/m2ndp-detour -B third_party/m2ndp-detour/build \
+        && cmake --build third_party/m2ndp-detour/build -j"$(nproc)" \
+             --target dev_launch dev_launch_loop dev_launch_masked; \
     else \
-        mkdir -p build/llvm/bin build/spike/install/bin build/spike/install/lib; \
+        mkdir -p build/llvm/bin build/spike/install/bin build/spike/install/lib \
+                 third_party/m2ndp-detour/build/bin; \
         : > build/spike/libm2ndp_ext.so; \
     fi
 
@@ -125,7 +129,8 @@ RUN if [ "$BUILD_TOOLCHAINS" = "1" ]; then \
 RUN find build -type f \( -name 'spike*' -o -name '*.so' -o -name '*.so.*' \) \
         -exec strip --strip-unneeded {} + 2>/dev/null || true; \
     find build/llvm/bin build/spike/install/bin -type f -exec strip {} + \
-        2>/dev/null || true
+        2>/dev/null || true; \
+    find third_party/m2ndp-detour/build/bin -type f -exec strip {} + 2>/dev/null || true
 
 #===----------------------------------------------------------------------===#
 # Image: the artifacts, and the source that is not an artifact
@@ -139,6 +144,13 @@ WORKDIR /work
 COPY --from=builder /work/build/llvm/bin /work/build/llvm/bin
 COPY --from=builder /work/build/spike/install /work/build/spike/install
 COPY --from=builder /work/build/spike/libm2ndp_ext.so /work/build/spike/
+
+# M²NDP-Detour's controller harnesses (built above), the sim config they read,
+# and src/ for the launch ABI header our launcher includes. The launcher and the
+# link script are ours (sim/, scripts/), copied with the rest of the tree.
+COPY --from=builder /work/third_party/m2ndp-detour/build/bin /work/third_party/m2ndp-detour/build/bin
+COPY --from=builder /work/third_party/m2ndp-detour/config /work/third_party/m2ndp-detour/config
+COPY --from=builder /work/third_party/m2ndp-detour/src /work/third_party/m2ndp-detour/src
 
 # Spike's headers, which the M²NDP extension is compiled against. 11 MB, and
 # without them the extension cannot be rebuilt in the container.
