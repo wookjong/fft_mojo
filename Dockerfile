@@ -106,6 +106,7 @@ RUN if [ "$BUILD_TOOLCHAINS" = "1" ]; then \
           || { echo "LLVM submodule missing from the build context" >&2; exit 1; }; \
         ./scripts/build-llvm.sh \
         && cmake -S third_party/m2ndp-detour -B third_party/m2ndp-detour/build \
+             -DPERFORMANCE_BUILD=1 \
         && cmake --build third_party/m2ndp-detour/build -j"$(nproc)" \
              --target m2ndp_run dev_launch dev_launch_loop dev_launch_masked; \
     else \
