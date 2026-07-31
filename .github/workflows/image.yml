@@ -7,14 +7,14 @@ name: image
 # test.yml calls this workflow rather than naming a tag, so the image a branch
 # is tested against is the image that branch produces.
 #
-# Runs on a self-hosted runner. The image builds both toolchains, and LLVM
-# alone is around 25 minutes on 30 cores -- on a 4-core hosted runner that is
-# hours, and the source and build trees together want more disk than one has
-# free. A self-hosted runner also keeps the checkout and the layer cache
-# between runs, so the submodules are not re-cloned every time.
+# Runs on a self-hosted runner. LLVM is not built here: it comes prebuilt from
+# the fork's release (m2ndp-llvm-release.yml), so this job only builds the timing
+# simulator and unpacks that asset. The runner keeps the checkout and the layer
+# cache between runs.
 #
-# The LLVM submodule is a private repository, so checkout needs SUBMODULE_TOKEN
-# -- a PAT with read access. Without it the job fails at checkout.
+# The detour submodule and the LLVM release are both private, so the checkout and
+# the asset download need SUBMODULE_TOKEN -- a PAT with read access. Without it
+# the job fails.
 
 # Branches and pull requests reach this through test.yml, which calls it and
 # then tests what came out. Only a release tag builds an image on its own --
@@ -58,57 +58,55 @@ jobs:
       image: ${{ steps.ref.outputs.image }}
 
     steps:
-      # Both submodules have to be in the build context: the image cannot clone
-      # the private one without carrying a token in a layer.
-      # Blobless. The submodule is a fork of llvm-project and its history is
-      # gigabytes of file contents nothing here reads -- the image builds one
-      # commit. `blob:none` fetches the blobs that commit needs and leaves the
-      # rest on the server, which is the difference between a clone measured in
-      # gigabytes and one measured in hundreds of megabytes.
-      - id: checkout
-        uses: actions/checkout@v4
-        continue-on-error: true
+      # Only the detour submodule goes into the build context. The LLVM submodule
+      # is not cloned -- that ~GB clone is exactly what the release asset
+      # replaces; its pinned commit is read from the superproject tree below and
+      # the prebuilt install prefix is downloaded for it.
+      - uses: actions/checkout@v4
         with:
-          submodules: recursive
-          filter: blob:none
+          submodules: false
           token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
 
-      # A self-hosted runner keeps its workspace, which is what makes the
-      # submodules cheap -- and what makes a wedged one recurring. A checkout
-      # interrupted inside `git submodule update` leaves a stale index.lock,
-      # and every checkout after it fails the same way:
-      #
-      #   fatal: Unable to create '.git/modules/third_party/llvm-project/index.lock':
-      #          File exists.
-      #
-      # The lock is the whole wedge, so delete it and retry -- that reuses the
-      # cached objects instead of re-cloning the ~GB LLVM submodule. Only if the
-      # retry still fails is the store actually corrupt, and then it is thrown
-      # away and cloned from nothing.
-      - if: steps.checkout.outcome == 'failure'
-        name: Clear a wedged submodule lock
-        run: find .git/modules -name index.lock -delete 2>/dev/null || true
+      # checkout's credentials are on the superproject only; a manual submodule
+      # update fetches over https with none, so inject the token into the URL.
+      # detour is private, so this is required, not just for speed. `-c`, not
+      # `config --global`: the runner has no $HOME to write a global config to,
+      # and -c propagates to the submodule fetch through GIT_CONFIG_PARAMETERS.
+      - name: Check out the detour submodule
+        env:
+          TOKEN: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+        run: |
+          git -c url."https://x-access-token:${TOKEN}@github.com/".insteadOf="https://github.com/" \
+              submodule update --init --recursive third_party/m2ndp-detour
 
-      - id: relock
-        if: steps.checkout.outcome == 'failure'
-        continue-on-error: true
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          filter: blob:none
-          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
-
-      - if: steps.checkout.outcome == 'failure' && steps.relock.outcome == 'failure'
-        name: Clear a wedged submodule store
-        run: rm -rf .git/modules third_party/llvm-project
-
-      - if: steps.checkout.outcome == 'failure' && steps.relock.outcome == 'failure'
-        name: Check out again, from nothing
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          filter: blob:none
-          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+      # The prebuilt LLVM, at the commit the llvm-project gitlink pins. The
+      # release's tag is llvm-<first ten of that sha>; a bump to a commit with no
+      # release fails here, loudly, rather than silently building against a stale
+      # toolchain. gh when the runner has it, else the API with curl + python3
+      # (both baseline) -- installing gh on a self-hosted runner needs root.
+      # Landed at llvm-asset/llvm.tar.zst, where the Dockerfile unpacks it.
+      - name: Fetch the prebuilt LLVM
+        env:
+          GH_TOKEN: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          export HOME="${HOME:-$RUNNER_TEMP}"   # gh writes config under $HOME; the runner sets none
+          mkdir -p llvm-asset
+          sha=$(git ls-tree HEAD third_party/llvm-project | awk '{print $3}')
+          tag="llvm-${sha:0:10}"
+          repo="PSAL-POSTECH/llvm-project-m2ndp"
+          echo "llvm-project pinned at $sha -> release $tag"
+          if command -v gh >/dev/null; then
+            gh release download "$tag" -R "$repo" -D llvm-asset
+            mv llvm-asset/*.tar.zst llvm-asset/llvm.tar.zst
+          else
+            id=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                   "https://api.github.com/repos/$repo/releases/tags/$tag" \
+                 | python3 -c "import sys,json;print(next(a['id'] for a in json.load(sys.stdin)['assets'] if a['name'].endswith('.tar.zst')))")
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+                 "https://api.github.com/repos/$repo/releases/assets/$id" -o llvm-asset/llvm.tar.zst
+          fi
+          ls -lh llvm-asset/
 
       - uses: docker/setup-buildx-action@v3
 

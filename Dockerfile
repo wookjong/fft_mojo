@@ -81,7 +81,7 @@ RUN MOJO_VERSION="$MOJO_VERSION" /tmp/setup.sh "$MOJO_ROOT" \
 
 FROM base AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends ccache \
+RUN apt-get update && apt-get install -y --no-install-recommends ccache zstd \
     && rm -rf /var/lib/apt/lists/*
 ENV CCACHE_DIR=/ccache \
     PATH=/usr/lib/ccache:$PATH
@@ -89,22 +89,23 @@ RUN mkdir -p /ccache && chmod 777 /ccache
 
 WORKDIR /work
 
-# The submodules and the build scripts first, on their own layer. Everything
-# after this is the 25-minute part, and copying the whole tree up front would
-# throw it away for a change to a benchmark or a document.
+# The detour submodule and the build scripts first, on their own layer. LLVM is
+# not built here: it arrives prebuilt in llvm-asset/, a relocatable install
+# prefix that image.yml fetches from the fork's release (tag llvm-<sha>) instead
+# of cloning and building the ~GB fork. See scripts/build-llvm.sh to build it.
 COPY third_party /work/third_party
 COPY scripts /work/scripts
 COPY sim /work/sim
+COPY llvm-asset /work/llvm-asset
 
 # --build-arg BUILD_TOOLCHAINS=0 skips this, for a quick check that the
-# Dockerfile itself is sound without waiting for LLVM. The final stage copies
-# from here unconditionally, so the skip branch still has to leave the
-# directories behind; an image built that way has no compiler in it.
+# Dockerfile itself is sound. The final stage copies from here unconditionally,
+# so the skip branch still has to leave the directories behind; an image built
+# that way has no compiler in it.
 ARG BUILD_TOOLCHAINS=1
 RUN if [ "$BUILD_TOOLCHAINS" = "1" ]; then \
-        test -f third_party/llvm-project/llvm/CMakeLists.txt \
-          || { echo "LLVM submodule missing from the build context" >&2; exit 1; }; \
-        ./scripts/build-llvm.sh \
+        mkdir -p build/llvm \
+        && tar -C build/llvm --zstd -xf llvm-asset/llvm.tar.zst \
         && cmake -S third_party/m2ndp-detour -B third_party/m2ndp-detour/build \
              -DPERFORMANCE_BUILD=1 \
         && cmake --build third_party/m2ndp-detour/build -j"$(nproc)" \
@@ -115,10 +116,8 @@ RUN if [ "$BUILD_TOOLCHAINS" = "1" ]; then \
         : > build/llvm/lib/libLLVM.so; \
     fi
 
-# Strip the tools: nothing here is debugged with a symbol table -- llvm-objdump
-# and the lit suite work on the target's output, not on the tools themselves.
-RUN find build/llvm/bin -type f -exec strip {} + 2>/dev/null || true; \
-    find third_party/m2ndp-detour/build/bin -type f -exec strip {} + 2>/dev/null || true
+# Strip M²NDP-Detour's harnesses. The LLVM tools arrive stripped in the asset.
+RUN find third_party/m2ndp-detour/build/bin -type f -exec strip {} + 2>/dev/null || true
 
 #===----------------------------------------------------------------------===#
 # Image: the artifacts, and the source that is not an artifact
