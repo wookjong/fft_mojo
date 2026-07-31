@@ -21,13 +21,13 @@ on:
   pull_request:
   workflow_dispatch:
 
-# One run per branch: queue superseded runs rather than cancel them. The image
-# build shares a self-hosted runner's persistent workspace, and cancelling it
-# mid-`git submodule update` wedges that workspace; letting the run finish keeps
-# the checkout intact. A newer push still supersedes an older *pending* run.
+# One run per branch, and cancel a superseded one: a stuck run must not sit on
+# the single self-hosted runner blocking the queue. If a cancellation interrupts
+# `git submodule update`, the image build clears the stale index.lock cheaply
+# (no re-clone), so cancelling is safe.
 concurrency:
   group: test-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   # The toolchains, and the image that carries them. Everything below runs
