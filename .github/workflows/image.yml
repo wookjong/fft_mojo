@@ -74,21 +74,35 @@ jobs:
           token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
 
       # A self-hosted runner keeps its workspace, which is what makes the
-      # submodules cheap -- and what makes a wedged one permanent. A run
-      # cancelled inside `git submodule update` leaves the module store
-      # half-written, and every checkout after it fails the same way:
+      # submodules cheap -- and what makes a wedged one recurring. A checkout
+      # interrupted inside `git submodule update` leaves a stale index.lock,
+      # and every checkout after it fails the same way:
       #
-      #   fatal: Unable to checkout '<sha>' in submodule path
-      #          'third_party/llvm-project'
+      #   fatal: Unable to create '.git/modules/third_party/llvm-project/index.lock':
+      #          File exists.
       #
-      # until someone logs into the machine. So throw the store away and clone
-      # it again -- blobless, so recovering costs a fresh clone and not a
-      # fresh clone of every version of every file.
+      # The lock is the whole wedge, so delete it and retry -- that reuses the
+      # cached objects instead of re-cloning the ~GB LLVM submodule. Only if the
+      # retry still fails is the store actually corrupt, and then it is thrown
+      # away and cloned from nothing.
       - if: steps.checkout.outcome == 'failure'
+        name: Clear a wedged submodule lock
+        run: find .git/modules -name index.lock -delete 2>/dev/null || true
+
+      - id: relock
+        if: steps.checkout.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          filter: blob:none
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+
+      - if: steps.checkout.outcome == 'failure' && steps.relock.outcome == 'failure'
         name: Clear a wedged submodule store
         run: rm -rf .git/modules third_party/llvm-project
 
-      - if: steps.checkout.outcome == 'failure'
+      - if: steps.checkout.outcome == 'failure' && steps.relock.outcome == 'failure'
         name: Check out again, from nothing
         uses: actions/checkout@v4
         with:
