@@ -139,8 +139,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # No gha cache. The self-hosted runner keeps its buildx builder between
+          # runs, so the local layer cache already serves a rebuild. type=gha,
+          # mode=max additionally uploaded every layer to the Actions cache on
+          # top of the registry push -- the whole image over the wire twice, each
+          # run -- and that upload was the slow part of the job, not the build.
           # Skipping the toolchains is a workflow_dispatch choice and nothing
           # else. Testing `inputs.build_toolchains == false` on its own does
           # not say that: on a push there is no such input, and an expression
