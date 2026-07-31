@@ -18,7 +18,7 @@ DET="${M2NDP_DET:-$REPO/third_party/m2ndp-detour}"
 
 # rv64g, not rv64gc: no compressed instructions, so the LLVMKernel disassembler
 # (set up for the kernels' non-compressed code) can decode the launcher too.
-CFLAGS="-march=rv64g -mabi=lp64d -ffreestanding -nostdlib -fomit-frame-pointer -msmall-data-limit=0 -O2 -I$DET/src"
+CFLAGS="-march=rv64g -mabi=lp64d -ffreestanding -nostdlib -fomit-frame-pointer -msmall-data-limit=0 -O2 -I$DET/src -DM2NDP_ADDR_OFFSET=${M2NDP_ADDR_OFFSET:-0}ULL"
 
 task="${1:?task.o}"
 out="${2:?out.elf}"

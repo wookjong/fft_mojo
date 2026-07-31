@@ -84,7 +84,7 @@ struct Pool(Movable):
     def __init__(out self) raises:
         var config = Config.load()
         self._path = _mktemp() + "/pool.bin"
-        self._base = _POOL_BASE
+        self._base = _POOL_BASE + _addr_offset()
         self._bytes = config.get("memory_expander_size")
         if self._bytes <= 0:
             raise Error("memory_expander_size must be positive")
@@ -248,6 +248,13 @@ def _mktemp() raises -> String:
     if Int(made) == 0:
         raise Error("could not make a working directory")
     return String(StringSlice(unsafe_from_utf8=Span(ptr=made, length=n)))
+
+
+def _addr_offset() raises -> Int:
+    """The device address map's build-time shift (see address_map.h); 0 unless
+    `M2NDP_ADDR_OFFSET` is set, which an ASAN build does. Sim/launcher/host agree."""
+    var s = _getenv("M2NDP_ADDR_OFFSET")
+    return _parse_uint(s) if s else 0
 
 
 def _parse_uint(s: String) raises -> Int:

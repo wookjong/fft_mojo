@@ -436,7 +436,7 @@ trait NDPTask:
 
         var rc = _run(
             tc.llc + " -mtriple=riscv64-unknown-elf -mattr=" + tc.features
-            + mapflags + " -filetype=obj " + ll + " -o " + obj
+            + " -relocation-model=pic" + mapflags + " -filetype=obj " + ll + " -o " + obj
         )
         if rc == 0:
             # Link against our controller launcher and run on Detour's timing
