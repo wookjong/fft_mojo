@@ -107,6 +107,34 @@ jobs:
           fi
           ls -lh llvm-asset/
 
+      # The prebuilt Detour, at the commit the m2ndp-detour gitlink pins -- its
+      # own CI publishes the harnesses + libNDPSim_lib.so + configs as tag
+      # m2ndp-detour-<first ten of that sha>. Same shape as the LLVM fetch, so a
+      # bump to a commit with no release fails here loudly. Landed at
+      # detour-asset/detour.tar.gz, where the Dockerfile unpacks it.
+      - name: Fetch the prebuilt detour
+        env:
+          GH_TOKEN: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          export HOME="${HOME:-$RUNNER_TEMP}"
+          mkdir -p detour-asset
+          sha=$(git ls-tree HEAD third_party/m2ndp-detour | awk '{print $3}')
+          tag="m2ndp-detour-${sha:0:10}"
+          repo="PSAL-POSTECH/M2NDP-Detour"
+          echo "m2ndp-detour pinned at $sha -> release $tag"
+          if command -v gh >/dev/null; then
+            gh release download "$tag" -R "$repo" -D detour-asset
+            mv detour-asset/*.tar.gz detour-asset/detour.tar.gz
+          else
+            id=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                   "https://api.github.com/repos/$repo/releases/tags/$tag" \
+                 | python3 -c "import sys,json;print(next(a['id'] for a in json.load(sys.stdin)['assets'] if a['name'].endswith('.tar.gz')))")
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+                 "https://api.github.com/repos/$repo/releases/assets/$id" -o detour-asset/detour.tar.gz
+          fi
+          ls -lh detour-asset/
+
       # No docker/setup-buildx-action: its docker-container driver boots a
       # moby/buildkit container, which the rootless-podman slurm-ghr builder
       # cannot create ("cannot set cgroup parent"). build-push-action runs on the
@@ -143,9 +171,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           # No gha cache. type=gha,mode=max uploaded every layer to the Actions
           # cache on top of the registry push -- the whole image over the wire
-          # twice each run, the slow part of the job. slurm-ghr runners are
-          # ephemeral, so a follow-up may add a gha cache back to skip the base
-          # stage; for now the build is left uncached.
+          # twice each run, the slow part of the job. The image now only unpacks
+          # the assets, so there is little to cache; slurm-ghr runners are
+          # ephemeral, so a follow-up may add a gha cache back for the base stage.
           # Skipping the toolchains is a workflow_dispatch choice and nothing
           # else. Testing `inputs.build_toolchains == false` on its own does
           # not say that: on a push there is no such input, and an expression
@@ -178,7 +206,8 @@ jobs:
             set -e
             test -x /work/build/llvm/bin/llc
             test -x /work/build/llvm/bin/ld.lld
-            test -f /work/build/llvm/lib/cmake/llvm/LLVMConfig.cmake
             ls /work/build/llvm/lib/libLLVM*.so* >/dev/null
             test -x /work/third_party/m2ndp-detour/build/bin/m2ndp_run
+            test -f /work/third_party/m2ndp-detour/build/lib/libNDPSim_lib.so
+            test -f /work/third_party/m2ndp-detour/src/m2ndp_launch_abi.h
           '

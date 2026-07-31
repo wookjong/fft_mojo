@@ -9,3 +9,6 @@ ramulator.stats
 
 # Prebuilt LLVM release asset fetched by image.yml (see Dockerfile)
 llvm-asset/
+
+# Prebuilt detour release asset fetched by image.yml (see Dockerfile)
+detour-asset/
