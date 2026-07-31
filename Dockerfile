@@ -109,7 +109,9 @@ RUN if [ "$BUILD_TOOLCHAINS" = "1" ]; then \
         && cmake --build third_party/m2ndp-detour/build -j"$(nproc)" \
              --target m2ndp_run dev_launch dev_launch_loop dev_launch_masked; \
     else \
-        mkdir -p build/llvm/bin third_party/m2ndp-detour/build/bin; \
+        mkdir -p build/llvm/bin build/llvm/lib/cmake build/llvm/include \
+                 third_party/m2ndp-detour/build/bin; \
+        : > build/llvm/lib/libLLVM.so; \
     fi
 
 # Strip the tools: nothing here is debugged with a symbol table -- llvm-objdump
@@ -128,6 +130,13 @@ WORKDIR /work
 # The built tools, at the paths the scripts look for them at.
 COPY --from=builder /work/build/llvm/bin /work/build/llvm/bin
 
+# LLVM as a shared library, plus its headers and CMake package: the timing
+# harnesses above link libLLVM.so, and M²NDP-Detour's own CI rebuilds against it
+# without carrying 635 MB of static archives.
+COPY --from=builder /work/build/llvm/lib/libLLVM*.so* /work/build/llvm/lib/
+COPY --from=builder /work/build/llvm/lib/cmake /work/build/llvm/lib/cmake
+COPY --from=builder /work/build/llvm/include /work/build/llvm/include
+
 # M²NDP-Detour's controller harnesses (built above), the sim config they read,
 # and src/ for the launch ABI header our launcher includes. The launcher and the
 # link script are ours (sim/, scripts/), copied with the rest of the tree.
@@ -145,7 +154,7 @@ COPY sim /work/sim
 COPY src /work/src
 COPY README.md CLAUDE-m2ndp.md LICENSE /work/
 
-ENV PATH=/work/build/spike/install/bin:/work/build/llvm/bin:$PATH \
-    LD_LIBRARY_PATH=/work/build/spike/install/lib
+ENV PATH=/work/build/llvm/bin:$PATH \
+    LD_LIBRARY_PATH=/work/build/llvm/lib
 
 CMD ["/bin/bash"]

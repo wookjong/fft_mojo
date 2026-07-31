@@ -39,7 +39,9 @@ cmake -G Ninja -S "$SRC" -B "$BUILD" \
     -DLLVM_INCLUDE_EXAMPLES=OFF \
     -DLLVM_INCLUDE_DOCS=OFF \
     -DLLVM_PARALLEL_LINK_JOBS="$LINK_JOBS" \
-    -DLLVM_OPTIMIZED_TABLEGEN=ON
+    -DLLVM_OPTIMIZED_TABLEGEN=ON \
+    -DLLVM_BUILD_LLVM_DYLIB=ON \
+    -DLLVM_LINK_LLVM_DYLIB=ON
 
 # Assertions are ON deliberately. Backend bugs surface as ISel and MachineInstr
 # verifier assertions; without them the same bugs turn into silent miscompiles.

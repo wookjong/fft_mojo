@@ -161,6 +161,7 @@ jobs:
             set -e
             test -x /work/build/llvm/bin/llc
             test -x /work/build/llvm/bin/ld.lld
-            test -x /work/build/spike/install/bin/spike
-            test -s /work/build/spike/libm2ndp_ext.so
+            test -f /work/build/llvm/lib/cmake/llvm/LLVMConfig.cmake
+            ls /work/build/llvm/lib/libLLVM*.so* >/dev/null
+            test -x /work/third_party/m2ndp-detour/build/bin/m2ndp_run
           '
