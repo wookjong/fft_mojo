@@ -26,6 +26,12 @@ FROM ubuntu:22.04 AS base
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
 
+# APT::Sandbox::User "root": the slurm-ghr builder is rootless podman, where
+# apt's drop to the _apt user for downloads cannot setgroups ("Could not switch
+# group", exit 100). Fetching as root skips that drop. Inherited by the builder
+# stage below, which is FROM base.
+RUN echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/00no-sandbox
+
 # gcc-riscv64-unknown-elf is for the target, not the host: the simulator
 # launchers are compiled with it. It is the largest single package here --
 # about 200 MB, most of it newlib multilib variants -- and it pulls in the
