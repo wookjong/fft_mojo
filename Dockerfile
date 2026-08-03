@@ -38,10 +38,13 @@ RUN echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/00no-sandbox
 # image cannot run what it is for. Linking still goes through lld: this binutils
 # is older than the LLVM here and rejects the ISA string it emits.
 #
+# build-essential is the host toolchain build.sh needs to compile
+# sim/host_stubs.c (cc plus the libc headers -- gcc alone has no stdio.h);
 # libxml2 and zlib1g are the runtime the prebuilt libLLVM.so links; zstd unpacks
-# the LLVM asset (Detour's is a .tar.gz). No conan, cmake, flex or bison: nothing
-# of ours is compiled here any more, so the tools that built Detour are gone.
+# the LLVM asset (Detour's is a .tar.gz). No conan, cmake, flex or bison: Detour
+# is prebuilt, so the tools that built it are gone.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
         ca-certificates \
         curl \
         gcc-riscv64-unknown-elf \
