@@ -112,9 +112,10 @@ WORKDIR /work
 COPY --from=assemble /work/build/llvm/bin /work/build/llvm/bin
 COPY --from=assemble /work/build/llvm/lib/libLLVM*.so* /work/build/llvm/lib/
 
-# Detour: the controller harnesses, the shared library they link, the sim configs
-# they read, and src/ for the launch-ABI header our launcher includes. The
-# launcher and link script are ours (sim/, scripts/), copied with the rest below.
+# Detour: the controller harnesses (including devmain_run, which t2 runs a mojo
+# device_main on), the shared library they link, the sim configs they read, and
+# src/ for the launch-ABI header our launcher includes. The launcher and link
+# script are ours (sim/, scripts/), copied with the rest below.
 COPY --from=assemble /work/third_party/m2ndp-detour/build/bin /work/third_party/m2ndp-detour/build/bin
 COPY --from=assemble /work/third_party/m2ndp-detour/build/lib /work/third_party/m2ndp-detour/build/lib
 COPY --from=assemble /work/third_party/m2ndp-detour/config /work/third_party/m2ndp-detour/config

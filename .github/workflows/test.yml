@@ -39,11 +39,11 @@ jobs:
       packages: write
     secrets: inherit
 
-  # The artifacts: device IR and assembly for every workload, and the checks
-  # that read them. This is where a codegen regression shows up -- an atomic
-  # that stopped being one instruction, a kernel that grew a frame -- without
-  # anything having to run.
-  artifacts:
+  # The test hierarchy, one entry point: scripts/test.sh runs the tiers cheapest
+  # first (t0 toolchain, t1 codegen, t2 device_main on the controller, t3 op
+  # kernels, t4 workload E2E) and prints one PASS/FAIL per case -- the simulator's
+  # own firehose is swallowed, so a failed case reads at a glance. See tests/.
+  test:
     needs: image
     runs-on: [self-hosted, slurm, x86_64]
     permissions:
@@ -63,13 +63,17 @@ jobs:
       - name: Point at the image's toolchains
         run: ln -s /work/build build
 
-      - run: ./scripts/build.sh
-      - run: ./scripts/verify.sh
+      # M2NDP_DET points at the detour asset baked into the image (harnesses,
+      # configs, device_main fixtures); the tiers draw the rest from tests/.
+      - name: Run the test hierarchy
+        env:
+          M2NDP_DET: /work/third_party/m2ndp-detour
+        run: ./scripts/test.sh
 
-      # Kept when a check fails, that being when the generated code is what you
-      # want to read. Never fatal: the artifact store is a shared quota that
-      # can be full for reasons that have nothing to do with this branch, and
-      # losing the upload is not losing the result.
+      # Kept when a case fails, that being when the generated code is what you
+      # want to read. Never fatal: the artifact store is a shared quota that can
+      # be full for reasons unrelated to this branch, and losing the upload is
+      # not losing the result.
       - if: failure()
         continue-on-error: true
         uses: actions/upload-artifact@v4
@@ -77,28 +81,3 @@ jobs:
           name: device-code
           path: out/
           retention-days: 7
-
-  # A workload compiled to a controller image and run on M²NDP-Detour's timing
-  # core: device_main launches the kernels on the units and the harness checks
-  # the answer. The Detour harnesses are baked into the image; M2NDP_DET points
-  # at them.
-  timing:
-    needs: image
-    runs-on: [self-hosted, slurm, x86_64]
-    permissions:
-      contents: read
-      packages: read
-    container:
-      image: ${{ needs.image.outputs.image }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    steps:
-      - uses: actions/checkout@v4
-      - name: Point at the image's toolchains
-        run: ln -s /work/build build
-      - name: Run vector_add on Detour's controller
-        env:
-          M2NDP_DET: /work/third_party/m2ndp-detour
-        run: ./scripts/timing-run.sh vector_add
