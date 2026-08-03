@@ -123,6 +123,10 @@ tier_t2() {
     local runner="$det/build/bin/devmain_run"
     local cfg="$det/config/performance/M2NDP/m2ndp.config"
     [ -x "$runner" ] || { skip "devmain_run not built ($runner)"; return; }
+    # devmain_run is a shared-library build with no rpath to the libs shipped
+    # beside it (m2ndp_run carries one); point it at both the detour and the LLVM
+    # lib dirs so it loads here and in CI.
+    local libs="$det/build/lib:$(dirname "$LLC")/../lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     local any=0 name
     for name in $(manifest_names t2); do
         any=1
@@ -131,7 +135,7 @@ tier_t2() {
         if ! err="$(_t2_compile "$name" "$elf" 2>&1)"; then
             fail "$name — compiles into a controller image" "${err%%$'\n'*}"; rm -f "$elf"; continue
         fi
-        out="$(M2NDP_STATS=1 "$runner" "$elf" 64 "$cfg" 2>&1)"; rc=$?
+        out="$(LD_LIBRARY_PATH="$libs" M2NDP_STATS=1 "$runner" "$elf" 64 "$cfg" 2>&1)"; rc=$?
         rm -f "$elf"
         if [ "$rc" -ge 128 ]; then fail "$name — device_main runs to completion" "the run aborted (exit $rc); the controller path crashed"; continue; fi
         local launches ldst
