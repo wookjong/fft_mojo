@@ -54,7 +54,10 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 echo "[timing-run] llc -> object"
-"$LLC" -mtriple=riscv64 -mattr="$FEATURES" -filetype=obj "out/$name.ll" -o "$work/$name.o" \
+# medany (LLVM's "medium"): the loader relocates the task into a pool code slot,
+# so the kernel address device_main hands the doorbell has to be PC-relative
+# (auipc). medlow bakes the link-time address and the controller finds no kernel.
+"$LLC" -mtriple=riscv64 -mattr="$FEATURES" -code-model=medium -filetype=obj "out/$name.ll" -o "$work/$name.o" \
     || { echo "llc failed"; exit 1; }
 
 echo "[timing-run] link against the launcher"

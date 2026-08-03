@@ -18,7 +18,10 @@ DET="${M2NDP_DET:-$REPO/third_party/m2ndp-detour}"
 
 # rv64g, not rv64gc: no compressed instructions, so the LLVMKernel disassembler
 # (set up for the kernels' non-compressed code) can decode the launcher too.
-CFLAGS="-march=rv64g -mabi=lp64d -ffreestanding -nostdlib -fomit-frame-pointer -msmall-data-limit=0 -O2 -I$DET/src -DM2NDP_ADDR_OFFSET=${M2NDP_ADDR_OFFSET:-0}ULL"
+# -fPIE -mcmodel=medany: the loader relocates the task into a pool code slot, so
+# the launcher's code must be position-independent too, matching the medany the
+# kernel object is built with; the image links -pie below.
+CFLAGS="-march=rv64g -mabi=lp64d -ffreestanding -nostdlib -fomit-frame-pointer -msmall-data-limit=0 -O2 -fPIE -mcmodel=medany -I$DET/src -DM2NDP_ADDR_OFFSET=${M2NDP_ADDR_OFFSET:-0}ULL"
 
 task="${1:?task.o}"
 out="${2:?out.elf}"
@@ -26,5 +29,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 "$GCC" $CFLAGS -c "$REPO/sim/m2ndp_launcher.c" -o "$tmp/launcher.o"
-"$LLD" -T "$REPO/scripts/m2ndp.lds" -e _start "$tmp/launcher.o" "$task" -o "$out"
+# -pie: a relocatable image the loader can place in a pool slot, not a fixed-
+# address executable. Without it device_main's kernel address stays link-time.
+"$LLD" -pie -T "$REPO/scripts/m2ndp.lds" -e _start "$tmp/launcher.o" "$task" -o "$out"
 echo "linked $out"
