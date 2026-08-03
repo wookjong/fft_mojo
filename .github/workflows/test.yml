@@ -2,10 +2,10 @@ name: test
 
 # Compile every workload and run it on M²NDP-Detour.
 #
-# The tests run on GitHub-hosted runners and build no toolchain: the image
+# The tests run on the small slurm-ghr runner and build no toolchain: the image
 # carries Mojo, our LLVM and the simulator, so a job pulls it and runs the
-# scripts. Building that image is the part that needs the self-hosted runner
-# (25 minutes and a lot of disk), and it is the one job here that uses it.
+# scripts. Hosted runners are billing-gated for this org, so these take a slurm
+# runner too, not just the image build.
 #
 # The image comes from image.yml, called rather than named: what the tests run
 # on is the image built from this same commit, by digest. Naming a tag instead
@@ -45,7 +45,7 @@ jobs:
   # anything having to run.
   artifacts:
     needs: image
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, slurm, x86_64]
     permissions:
       contents: read
       packages: read
@@ -84,7 +84,7 @@ jobs:
   # at them.
   timing:
     needs: image
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, slurm, x86_64]
     permissions:
       contents: read
       packages: read

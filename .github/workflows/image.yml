@@ -7,10 +7,9 @@ name: image
 # test.yml calls this workflow rather than naming a tag, so the image a branch
 # is tested against is the image that branch produces.
 #
-# Runs on a self-hosted runner. LLVM is not built here: it comes prebuilt from
-# the fork's release (m2ndp-llvm-release.yml), so this job only builds the timing
-# simulator and unpacks that asset. The runner keeps the checkout and the layer
-# cache between runs.
+# Runs on the small slurm-ghr runner. LLVM is not built here: it comes prebuilt
+# from the fork's release (m2ndp-llvm-release.yml), so this job only builds the
+# timing simulator and unpacks that asset.
 #
 # The detour submodule and the LLVM release are both private, so the checkout and
 # the asset download need SUBMODULE_TOKEN -- a PAT with read access. Without it
@@ -49,7 +48,7 @@ env:
 
 jobs:
   build:
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, slurm, x86_64]
     permissions:
       contents: read
       packages: write
