@@ -57,6 +57,7 @@ cp "benchmarks/$bench.mojo" "$STAGE/"
 # simulator description and configure themselves from it. Point M2NDP_CONFIG at
 # another to model a different machine.
 export M2NDP_ROOT="$REPO"
-export M2NDP_CONFIG="${M2NDP_CONFIG:-$REPO/third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config}"
+DET="${M2NDP_DET:-$REPO/third_party/m2ndp-detour}"
+export M2NDP_CONFIG="${M2NDP_CONFIG:-$DET/config/performance/M2NDP/m2ndp.config}"
 
 "$OUT/host"

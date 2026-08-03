@@ -29,18 +29,36 @@ LD="${RISCV_LD:-$REPO/build/llvm/bin/ld.lld}"
 if [ -t 1 ]; then G='\033[32m'; R='\033[31m'; Y='\033[33m'; B='\033[1m'; D='\033[2m'; N='\033[0m'
 else G=; R=; Y=; B=; D=; N=; fi
 
-FAIL=0; PASS_N=0; FAIL_N=0; SKIP_N=0
+FAIL=0; PASS_N=0; FAIL_N=0; SKIP_N=0; XFAIL_N=0; XPASS_N=0
 section() { printf "\n${B}[%s]${N}\n" "$1"; }
 pass()    { printf "  ${G}[PASS]${N} %s\n" "$1"; PASS_N=$((PASS_N + 1)); }
 skip()    { printf "  ${Y}[SKIP]${N} %s\n" "$1"; SKIP_N=$((SKIP_N + 1)); }
 # fail "<what>"  or  fail "<what>" "<detail line>"
 fail()    { printf "  ${R}[FAIL]${N} %s\n" "$1"; [ -n "${2:-}" ] && printf "         ${D}%s${N}\n" "$2"; FAIL=1; FAIL_N=$((FAIL_N + 1)); }
+# A case the manifest marks as known-broken: its failure is expected and does not
+# fail the run; a pass is an [XPASS] to promote out of xfail.
+xfail()   { printf "  ${Y}[XFAIL]${N} %s\n" "$1"; [ -n "${2:-}" ] && printf "          ${D}%s${N}\n" "$2"; XFAIL_N=$((XFAIL_N + 1)); }
+xpass()   { printf "  ${Y}[XPASS]${N} %s ${D}(now passes -- promote it out of xfail)${N}\n" "$1"; XPASS_N=$((XPASS_N + 1)); }
+summary() {
+    printf "\n${B}Summary:${N} ${G}%d passed${N}, ${R}%d failed${N}, ${Y}%d skipped${N}" "$PASS_N" "$FAIL_N" "$SKIP_N"
+    [ "$XFAIL_N" -gt 0 ] && printf ", ${Y}%d xfail${N}" "$XFAIL_N"
+    [ "$XPASS_N" -gt 0 ] && printf ", ${Y}%d xpass${N}" "$XPASS_N"
+    printf "\n"
+}
 
 # The case names in a tier: column 1 where column 2 (comma list) contains the tier.
 manifest_names() {
     awk -v t="$1" -F'\t' '
         /^[[:space:]]*#/ || NF < 2 { next }
         { n = split($2, ts, ","); for (i = 1; i <= n; i++) if (ts[i] == t) print $1 }
+    ' "$MANIFEST" 2>/dev/null
+}
+
+# The check column (4) for a case name.
+manifest_check() {
+    awk -v name="$1" -F'\t' '
+        /^[[:space:]]*#/ || NF < 2 { next }
+        $1 == name { print $4; exit }
     ' "$MANIFEST" 2>/dev/null
 }
 
@@ -119,11 +137,26 @@ tier_t3() {
 
 tier_t4() {
     section "Workload end-to-end — a whole workload launches and computes correctly"
-    local any=0 w
+    local any=0 w check out reason
     for w in $(manifest_names t4); do
         any=1
-        if ./scripts/timing-run.sh "$w" >/dev/null 2>&1; then pass "$w — launched a kernel and got the right bytes on Detour's controller"
-        else fail "$w — compile, launch and check on the controller" "rerun ./scripts/timing-run.sh $w to see where"; fi
+        check="$(manifest_check "$w")"
+        # host-run.sh is the mojo user's own path: build the host program, which
+        # fills the pool, launches the task on the simulator, and checks the answer
+        # against one it computes itself. "[host] <name> ok" is that self-check.
+        out="$(./scripts/host-run.sh "$w" 2>&1)"
+        if printf '%s\n' "$out" | grep -q "\[host\] $w ok"; then
+            case "$check" in
+                xfail*) xpass "$w" ;;
+                *)      pass "$w — filled inputs, launched on the simulator, answer matched" ;;
+            esac
+        else
+            reason="$(printf '%s\n' "$out" | grep -oiE 'RENAMING PANIC|no symbol at kinfo address|no kernel at 0x[0-9a-f]+|wrong at [^ ]+ ?: [^ ]+ expected [^ ]+' | head -1)"
+            case "$check" in
+                xfail*) xfail "$w — ${check#xfail: }" "${reason:-rerun ./scripts/host-run.sh $w}" ;;
+                *)      fail "$w — launch and check on the simulator" "${reason:-rerun ./scripts/host-run.sh $w}" ;;
+            esac
+        fi
     done
     [ "$any" = 1 ] || skip "no t4 cases in the manifest"
 }
@@ -143,10 +176,10 @@ for t in "${TIERS[@]}"; do
         *) echo "unknown tier: $t (want t0..t4 or all)"; exit 2 ;;
     esac
     if [ "$FAIL" = 1 ]; then
-        printf "\n${B}Summary:${N} ${G}%d passed${N}, ${R}%d failed${N}, ${Y}%d skipped${N}\n" "$PASS_N" "$FAIL_N" "$SKIP_N"
+        summary
         printf "${R}[stopped]${N} %s failed — see [FAIL] above\n" "$(tier_title "$t")"
         exit 1
     fi
 done
 
-printf "\n${B}Summary:${N} ${G}%d passed${N}, ${R}%d failed${N}, ${Y}%d skipped${N}\n" "$PASS_N" "$FAIL_N" "$SKIP_N"
+summary

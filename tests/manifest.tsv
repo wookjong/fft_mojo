@@ -10,13 +10,34 @@
 # those tiers as pending rather than passing an empty set.
 #
 # name		tiers	family	check
+# t4 runs each through host-run.sh: build the host program, launch the task on
+# the simulator, check the answer it wrote back. "golden" must pass; "xfail" is a
+# case known to fail today (the reason follows), run anyway so the failure stays
+# visible and an [XPASS] flags it the day it starts working.
 vector_add	t1,t4	W	golden
-
-# loop_sum / masked_add have a Detour harness (dev_launch_loop/_masked) but no
-# benchmarks/*.mojo source yet, so build.sh has nothing to compile. Uncomment a
-# row once its workload lands in benchmarks/.
-# loop_sum	t4	W	golden
-# masked_add	t4	W	golden
+dlrm_sls	t4	W	golden
+imdb_three_col_and	t4	W	golden
+imdb_two_col_and	t4	W	golden
+memcpy	t4	W	golden
+memset	t4	W	golden
+pagerank_inicsr	t4	W	golden
+relu	t4	W	golden
+residual	t4	W	golden
+sssp	t4	W	golden
+spmv	t4	W	xfail: fp result rounds ~1e-5 off an exact check
+gelu	t4	W	xfail: simulator RENAMING PANIC
+gemv	t4	W	xfail: simulator RENAMING PANIC
+gemv_aggregation	t4	W	xfail: simulator RENAMING PANIC
+histogram	t4	W	xfail: simulator RENAMING PANIC
+imdb_gt_lt_fp32	t4	W	xfail: simulator RENAMING PANIC
+imdb_gteq_lt_int64	t4	W	xfail: simulator RENAMING PANIC
+imdb_lt_int64	t4	W	xfail: simulator RENAMING PANIC
+kmeans_assign	t4	W	xfail: simulator RENAMING PANIC
+layernorm	t4	W	xfail: simulator RENAMING PANIC
+narrow	t4	W	xfail: simulator RENAMING PANIC
+softmax	t4	W	xfail: simulator RENAMING PANIC
+vector_exp	t4	W	xfail: simulator RENAMING PANIC
+wide	t4	W	xfail: simulator RENAMING PANIC
 
 # t2 -- controller / device_main paths. A mojo workload whose device_main
 # computes on the controller itself (stack + a non-inlined call) and launches
