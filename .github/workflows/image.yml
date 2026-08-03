@@ -107,7 +107,10 @@ jobs:
           fi
           ls -lh llvm-asset/
 
-      - uses: docker/setup-buildx-action@v3
+      # No docker/setup-buildx-action: its docker-container driver boots a
+      # moby/buildkit container, which the rootless-podman slurm-ghr builder
+      # cannot create ("cannot set cgroup parent"). build-push-action runs on the
+      # default builder the runner already provides, which is what detour's CI does.
 
       # On pull requests too, now that they publish. A pull request's image is
       # what its tests run on, and a hosted runner can only get it by pulling
@@ -138,11 +141,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # No gha cache. The self-hosted runner keeps its buildx builder between
-          # runs, so the local layer cache already serves a rebuild. type=gha,
-          # mode=max additionally uploaded every layer to the Actions cache on
-          # top of the registry push -- the whole image over the wire twice, each
-          # run -- and that upload was the slow part of the job, not the build.
+          # No gha cache. type=gha,mode=max uploaded every layer to the Actions
+          # cache on top of the registry push -- the whole image over the wire
+          # twice each run, the slow part of the job. slurm-ghr runners are
+          # ephemeral, so a follow-up may add a gha cache back to skip the base
+          # stage; for now the build is left uncached.
           # Skipping the toolchains is a workflow_dispatch choice and nothing
           # else. Testing `inputs.build_toolchains == false` on its own does
           # not say that: on a push there is no such input, and an expression
