@@ -48,7 +48,9 @@ summary() {
     [ "$XFAIL_N" -gt 0 ] && printf ", ${Y}%d xfail${N}" "$XFAIL_N"
     [ "$XPASS_N" -gt 0 ] && printf ", ${Y}%d xpass${N}" "$XPASS_N"
     printf " ${D}(%d checks total)${N}\n" "$total"
-    [ "$REQUIRE_ALL_GREEN" = 1 ] && printf "${Y}REQUIRE_ALL_GREEN=1${N} — every case must pass; xfail does not excuse a failure\n"
+    if [ "$REQUIRE_ALL_GREEN" = 1 ]; then
+        printf "${Y}REQUIRE_ALL_GREEN=1${N} — every case must pass; xfail does not excuse a failure\n"
+    fi
 }
 
 # The case names in a tier: column 1 where column 2 (comma list) contains the tier.
