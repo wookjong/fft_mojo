@@ -28,8 +28,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # APT::Sandbox::User "root": the slurm-ghr builder is rootless podman, where
 # apt's drop to the _apt user for downloads cannot setgroups ("Could not switch
-# group", exit 100). Fetching as root skips that drop. Inherited by the builder
-# stage below, which is FROM base.
+# group", exit 100). Fetching as root skips that drop. Inherited by the stages
+# below, which are FROM base.
 RUN echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/00no-sandbox
 
 # gcc-riscv64-unknown-elf is for the target, not the host: the simulator
