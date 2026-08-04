@@ -38,6 +38,11 @@ mkdir -p out
 TARGETS="${*:-}"
 if [ -z "$TARGETS" ]; then
     TARGETS="$(ls benchmarks/*.mojo | xargs -n1 basename | sed 's/\.mojo$//')"
+    # Skip benchmarks the manifest marks xfail (expect column): they name a device
+    # feature the toolchain does not offer yet, so they cannot compile. Naming one
+    # explicitly still builds it (to watch the error). See tests/manifest.tsv.
+    xfail="$(awk -F'\t' '$5 == "xfail" {print $1}' tests/manifest.tsv 2>/dev/null)"
+    for x in $xfail; do TARGETS="$(echo "$TARGETS" | grep -vx "$x")"; done
 fi
 
 OUT="$(mktemp -d)"
