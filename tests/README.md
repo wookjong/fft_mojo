@@ -4,8 +4,10 @@
 first, stopping at the first failure. `tests/manifest.tsv` lists the cases.
 
 ```
-./scripts/test.sh            # every tier
+./scripts/test.sh            # every tier, then the opcode-coverage report
 ./scripts/test.sh t0 t1      # only these
+./scripts/test.sh coverage   # just the opcode-coverage map
+REQUIRE_ALL_GREEN=1 ./scripts/test.sh   # require every case, xfail included
 ```
 
 ## Tiers
@@ -29,13 +31,33 @@ first, stopping at the first failure. `tests/manifest.tsv` lists the cases.
 
 ## Manifest
 
-Tab-separated: `name`, the tiers a case belongs to, its family (`C`
-controller/device_main, `O` operation, `W` workload), and what a run asserts.
-Adding a case is a new row.
+Tab-separated, one row per case: `name`, the `tiers` it belongs to, its
+`family` (`C` controller/device_main, `O` operation, `W` workload), the `check`
+a run asserts (`golden`/`stat`), the `expect` (`pass` or `xfail`), and a `note`
+saying why for an xfail. Adding a case is a new row.
+
+The full 24-workload set is the coverage target — the breadth the Spike executor
+port validated. `expect` is the single place a case's status lives, so the suite
+is honest today and flips to all-green as fixes land: mark a fixed case `pass`.
+A case marked `xfail` that starts passing is reported `[XPASS]`, a reminder to
+promote it.
+
+`REQUIRE_ALL_GREEN=1` is the one switch that ignores `expect` and requires every
+case to pass — the gate to turn on the day the in-progress simulator fixes land.
 
 t2 and t3 rows wait on a Detour harness that returns the stat counters
 (`NdpStats`: per-unit issue counts, scratchpad reads/writes, launch count)
 rather than only printing them; until it lands those tiers report pending.
+
+## Opcode coverage
+
+`./scripts/test.sh coverage` (or `./scripts/opcode-map.sh`) reports which
+RVV / scalar / CSR / M2NDP opcodes each workload lowers to, read from the device
+`.s` our llc emits — the same assembly a launch feeds the loader. It also cross-
+references the featured opcode families the Spike port validated (vec↔scalar
+moves, broadcasts, int↔fp converts, slides, the FMA family, `frm` via `csrrwi`,
+the M2NDP vector and scalar-fp atomics, reductions, gather) against the workloads
+that exercise each. `docs/TESTING.md` carries the rendered map.
 
 ## Where the boundary is
 

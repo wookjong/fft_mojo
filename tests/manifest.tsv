@@ -4,50 +4,57 @@
 #   name      the workload or fixture
 #   tiers     comma-separated tiers this case belongs to (t1..t4)
 #   family    C = controller/device_main, O = basic operation, W = workload
-#   check     what a run asserts -- "golden", "stat", or both; free text for now
+#   check     what a run asserts -- "golden", "stat", or the shape a t2 run checks
+#   expect    "pass" (must pass) or "xfail" (known-broken today, run anyway)
+#   note      why, for an xfail; "-" otherwise
+#
+# The full 24-workload set is the coverage target -- the same breadth the Spike
+# executor port validated. "expect" is the one place a case's status lives, so
+# the suite is honest today and flips to all-green as the fixes land: mark a
+# fixed case "pass" (or run once with REQUIRE_ALL_GREEN=1 to require every case
+# green regardless of this column). test.sh flags an xfail that starts passing
+# as [XPASS] so no case stays xfail after it works.
 #
 # t2/t3 rows are commented until the stat-exposing harness lands; test.sh reports
 # those tiers as pending rather than passing an empty set.
 #
-# name		tiers	family	check
+# name		tiers	family	check	expect	note
 # t4 runs each through host-run.sh: build the host program, launch the task on
-# the simulator, check the answer it wrote back. "golden" must pass; "xfail" is a
-# case known to fail today (the reason follows), run anyway so the failure stays
-# visible and an [XPASS] flags it the day it starts working.
-vector_add	t1,t4	W	golden
-dlrm_sls	t4	W	golden
-imdb_three_col_and	t4	W	golden
-imdb_two_col_and	t4	W	golden
-memcpy	t4	W	golden
-memset	t4	W	golden
-pagerank_inicsr	t4	W	golden
-relu	t4	W	golden
-residual	t4	W	golden
-sssp	t4	W	golden
-spmv	t4	W	xfail: fp result rounds ~1e-5 off an exact check
-gelu	t4	W	xfail: simulator RENAMING PANIC
-gemv	t4	W	xfail: simulator RENAMING PANIC
-gemv_aggregation	t4	W	xfail: simulator RENAMING PANIC
-histogram	t4	W	xfail: simulator RENAMING PANIC
-imdb_gt_lt_fp32	t4	W	xfail: simulator RENAMING PANIC
-imdb_gteq_lt_int64	t4	W	xfail: simulator RENAMING PANIC
-imdb_lt_int64	t4	W	xfail: simulator RENAMING PANIC
-kmeans_assign	t4	W	xfail: simulator RENAMING PANIC
-layernorm	t4	W	xfail: simulator RENAMING PANIC
-narrow	t4	W	xfail: simulator RENAMING PANIC
-softmax	t4	W	xfail: simulator RENAMING PANIC
-vector_exp	t4	W	xfail: simulator RENAMING PANIC
-wide	t4	W	xfail: simulator RENAMING PANIC
+# the simulator, check the answer it wrote back.
+vector_add	t1,t4	W	golden	pass	-
+dlrm_sls	t4	W	golden	pass	-
+imdb_three_col_and	t4	W	golden	pass	-
+imdb_two_col_and	t4	W	golden	pass	-
+memcpy	t4	W	golden	pass	-
+memset	t4	W	golden	pass	-
+pagerank_inicsr	t4	W	golden	pass	-
+relu	t4	W	golden	pass	-
+residual	t4	W	golden	pass	-
+sssp	t4	W	golden	pass	-
+spmv	t4	W	golden	xfail	fp result rounds ~1e-5 off an exact check
+gelu	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+gemv	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+gemv_aggregation	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+histogram	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+imdb_gt_lt_fp32	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+imdb_gteq_lt_int64	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+imdb_lt_int64	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+kmeans_assign	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+layernorm	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+narrow	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+softmax	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+vector_exp	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+wide	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
 
 # t2 -- controller / device_main paths. A mojo workload whose device_main
 # computes on the controller itself (stack + a non-inlined call) and launches
 # nothing. Compiled through the task pipeline and run on Detour's devmain_run;
 # asserts launches=0 + load/store traffic + no abort. Self-contained, so there
 # is no external buffer and no golden value -- the run's shape is the check.
-devmain_self	t2	C	launches=0; ldst-traffic; no-abort
-# devmain_launch	t2	C	golden; launches=1; NDP unit active (needs a launch fixture)
+devmain_self	t2	C	launches=0; ldst-traffic; no-abort	pass	-
+# devmain_launch	t2	C	golden; launches=1; NDP unit active	pass	needs a launch fixture
 
 # t3 -- basic operations (needs the stat harness):
-# vfexp		t3	O	golden; sf_unit_issue > 0
-# vamoadd	t3	O	golden; one vector atomic, spad writes
-# reduce_sum	t3	O	golden; reduction issues
+# vfexp		t3	O	golden; sf_unit_issue > 0	pass	-
+# vamoadd	t3	O	golden; one vector atomic, spad writes	pass	-
+# reduce_sum	t3	O	golden; reduction issues	pass	-
