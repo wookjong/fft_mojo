@@ -31,20 +31,20 @@ pagerank_inicsr	t4	W	golden	pass	-
 relu	t4	W	golden	pass	-
 residual	t4	W	golden	pass	-
 sssp	t4	W	golden	pass	-
-spmv	t4	W	golden	xfail	fp result rounds ~1e-5 off an exact check
-gelu	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-gemv	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-gemv_aggregation	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-histogram	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-imdb_gt_lt_fp32	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-imdb_gteq_lt_int64	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-imdb_lt_int64	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-kmeans_assign	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-layernorm	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-narrow	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-softmax	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-vector_exp	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
-wide	t4	W	golden	xfail	simulator RENAMING PANIC on an RVV opcode the base executor mishandles; detour fix in progress
+spmv	t4	W	golden	pass	-
+gelu	t4	W	golden	pass	-
+gemv	t4	W	golden	pass	-
+gemv_aggregation	t4	W	golden	pass	-
+histogram	t4	W	golden	pass	-
+imdb_gt_lt_fp32	t4	W	golden	pass	-
+imdb_gteq_lt_int64	t4	W	golden	pass	-
+imdb_lt_int64	t4	W	golden	pass	-
+kmeans_assign	t4	W	golden	pass	-
+layernorm	t4	W	golden	pass	-
+narrow	t4	W	golden	pass	-
+softmax	t4	W	golden	pass	-
+vector_exp	t4	W	golden	pass	-
+wide	t4	W	golden	pass	-
 
 # t2 -- controller / device_main paths. A mojo workload whose device_main
 # computes on the controller itself (stack + a non-inlined call) and launches
