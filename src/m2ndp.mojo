@@ -33,6 +33,7 @@ from m2ndp_host import (
     Config,
     Toolchain,
     _add_export_alias,
+    _align_masked_gathers,
     _getenv,
     _mktemp,
     _run,
@@ -377,13 +378,19 @@ trait NDPTask:
         IR rather than assembly: this is the frontend's own LLVM, which has
         never heard of the vendor extension, so none of the M²NDP lowering has
         happened. Assembly here would look finished and not be.
+
+        One repair on the way out: the alignment the frontend drops from a
+        masked gather (see `_align_masked_gathers`). Here rather than in
+        `launch`, so a build and a launch compile the same text.
         """
-        return String(
-            compile_info[
-                Self.__m2ndp_rt_launch_task,
-                emission_kind="llvm",
-                target = Self.target,
-            ]()
+        return _align_masked_gathers(
+            String(
+                compile_info[
+                    Self.__m2ndp_rt_launch_task,
+                    emission_kind="llvm",
+                    target = Self.target,
+                ]()
+            )
         )
 
     @staticmethod

@@ -14,6 +14,51 @@ from std.os import abort
 from std.sys import size_of
 
 
+def _align_masked_gathers(ir: String) -> String:
+    """Give each `llvm.masked.gather` the alignment its element type has.
+
+    The frontend takes an alignment and emits the intrinsic without one.
+    ScalarizeMaskedMemIntrin reads a missing attribute as align 1, RISC-V calls
+    a gather narrower than its element illegal, and the pass scalarizes it to
+    one `lbu` per byte. With `<8 x ptr> align 4` the same IR selects
+    `vluxei64.v v8, (a0), v12, v0.t`.
+
+    Comes out when the frontend emits the attribute itself.
+    """
+    comptime MARK = "@llvm.masked.gather."
+    var out = String()
+    var at = 0
+    while True:
+        var start = ir.find(MARK, at)
+        if start < 0:
+            return out + ir[byte=at:]
+        var open = ir.find("(", start)
+        if open < 0:
+            return out + ir[byte=at:]
+        var close = ir.find(">", open)   # end of the `<N x ptr>` operand
+        if close < 0:
+            return out + ir[byte=at:]
+
+        # `v8i32.v8p0` -- the element width, past the lane count.
+        var overload = String(ir[byte = start + len(MARK) : open])
+        var dot = overload.find(".")
+        var bits = 0
+        for i in range(dot if dot > 0 else len(overload)):
+            var c = overload[byte = i : i + 1]
+            if c == "i" or c == "f":
+                try:
+                    bits = Int(String(overload[byte = i + 1 : dot]))
+                except:
+                    bits = 0
+                break
+
+        out += ir[byte = at : close + 1]
+        var tail = String(ir[byte = close + 1 : close + 8])
+        if bits >= 8 and not tail.startswith(" align"):
+            out += " align " + String(bits // 8)
+        at = close + 1
+
+
 def _add_export_alias(ir: String, path: String) raises:
     """Give the entry point the name the launcher calls it by.
 
