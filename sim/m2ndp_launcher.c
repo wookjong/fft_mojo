@@ -28,6 +28,9 @@ void __m2ndp_set_task_range(u64 base, u64 size) { (void)base; (void)size; }
 int __m2ndp_num_groups(void) { return (int)*(volatile u64 *)M2NDP_NUM_GROUPS; }
 int __m2ndp_spad_capacity(void) { return (int)*(volatile u64 *)M2NDP_SPAD_CAP; }
 
+/* Serial console: write a byte to the UART transmit register -> host stdout. */
+void __m2ndp_putc(char c) { *(volatile unsigned char *)M2NDP_UART_TX = (unsigned char)c; }
+
 /* Entry the linker wants (-e _start). The controller starts device_main
  * directly, so this is never executed; it only has to exist and be valid. */
 __attribute__((naked, section(".text.init"))) void _start(void) {

@@ -56,6 +56,8 @@ void __m2ndp_vamoadd_i64(void) { host_side("__m2ndp_vamoadd_i64"); }
 void __m2ndp_vfamoadd_f32(void) { host_side("__m2ndp_vfamoadd_f32"); }
 void __m2ndp_vfamoadd_f64(void) { host_side("__m2ndp_vfamoadd_f64"); }
 
+void __m2ndp_putc(unsigned char c) { (void)c; host_side("__m2ndp_putc"); }
+
 int __m2ndp_global_uthread_id(void) { host_side("__m2ndp_global_uthread_id"); return 0; }
 int __m2ndp_local_uthread_id(void) { host_side("__m2ndp_local_uthread_id"); return 0; }
 int __m2ndp_group_id(void) { host_side("__m2ndp_group_id"); return 0; }

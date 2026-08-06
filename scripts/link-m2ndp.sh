@@ -29,7 +29,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 "$GCC" $CFLAGS -c "$REPO/sim/m2ndp_launcher.c" -o "$tmp/launcher.o"
+# The Mojo runtime symbols a printing task references (sim/device_rt.c).
+"$GCC" $CFLAGS -c "$REPO/sim/device_rt.c" -o "$tmp/device_rt.o"
 # -pie: a relocatable image the loader can place in a pool slot, not a fixed-
 # address executable. Without it device_main's kernel address stays link-time.
-"$LLD" -pie -T "$REPO/scripts/m2ndp.lds" -e _start "$tmp/launcher.o" "$task" -o "$out"
+"$LLD" -pie -T "$REPO/scripts/m2ndp.lds" -e _start "$tmp/launcher.o" "$tmp/device_rt.o" "$task" -o "$out"
 echo "linked $out"
