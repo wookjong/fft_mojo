@@ -6,10 +6,10 @@ what the README's getting started walks through.
 
     ./scripts/host-run.sh hello
 
-`DeviceConsole` writes to the controller's UART, which the runtime streams to
-the host stdout. `write` takes any `Writable`, so a value formats the same way
-`print` does on the host. Only `device_main` has one -- a kernel runs on the
-cores, which own no UART.
+`DeviceConsole` writes to the controller's UART, which the simulator logs a
+line at a time as `[UART]`. `write` takes any `Writable`, so a value formats
+the same way `print` does on the host. Only `device_main` has one -- a kernel
+runs on the cores, which own no UART.
 """
 
 from m2ndp import NDPTask, DeviceConsole, PooledRange

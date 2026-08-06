@@ -37,18 +37,14 @@ M²NDP-Detour, and — among a few hundred lines of the simulator's own logging 
 prints:
 
 ```
-Hello[2026-08-06 21:11:02.310] [info] NDP  0: average Data Cache Hit : 0, ...
-, world!
-2 + 2[2026-08-06 21:11:02.475] [info] NDP  0: average Data Cache Hit : 0, ...
- = 4
+[2026-08-06 21:25:31.222] [info] [UART] Hello, world!
+[2026-08-06 21:25:31.623] [info] [UART] 2 + 2 = 4
 ...
 [host] hello ok
 ```
 
-`Hello, world!` and `2 + 2 = 4` are the device talking. They arrive a byte at a
-time, as the controller writes them to the UART, and the simulator logs to the
-same terminal — so a log line lands wherever it happens to fall, including
-mid-word. Nothing is wrong when that happens.
+The `[UART]` lines are the device talking: `device_main` wrote them to the
+controller's UART, which the simulator logs a line at a time.
 
 `[host] hello ok` is the host program, after the launch returned.
 
@@ -94,10 +90,10 @@ def main() raises:
 kernels run in what order. This one launches none — it only prints, which is
 what makes it the smallest workload there is.
 
-`DeviceConsole` writes to the controller's UART and the runtime streams that to
-the host stdout. `write` takes any `Writable`, so a value formats the way
-`print` does on the host. Only `device_main` gets one: a kernel runs on the
-cores, and they own no UART.
+`DeviceConsole` writes to the controller's UART, which the simulator logs a
+line at a time as `[UART]`. `write` takes any `Writable`, so a value formats
+the way `print` does on the host. Only `device_main` gets one: a kernel runs on
+the cores, and they own no UART.
 
 The rest is what every task needs. `Params` is declared once and both sides
 read it — the pool is shared memory, so a parameter is a plain pointer and
