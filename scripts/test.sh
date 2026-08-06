@@ -86,8 +86,30 @@ tier_t0() {
     [ -x "$LD" ] && pass "ld.lld runs — the task linker" || fail "ld.lld is present and runnable" "not executable at $LD"
     "$LLC" --version 2>/dev/null | grep -q 'riscv64' \
         && pass "riscv64 is a registered llc target" || fail "llc knows the riscv64 target"
-    "$LLC" -mtriple=riscv64-unknown-elf -mattr=help 2>&1 | grep -qi 'xm2ndp' \
-        && pass "the xm2ndp vendor extension is available" || fail "llc has the xm2ndp extension"
+    if "$LLC" -mtriple=riscv64-unknown-elf -mattr=help 2>&1 | grep -qi 'xm2ndp'; then
+        pass "the xm2ndp vendor extension is available"
+    else
+        fail "llc has the xm2ndp extension"
+        _t0_why_no_xm2ndp
+    fi
+}
+
+# The above fails in CI now and then and passes on a re-run, with the same image
+# digest and an llc whose hash matches the release asset -- so the binary is not
+# the variable. This says which llc ran, what it linked, and whether the feature
+# list came out whole, since a truncated one would explain the miss.
+_t0_why_no_xm2ndp() {
+    local h; h="$(mktemp)"
+    "$LLC" -mtriple=riscv64-unknown-elf -mattr=help >"$h" 2>&1
+    printf "         exit=%s lines=%s bytes=%s xm2ndp=%s (a whole list is 447 lines)\n" \
+        "$?" "$(wc -l <"$h")" "$(wc -c <"$h")" "$(grep -ci xm2ndp "$h")"
+    printf "         llc %s\n" "$(sha256sum "$LLC" | cut -c1-16)"
+    printf "         %s\n" "$(ldd "$LLC" 2>&1 | grep -i libLLVM | head -1)"
+    printf "         %s | libstdc++ %s\n" \
+        "$(grep -h '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2)" \
+        "$(dpkg-query -W -f='${Version}' libstdc++6 2>/dev/null)"
+    printf "         tail: %s\n" "$(tail -1 "$h")"
+    rm -f "$h"
 }
 
 tier_t1() {
