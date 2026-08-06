@@ -20,6 +20,7 @@ GPU has to be two kernels here.
 from std.atomic import Atomic, Ordering
 from std.compile import compile_info
 from std.sys import argv
+from std.sys.info import CompilationTarget
 from std.ffi import external_call
 from std.memory import AddressSpace, UnsafePointer
 from std.sys import size_of
@@ -495,6 +496,56 @@ def group_id() -> Int:
     return Int(external_call["__m2ndp_group_id", Int32]())
 
 
+# The geometry accessors read the same runtime config from either side, but the
+# two sides reach it differently: the host runs beside the config file and reads
+# it, the device is inside the simulation and reads a value the controller seeded
+# into MMIO. `comptime if` picks the branch per compilation target, so the host
+# build carries no device symbol and the device IR carries no file access.
+@always_inline
+def is_ndp() -> Bool:
+    """True when compiling for the M2NDP device rather than the host.
+
+    Keys off the `+xm2ndp` vendor feature, which only `m2ndp_target()` carries,
+    so it holds whatever the host architecture is -- never `is_x86()`, which a
+    non-x86 host would get wrong.
+    """
+    return CompilationTarget._has_feature["xm2ndp"]()
+
+
+# The geometry accessors read the same runtime config from either side, reached
+# differently: the host runs beside the config file and reads it; the device is
+# inside the simulation and reads a value the controller seeded into MMIO. The
+# host branch can fail on the file, and a kernel cannot handle an error, so it is
+# caught and reported as -1 rather than raised. `comptime if is_ndp()` keeps each
+# branch out of the other's build.
+@always_inline
+def num_groups() -> Int:
+    """Number of groups the task spreads across, from the runtime config."""
+    comptime if is_ndp():
+        return Int(external_call["__m2ndp_num_groups", Int32]())
+    else:
+        try:
+            return Config.load().get("num_ndp_units")
+        except:
+            return -1
+
+
+@always_inline
+def spad_capacity() -> Int:
+    """Usable scratchpad bytes on one unit, from the runtime config.
+
+    Excludes the guard page between units; that spacing is internal, and a
+    workload never needs to know it exists.
+    """
+    comptime if is_ndp():
+        return Int(external_call["__m2ndp_spad_capacity", Int32]())
+    else:
+        try:
+            return Config.load().get("spad_size")
+        except:
+            return -1
+
+
 # ---------------------------------------------------------------- atomics
 #
 # With no barrier, atomics are how µthreads combine results. They lower to
@@ -666,6 +717,55 @@ def scratchpad[
             alignment = alignment.__mlir_index__(),
         ]()
     )
+
+
+# The M2NDP scratchpad region in the device address map (detour address_map.h):
+# each unit's scratchpad sits at _SPAD_BASE + unit*(spad_capacity() + guard).
+# These mirror the non-ASAN map; an ASAN build shifts both by M2NDP_ADDR_OFFSET.
+comptime _SPAD_BASE = 0x20000000000  # M2NDP_SPAD_BASE, 2 TiB
+comptime _SPAD_GUARD = 0x1000        # M2NDP_GUARD_SIZE, 4 KiB
+
+
+@always_inline
+def _spad_region_base(group: Int) -> Int:
+    """Absolute base of `group`'s scratchpad -- its owning unit's region.
+
+    `unit(group)` is identity in the one-group-per-unit model. Matches the
+    simulator's `AddressDecoder::scratchpad_base(unit)` so the two agree.
+    """
+    return _SPAD_BASE + group * (spad_capacity() + _SPAD_GUARD)
+
+
+@always_inline
+def _spad_offset[
+    T: AnyType, //
+](
+    handle: UnsafePointer[T, MutUntrackedOrigin, address_space = AddressSpace.SHARED]
+) -> Int:
+    """Byte offset of scratchpad global `handle` within the .spad block, no base.
+
+    The backend replaces this call with the constant offset (see
+    RISCVM2ndpLowerScratchpad), so it carries no `scratchpad_base` and is legal
+    outside a kernel.
+    """
+    return Int(external_call["__m2ndp_scratchpad_offset", Int64](handle))
+
+
+@always_inline
+def spad_addr[
+    T: AnyType, //
+](
+    handle: UnsafePointer[T, MutUntrackedOrigin, address_space = AddressSpace.SHARED],
+    group: Int,
+) -> UnsafePointer[T, MutAnyOrigin]:
+    """Absolute address of scratchpad `handle` on `group` (see docs/PRIMITIVES.md).
+
+    device_main cannot index a scratchpad global directly; this forms the
+    address instead -- the target unit's region base plus the global's offset --
+    so the memory path routes it to that unit.
+    """
+    var addr = _spad_region_base(group) + _spad_offset(handle)
+    return UnsafePointer[UInt8, MutAnyOrigin](unsafe_from_address=addr).bitcast[T]()
 
 
 # ---------------------------------------------------------------- target

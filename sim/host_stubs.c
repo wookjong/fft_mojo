@@ -59,3 +59,9 @@ void __m2ndp_vfamoadd_f64(void) { host_side("__m2ndp_vfamoadd_f64"); }
 int __m2ndp_global_uthread_id(void) { host_side("__m2ndp_global_uthread_id"); return 0; }
 int __m2ndp_local_uthread_id(void) { host_side("__m2ndp_local_uthread_id"); return 0; }
 int __m2ndp_group_id(void) { host_side("__m2ndp_group_id"); return 0; }
+int __m2ndp_num_groups(void) { host_side("__m2ndp_num_groups"); return 0; }
+int __m2ndp_spad_capacity(void) { host_side("__m2ndp_spad_capacity"); return 0; }
+
+/* A scratchpad global's offset. On the device the layout pass replaces the call
+ * with a constant; a host build still has to link it. */
+long __m2ndp_scratchpad_offset(void *g) { (void)g; host_side("__m2ndp_scratchpad_offset"); return 0; }
