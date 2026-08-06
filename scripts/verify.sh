@@ -28,11 +28,12 @@ echo "[verify] checking artifacts"
 
 check "RISC-V target" \
       "grep -h 'target triple' out/*.ll | sort -u | grep -c riscv64" "1"
-# A µthread's index in the range is the whole of what the workloads ask about
-# themselves, which is what the reference gives its kernels as well.
-check "the only ID the workloads read" \
-      "grep -ho '@__m2ndp_[a-z]*_*uthread_id\\|@__m2ndp_group_[a-z]*' out/*.ll | sort -u" \
-      "@__m2ndp_global_uthread_id"
+# A kernel keys off its µthread's index in the range (global_uthread_id); a task
+# that orchestrates over its groups keys off group_id too. Those are the only
+# identity reads -- no other per-core or per-µthread index leaks in.
+check "the identity symbols the workloads read" \
+      "grep -ho '@__m2ndp_[a-z]*_*uthread_id\\|@__m2ndp_group_[a-z]*' out/*.ll | sort -u | paste -sd," \
+      "@__m2ndp_global_uthread_id,@__m2ndp_group_id"
 # The operation symbols are the other half of the contract; unlike the ID
 # symbols these carry an element type, since the frontend cannot overload on
 # vector type.
