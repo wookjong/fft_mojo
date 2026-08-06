@@ -172,6 +172,38 @@ def launch_serial[F: ImplicitlyDeletable, //, kernel: F]():
     external_call["__m2ndp_launch_serial", NoneType](materialize[kernel]())
 
 
+# ---------------------------------------------------------------- device console
+
+
+@always_inline
+def _uart_putc(c: UInt8):
+    """Write one byte to the device UART transmit register (the controller
+    streams it to the host stdout)."""
+    external_call["__m2ndp_putc", NoneType](c)
+
+
+@fieldwise_init
+struct DeviceConsole(Writer):
+    """A serial console for `device_main`, over the UART to the host stdout.
+    `write` streams to it, reusing the standard formatting so any `Writable`
+    works -- Int, Float, String:
+
+        var con = DeviceConsole()
+        con.write("launched group ", group_id(), "\n")
+
+    Only `device_main` runs on the controller, which owns the UART; a kernel on
+    the cores has no console. The formatting runs in a stack buffer (no device
+    allocator); the one runtime symbol it references is defined in sim/device_rt.c.
+    """
+
+    def write_bytes(mut self, bytes: Span[Byte, _]):
+        for b in bytes:
+            _uart_putc(b)
+
+    def write_string(mut self, string: StringSlice):
+        self.write_bytes(string.as_bytes())
+
+
 def _map_address_flags(machine: Machine, range_param: Int) raises -> String:
     """The llc flags that turn an index back into the hardware's mapping.
 
