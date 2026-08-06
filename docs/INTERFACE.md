@@ -16,6 +16,8 @@ Every symbol comes out as a C-ABI function taking no arguments.
 | `__m2ndp_local_uthread_id` | `declare i32 @__m2ndp_local_uthread_id()` | `i32` | index among the µthreads on this core |
 | `__m2ndp_global_uthread_id` | `declare i32 @__m2ndp_global_uthread_id()` | `i32` | index across all cores; identifies the mapped data |
 | `__m2ndp_group_id` | `declare i32 @__m2ndp_group_id()` | `i32` | which group this µthread belongs to |
+| `__m2ndp_num_groups` | `declare i32 @__m2ndp_num_groups()` | `i32` | how many groups the task spreads across |
+| `__m2ndp_spad_capacity` | `declare i32 @__m2ndp_spad_capacity()` | `i32` | bytes of scratchpad on one unit |
 
 The IDs are `i32` and get sign-extended to `i64` at every use site, since
 the index type is 64-bit (`index_bit_width = 64`).
@@ -157,6 +159,26 @@ plain constants.
 from several objects, no single compilation would see all the globals and
 the layout would have to move back to the linker — at the cost of the
 arguments-first ordering.
+
+### Reaching a peer's scratchpad — the offset symbol
+
+A kernel accesses its own scratchpad through `scratchpad_base`, the per-core
+register above. `device_main` — and a kernel reaching another group — cannot: in
+controller code that register holds something else, so
+`riscv_m2ndp_scratchpad_base` is rejected outside a kernel. To let those form a
+peer address instead, a task asks for a global's offset with a call the layout
+pass resolves, mirroring `__m2ndp_declare_params`:
+
+| | |
+|---|---|
+| `__m2ndp_scratchpad_offset` | `declare i64 @__m2ndp_scratchpad_offset(ptr addrspace(3))` — a scratchpad global's constant offset within `.spad`, no base |
+
+`RISCVM2ndpLowerScratchpad` replaces each call with the constant offset and skips
+its use of the global in the base-relative rewrite, so no `scratchpad_base` is
+emitted and the kernel-only check leaves it alone. The mojo `spad_addr` primitive
+adds this offset to the target unit's region base, giving an addrspace(0) absolute
+address the memory path routes to that unit. See
+[`DEV-spad-addr-peer.md`](DEV-spad-addr-peer.md).
 
 ### What the launcher needs
 
