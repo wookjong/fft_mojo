@@ -13,11 +13,11 @@ memory directly -- one atomic per µthread instead of one per core -- which is
 the same answer with more traffic, and keeps the three-kernel shape the point
 of this workload legible.
 
-The exponent is the stdlib's; see `vector_exp`.
+The exponent is `m2ndp.exp`, the `vfexp` the reference shows; see `vector_exp`.
 """
 
 from std.sys import argv, size_of
-from std.math import exp
+from std.math import exp as host_exp
 from std.random import random_float64, seed
 
 from m2ndp import (
@@ -26,6 +26,7 @@ from m2ndp import (
     PooledRange,
     atomic_add,
     atomic_max,
+    exp,
     global_uthread_id,
     launch_parallel,
 )
@@ -114,10 +115,10 @@ def main() raises:
             host_max = input[i]
     var host_total = Float32(0)
     for i in range(n):
-        host_total += exp(input[i] - host_max)
+        host_total += host_exp(input[i] - host_max)
 
     for i in range(n):
-        var want = exp(input[i] - host_max) / host_total
+        var want = host_exp(input[i] - host_max) / host_total
         if abs(output[i] - want) > 1e-4 * abs(want) + 1e-9:
             print("[host] wrong at", i, ":", output[i], "expected", want)
             return

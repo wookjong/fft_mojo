@@ -16,8 +16,8 @@ scratchpad (f1 = sqrt(2/pi), f2 = 0.044715, f3 = 0.5):
     vse32.v v6, (x1)
 
 The reference spells tanh out of `vfexp` because that is the instruction it
-has. Written as `tanh` here, and what it lowers to is the stdlib's -- see
-`vector_exp` for why the exponent is arithmetic rather than one instruction.
+has, so this does too: `tanh(y) + 1 == 2 / (1 + e**(-2y))`, one `m2ndp.exp`.
+The host reference uses the stdlib's tanh, so the two agree within a tolerance.
 The constants are ordinary parameters.
 """
 
@@ -25,7 +25,14 @@ from std.sys import argv, size_of
 from std.math import tanh
 from std.random import random_float64, seed
 
-from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
+from m2ndp import (
+    PACKET,
+    NDPTask,
+    PooledRange,
+    exp,
+    global_uthread_id,
+    launch_parallel,
+)
 from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Float32]()   # lanes in one packet
@@ -49,7 +56,9 @@ struct Gelu(NDPTask):
         var i = global_uthread_id() * W
         var x = p.input.load[width=W](i)
         var inner = (x * x * p.cubic + 1) * x * p.scale
-        p.output.store(i, (tanh(inner) + 1) * x * p.half)
+        # tanh(inner) + 1 == 2 / (1 + e**(-2 inner)), one `vfexp` for the tanh.
+        var gate = 2.0 / (1.0 + exp(inner * -2.0))
+        p.output.store(i, gate * x * p.half)
 
     @staticmethod
     def device_main():

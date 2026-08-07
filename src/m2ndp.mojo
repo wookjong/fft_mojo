@@ -682,6 +682,44 @@ def atomic_add_indexed[
 
 
 @always_inline
+def exp[
+    dtype: DType, width: Int, //
+](x: SIMD[dtype, width]) -> SIMD[dtype, width]:
+    """`e**x` per lane, the M²NDP `vfexp` -- one instruction.
+
+    The frontend expands its own `exp` into a range reduction and a polynomial;
+    naming the symbol asks for the instruction instead. An external symbol
+    rather than an intrinsic, since Mojo's own LLVM cannot emit
+    `llvm.riscv.m2ndp.*`; RISCVM2ndpLowerExternalOps rewrites it into `fexp`
+    (scalar) or `vfexp` (vector). The symbol carries the element type, as the
+    atomics do; the lane count is left to the argument.
+    """
+    return external_call[
+        "__m2ndp_exp_" + _fp_suffix[dtype](),
+        SIMD[dtype, width],
+    ](x)
+
+
+@always_inline
+def _fp_suffix[dtype: DType]() -> StaticString:
+    """The float type as it appears in the `__m2ndp_exp_*` symbol names.
+
+    `fexp`/`vfexp` take f16, f32 and f64 (gated on Zfhmin, F and D); the symbol
+    carries the width, as the atomics' does, so the frontend does not overload.
+    """
+    comptime if dtype == DType.float16:
+        return "f16"
+    elif dtype == DType.float32:
+        return "f32"
+    elif dtype == DType.float64:
+        return "f64"
+    else:
+        # No M2NDP exponent for anything else; the empty suffix leaves an
+        # unresolved `__m2ndp_exp_` rather than silently miscompiling.
+        return ""
+
+
+@always_inline
 def _amo_op_prefix[dtype: DType]() -> StaticString:
     """Which vector-atomic family the element type belongs to.
 

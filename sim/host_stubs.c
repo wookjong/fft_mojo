@@ -62,6 +62,12 @@ void __m2ndp_vamoadd_i64(void) { host_side("__m2ndp_vamoadd_i64"); }
 void __m2ndp_vfamoadd_f32(void) { host_side("__m2ndp_vfamoadd_f32"); }
 void __m2ndp_vfamoadd_f64(void) { host_side("__m2ndp_vfamoadd_f64"); }
 
+/* The M2NDP exponent, one symbol per float type, lowered to fexp/vfexp. Same as
+ * the atomics: nothing here is entered, the linker only needs the names. */
+void __m2ndp_exp_f16(void) { host_side("__m2ndp_exp_f16"); }
+void __m2ndp_exp_f32(void) { host_side("__m2ndp_exp_f32"); }
+void __m2ndp_exp_f64(void) { host_side("__m2ndp_exp_f64"); }
+
 void __m2ndp_putc(unsigned char c) { (void)c; host_side("__m2ndp_putc"); }
 
 int __m2ndp_global_uthread_id(void) { host_side("__m2ndp_global_uthread_id"); return 0; }

@@ -11,19 +11,23 @@ Reference kernel:
     vfexp.v v2, v1          ; one instruction
     vse32.v v2, (x1)
 
-`vfexp.v` is an M²NDP instruction, and the vendor extension in this repo does
-not carry it: the extension covers the atomics, which are what the workloads
-here need from it. So the exponent is the stdlib's -- a polynomial over the
-same vector -- and the kernel comes out as arithmetic rather than one
-instruction. Adding `vfexp` to the extension would close the gap; nothing in
-the workload would change.
+`vfexp.v` is an M²NDP instruction. `m2ndp.exp` names it, and the backend lowers
+that to the one instruction the reference shows; the host reference uses the
+stdlib's polynomial, so the two agree only within a tolerance.
 """
 
 from std.sys import argv, size_of
-from std.math import exp
+from std.math import exp as host_exp
 from std.random import random_float64, seed
 
-from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
+from m2ndp import (
+    PACKET,
+    NDPTask,
+    PooledRange,
+    exp,
+    global_uthread_id,
+    launch_parallel,
+)
 from m2ndp_host import cxl_alloc
 
 comptime W = PACKET // size_of[Float32]()   # lanes in one packet
@@ -79,7 +83,7 @@ def main() raises:
         return
 
     for i in range(n):
-        var want = exp(input[i])
+        var want = host_exp(input[i])
         var err = abs(output[i] - want)
         if err > 1e-5 * abs(want) + 1e-6:
             print("[host] wrong at", i, ":", output[i], "expected", want)
