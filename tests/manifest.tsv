@@ -21,6 +21,7 @@
 # name		tiers	family	check	expect	note
 # t4 runs each through host-run.sh: build the host program, launch the task on
 # the simulator, check the answer it wrote back.
+hello	t4	C	printed over the UART	pass	-
 vector_add	t1,t4	W	golden	pass	-
 dlrm_sls	t4	W	golden	pass	-
 imdb_three_col_and	t4	W	golden	pass	-

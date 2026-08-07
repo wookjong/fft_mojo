@@ -22,7 +22,91 @@ between them. There is now a backend behind that seam --
 kernel gets the calling convention the hardware wants. What has not changed
 is that `benchmarks/` never had to know.
 
-## Quick start
+## Getting started
+
+The shortest path from nothing to something running on the simulator is the
+development image, which carries both toolchains already built:
+
+```bash
+docker run --rm -it ghcr.io/psal-postech/mojo-m2ndp:main
+./scripts/host-run.sh hello
+```
+
+That compiles `benchmarks/hello.mojo` for the device, links it, runs it on
+M²NDP-Detour, and — among a few hundred lines of the simulator's own logging —
+prints:
+
+```
+[2026-08-06 21:25:31.222] [info] [UART] Hello, world!
+[2026-08-06 21:25:31.623] [info] [UART] 2 + 2 = 4
+...
+[host] hello ok
+```
+
+The `[UART]` lines are the device talking: `device_main` wrote them to the
+controller's UART, which the simulator logs a line at a time.
+
+`[host] hello ok` is the host program, after the launch returned.
+
+Do not mount over `/work`: the toolchains live there and a mount hides them.
+
+### Hello, world
+
+The whole workload — kernels, `device_main`, and the host `main` that launches
+it — is one file, the way a `.cu` is:
+
+```mojo
+from m2ndp import NDPTask, DeviceConsole, PooledRange
+from m2ndp_host import cxl_alloc
+
+
+@fieldwise_init
+struct HelloParams(Movable):
+    var scratch: UnsafePointer[Int32, MutAnyOrigin]
+
+
+struct Hello(NDPTask):
+    comptime Params = HelloParams
+
+    @staticmethod
+    def device_main():
+        var con = DeviceConsole()
+        con.write("Hello, world!\n")
+        con.write("2 + 2 = ", 2 + 2, "\n")
+
+
+def main() raises:
+    if Hello.emit_ir_if_asked():
+        return
+    var scratch = cxl_alloc[Int32](8)
+    var rc = Hello.launch(PooledRange.over(scratch, 8), HelloParams(scratch))
+    if rc != 0:
+        print("[host] hello failed, exit", rc)
+        return
+    print("[host] hello ok")
+```
+
+`device_main` is the device side: it runs on the NDP controller and says which
+kernels run in what order. This one launches none — it only prints, which is
+what makes it the smallest workload there is.
+
+`DeviceConsole` writes to the controller's UART, which the simulator logs a
+line at a time as `[UART]`. `write` takes any `Writable`, so a value formats
+the way `print` does on the host. Only `device_main` gets one: a kernel runs on
+the cores, and they own no UART.
+
+The rest is what every task needs. `Params` is declared once and both sides
+read it — the pool is shared memory, so a parameter is a plain pointer and
+nothing is transferred. `launch` takes the range of the pool the task runs
+over, which is what settles how many microthreads there are (one per 32-byte
+packet). Nothing here launches a kernel, so the range goes unused, but a range
+there must be.
+
+From here, [`benchmarks/vector_add.mojo`](benchmarks/vector_add.mojo) is the
+same shape with one kernel and real data, and
+[Writing a benchmark](#writing-a-benchmark) below walks through it.
+
+### Building from a checkout
 
 ```bash
 git clone <this-repo> && cd mojo-m2ndp
@@ -31,26 +115,17 @@ git clone <this-repo> && cd mojo-m2ndp
 ./scripts/verify.sh         # check the artifacts
 ```
 
-To actually run one, on the timing simulator, with the workload's own host code:
+To run one rather than inspect it, you also need our LLVM:
 
 ```bash
 ./scripts/build-llvm.sh     # our LLVM, with the vendor extension
 ./scripts/host-run.sh       # every benchmark, checked against its own answer
+./scripts/test.sh           # the tiers, cheapest first — see tests/
 ```
 
-Or take the development image, which carries both toolchains already built,
-and skip the setup entirely:
-
-```bash
-docker run --rm -it ghcr.io/psal-postech/mojo-m2ndp:main
-./scripts/build.sh && ./scripts/verify.sh
-./scripts/host-run.sh       # run what came out — see docs/SIMULATION.md
-```
-
-Do not mount over `/work`: the toolchains live there and a mount hides them.
-The LLVM source is not in the image either — 2.6 GB that nothing above reads,
-since the compiler is already built. Rebuilding LLVM or running its lit suite
-needs a checkout.
+The image has no LLVM source in it — 2.6 GB that nothing above reads, since the
+compiler is already built. Rebuilding LLVM or running its lit suite needs a
+checkout.
 
 If Mojo is already installed, skip setup and point at it:
 
@@ -167,15 +242,19 @@ nothing standard to lower to. Sixteen scalar atomics were the alternative.
 ```
 src/m2ndp.mojo        the model: kernels' primitives, NDPTask, launching a task
 src/m2ndp_host.mojo   host-side machinery a launch runs on (files, processes, tools)
-benchmarks/           ports of M2NDP-public/examples/benchmarks -- 24 of them,
-                      each holding its kernels, its device_main and its host
-                      main. docs/STATUS.md lists what each one exercises
+benchmarks/           one file per workload, each holding its kernels, its
+                      device_main and its host main. Mostly ports of
+                      M2NDP-public/examples/benchmarks -- 24 of them -- plus
+                      hello.mojo and the devmain_* controller cases.
+                      docs/STATUS.md lists what each one exercises
+tests/manifest.tsv    which cases each test tier draws from
 sim/                  the device-side launcher (m2ndp_launcher.c) and host stubs
 scripts/
   setup.sh            install the Mojo toolchain
   env.sh              environment variables (source it)
   build.sh            each benchmark's device IR + assembly -> out/
   verify.sh           check the artifacts
+  test.sh             the test tiers, cheapest first (t0 toolchain .. t4 E2E)
   build-llvm.sh       our LLVM (vendor extension) + lld
   link-m2ndp.sh       link a task against the controller launcher
   host-run.sh         run a workload and check its own answer
