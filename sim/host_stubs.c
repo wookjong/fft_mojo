@@ -45,7 +45,13 @@ void __m2ndp_launch_serial(void (*kernel)(void))
 /* Where a kernel reads the task's parameters. On the device this never
  * survives to a call -- the backend rewrites it into a read of the scratchpad
  * base -- but a host build still has to link. */
-void __m2ndp_declare_params(void *g) { (void)g; host_side("__m2ndp_declare_params"); }
+void __m2ndp_declare_params(const char *name, long size, long align)
+{
+    (void)name;
+    (void)size;
+    (void)align;
+    host_side("__m2ndp_declare_params");
+}
 
 /* The indexed vector atomics. Declared without their real signatures, which
  * involve vectors and differ per element type: nothing here is ever entered,
@@ -67,3 +73,26 @@ int __m2ndp_spad_capacity(void) { host_side("__m2ndp_spad_capacity"); return 0; 
 /* A scratchpad global's offset. On the device the layout pass replaces the call
  * with a constant; a host build still has to link it. */
 long __m2ndp_scratchpad_offset(void *g) { (void)g; host_side("__m2ndp_scratchpad_offset"); return 0; }
+
+/* A named scratchpad region's address. On the device the layout pass assigns
+ * the name an offset and rewrites this into the scratchpad base plus it; a host
+ * build still has to link the symbol. */
+void *__m2ndp_spad_ptr(const char *name, long size, long align)
+{
+    (void)name;
+    (void)size;
+    (void)align;
+    host_side("__m2ndp_spad_ptr");
+    return 0;
+}
+
+/* The same region's offset alone. On the device the layout pass replaces the
+ * call with a constant; a host build still has to link the symbol. */
+long __m2ndp_spad_offset_by_name(const char *name, long size, long align)
+{
+    (void)name;
+    (void)size;
+    (void)align;
+    host_side("__m2ndp_spad_offset_by_name");
+    return 0;
+}

@@ -33,7 +33,7 @@ check "RISC-V target" \
 # identity reads -- no other per-core or per-µthread index leaks in.
 check "the identity symbols the workloads read" \
       "grep -ho '@__m2ndp_[a-z]*_*uthread_id\\|@__m2ndp_group_[a-z]*' out/*.ll | sort -u | paste -sd," \
-      "@__m2ndp_global_uthread_id,@__m2ndp_group_id"
+      "@__m2ndp_global_uthread_id,@__m2ndp_group_id,@__m2ndp_local_uthread_id"
 # The operation symbols are the other half of the contract; unlike the ID
 # symbols these carry an element type, since the frontend cannot overload on
 # vector type.
@@ -67,16 +67,16 @@ check "launches carry the kernel and nothing else" \
 # The task's three kernels, internal because only device_main reaches them.
 check "histogram: 3 kernels in one module" \
       "grep -cE '^define internal void @\"histogram::Histogram::(initialize|body|finalize)' out/histogram.ll | tr -d ' '" "3"
-# Two: the bins the kernels share, and the task's parameters. Both are the
-# task's own scratchpad, laid out by the compiler.
-check "histogram: bins and params in the scratchpad" \
-      "grep -c 'addrspace(3) global' out/histogram.ll | tr -d ' '" "2"
-# One use per kernel, on top of the definition. Counting uses rather than
-# occurrences: the body used to unroll into sixteen of them and now needs
+# Two named regions: the bins the kernels share, and the task's parameters.
+# Each reaches the layout pass as a marker keyed on its name, not a global.
+check "histogram: bins and params are named regions" \
+      "grep -cE 'c\"(hist_bins|__m2ndp_params)\\\\00\"' out/histogram.ll | tr -d ' '" "2"
+# One use per kernel, on top of the name's definition. Counting uses rather
+# than occurrences: the body used to unroll into sixteen of them and now needs
 # exactly one, so a threshold would have hidden the change either way. The
-# blob is found by its size, its name being a hash.
+# region is found by its name string.
 check "histogram: all kernels hit the bins" \
-      "b=\$(sed -n 's/^\\(@memory_blob_[0-9a-f]*\\) = internal addrspace(3) global \\[1024 x i8\\].*/\\1/p' out/histogram.ll); grep -c \"\$b\" out/histogram.ll | tr -d ' '" "4"
+      "b=\$(sed -n 's/^\\(@static_string_[0-9a-f]*\\) = internal constant \\[10 x i8\\] c\"hist_bins.*/\\1/p' out/histogram.ll); grep -c \"\$b\" out/histogram.ll | tr -d ' '" "4"
 # INIT/FINAL still combine with scalar atomics; BODY is the vector one, and
 # it keeps the scratchpad address space through the call.
 check "histogram: scratchpad atomic" \
@@ -88,12 +88,13 @@ check "histogram: one vector atomic, not 16 scalar" \
 # exported entry point, since histogram's module also carries a mangled copy of
 # it and counting the whole file would see the schedule twice.
 check "device_main: 1 parallel + 2 serial launches" \
-      "awk '/^define dso_local void @__m2ndp_rt_launch_task/,/^}/' out/histogram.ll | grep -c 'call void @__m2ndp_launch_' | tr -d ' '" "3"
+      "awk '/^define dso_local void @/,/^}/' out/histogram.ll | grep -c 'call void @__m2ndp_launch_' | tr -d ' '" "3"
 # Conforming to NDPTask is the whole interface to the host: the task exports
 # the runtime entry point and nothing else. device_main and the kernels are
 # internal, which is what keeps one task per ELF from colliding with another.
+# One external-linkage definition, whatever the frontend names it.
 check "task exports only its launch entry" \
-      "grep -c '^define dso_local[^@]*@[a-z_]' out/histogram.ll | tr -d ' '" "1"
+      "grep -c '^define dso_local' out/histogram.ll | tr -d ' '" "1"
 # One load and one store in the kernel, and nothing else.
 # Width-agnostic: the lane count follows PACKET, and what is being checked is
 # that the kernel is one load and one store, not how wide they are.

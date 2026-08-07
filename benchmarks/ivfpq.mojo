@@ -47,7 +47,12 @@ from m2ndp_host import cxl_alloc, Config
 
 # ------------------------------------------------------------ the index
 #
-# Compile-time as in the reference, the scratchpad arrays being sized from it.
+# Geometry is compile-time here as it is in the reference, because the
+# scratchpad arrays are sized from it. `CLUSTERS_PER_CORE` is the one value
+# that has to agree with the machine: the reference's run.sh derived it from
+# `nprobe` and a core count, and got it wrong once by deriving it from a stride
+# the simulator was not using. `main` reads the same config the runtime does
+# and checks it instead of deriving it twice.
 
 comptime VECTOR_DIM = 64        # dimensions per vector
 comptime NLIST = 16             # coarse centroids
@@ -90,16 +95,22 @@ struct IvfPqParams(Movable):
 struct IvfPq(NDPTask):
     comptime Params = IvfPqParams
 
-    # Declared once and shared by every kernel; contents survive a launch.
+    # Scratchpad, declared once and shared by every kernel below. Contents
+    # survive a launch, which is what lets the running top-K stay on chip
+    # across the cluster loop. Each region's name is its identity, so the three
+    # 64-byte regions (`cdist`, `top`, `topi`) stay distinct without ceremony.
     comptime cdist = scratchpad[NLIST, Float32, name="ivfpq_cdist"]()
     comptime probe = scratchpad[NPROBE, Int32, name="ivfpq_probe"]()
     comptime diff = scratchpad[VECTOR_DIM, Float32, name="ivfpq_diff"]()
     comptime lut = scratchpad[LUT_SIZE, Float32, name="ivfpq_lut"]()
     comptime score = scratchpad[LIST_SIZE, Float32, name="ivfpq_score"]()
-    # Double buffered: one buffer would let a µthread overwrite what another is folding.
+    # Running top-K, double buffered. A stage reads one parity and writes the
+    # other: with a single buffer a microthread could overwrite an entry
+    # another is still folding, and a launch is the only ordering there is.
     comptime top = scratchpad[2 * TOPK, Float32, name="ivfpq_top"]()
     comptime topi = scratchpad[2 * TOPK, Int32, name="ivfpq_topi"]()
-    # Which cluster step this core is on, a kernel taking no arguments.
+    # Which cluster step this core is on. `device_main` runs the loop, but a
+    # kernel takes no arguments, so the step lives here and `advance` moves it.
     comptime step = scratchpad[1, Int32, name="ivfpq_step"]()
 
     # ---------------------------------------------------------------- coarse
@@ -260,7 +271,8 @@ struct IvfPq(NDPTask):
         var to = IvfPq.top + (1 - pin) * TOPK
         var toi = IvfPq.topi + (1 - pin) * TOPK
 
-        # Out of clusters: carry the chain forward for `publish` to read.
+        # Out of clusters: carry the chain forward, so `publish` can always
+        # read the parity the last step wrote.
         if probe >= NPROBE:
             if local_uthread_id() == 0:
                 for r in range(TOPK):
@@ -359,7 +371,9 @@ struct IvfPq(NDPTask):
 #
 #     ./scripts/host-run.sh ivfpq
 #
-# Checked against an exhaustive search the host computes itself.
+# The host builds the index, runs the search, and checks the answer against an
+# exhaustive one it computes itself -- so the two do not come from the same
+# place.
 
 
 def main() raises:
@@ -371,7 +385,9 @@ def main() raises:
     var uthreads = UTHREADS_PER_CORE
     var stride = uthreads * machine.packet
 
-    # Checked, not assumed: too few is a cluster silently never searched.
+    # The one thing the workload cannot derive: how many clusters a core walks
+    # depends on how many cores there are. Checked rather than assumed, because
+    # too few is a cluster that is silently never searched.
     if CLUSTERS_PER_CORE * cores < NPROBE:
         raise Error(
             String("CLUSTERS_PER_CORE=")
@@ -390,7 +406,9 @@ def main() raises:
     var part_id = cxl_alloc[Int32](cores * TOPK)
     var out_score = cxl_alloc[Float32](TOPK)
     var out_id = cxl_alloc[Int32](TOPK)
-    # A µthread count, not the data: one stride per core puts µthreads on all of them.
+    # The range is a microthread count, not the data: every kernel indexes by
+    # its own id rather than by the address it was mapped to. One stride per
+    # core is what puts microthreads on all of them.
     var spawn = cxl_alloc[UInt8](cores * stride)
 
     seed(0)
@@ -449,7 +467,10 @@ def main() raises:
             want_score.append(s)
             want_id.append(Int32(label * LIST_SIZE + v))
 
-    # Scores must be distinct: a tie sends two candidates to one slot, costing recall silently.
+    # The fold reads "already taken" off the ranks below a candidate, which
+    # needs the scores to be distinct: a tie sends two candidates to one slot
+    # and leaves the next one stale. That costs recall rather than raising an
+    # error, so the index is rejected here instead of scored later.
     for a in range(len(want_score)):
         for b in range(a + 1, len(want_score)):
             if want_score[a] == want_score[b]:

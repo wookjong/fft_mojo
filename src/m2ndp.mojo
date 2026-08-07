@@ -350,10 +350,9 @@ trait NDPTask:
         The parameters are not passed here -- the launcher already holds them
         and puts them where a kernel reads them.
         """
-        # Which global holds the parameters. A workload's `name=` does not
-        # survive into the IR, so the backend is told this way instead; it
-        # exports the offset for the launcher and deletes the call.
-        external_call["__m2ndp_declare_params", NoneType](Self.params)
+        # Which region holds the parameters, by name; the backend exports its
+        # offset for the launcher and deletes the call.
+        Self.params.declare_params()
         external_call["__m2ndp_set_task_range", NoneType](base, size)
         Self.device_main()
 
@@ -394,7 +393,7 @@ trait NDPTask:
         )
 
     @staticmethod
-    def emit_ir_if_asked() -> Bool:
+    def emit_ir_if_asked() raises -> Bool:
         """Print this task's device code and stop, if asked on the command line.
 
         `--emit-ir` is how the build gets at the IR that actually ships. A
@@ -408,7 +407,18 @@ trait NDPTask:
         """
         var a = argv()
         if len(a) > 1 and String(a[1]) == "--emit-ir":
-            print(Self.device_ir())
+            var ir = Self.device_ir()
+            # The launcher calls the entry by its unmangled name. Whether the
+            # frontend emits that alongside the mangled definition depends on
+            # what else the module holds, so add it here -- as `launch` does for
+            # the copy it ships -- and every consumer of `--emit-ir` (the
+            # controller-image build among them) links against it.
+            var tmp = _mktemp() + "/emit.ll"
+            with open(tmp, "w") as f:
+                f.write(ir)
+            _add_export_alias(ir, tmp)
+            with open(tmp, "r") as f:
+                print(f.read(), end="")
             return True
         return False
 
@@ -716,6 +726,101 @@ def _amo_type_suffix[dtype: DType]() -> StaticString:
 # `extern __shared__`), which emits a fresh global per call site, so two
 # accesses to the "same" buffer silently land in different memory.
 
+struct Scratchpad[
+    count: Int, type: AnyType, name: StaticString, alignment: Int = 4
+](Copyable, Movable, ImplicitlyCopyable):
+    """A named per-unit scratchpad region, the CUDA `__shared__` equivalent.
+
+    The name is the region's identity: references to the same name -- in any of
+    a task's kernels -- reach one region, and two names never share storage
+    whatever their sizes. The handle is empty at runtime and carries only the
+    name and shape; `ptr` forms the address on demand.
+
+    `__m2ndp_spad_ptr` is a marker `RISCVM2ndpLowerScratchpad` replaces: it gives
+    each name an offset in the `.spad` block and rewrites the call to the
+    scratchpad base plus it, so an access is `base + offset`, one load.
+    """
+
+    @always_inline
+    def __init__(out self):
+        pass
+
+    @always_inline
+    def ptr(
+        self,
+    ) -> UnsafePointer[
+        Self.type, MutUntrackedOrigin, address_space = AddressSpace.SHARED
+    ]:
+        """The region's base address on this unit."""
+        return external_call[
+            "__m2ndp_spad_ptr",
+            UnsafePointer[
+                Self.type, MutUntrackedOrigin, address_space = AddressSpace.SHARED
+            ],
+        ](
+            _get_kgen_string[Self.name](),
+            Self.count * size_of[Self.type](),
+            Self.alignment,
+        )
+
+    @always_inline
+    def __getitem__(
+        self,
+    ) -> ref [MutUntrackedOrigin, AddressSpace.SHARED] Self.type:
+        """The single element, for a one-element region like the parameters."""
+        return self.ptr()[]
+
+    @always_inline
+    def __getitem__(
+        self, i: Int
+    ) -> ref [MutUntrackedOrigin, AddressSpace.SHARED] Self.type:
+        return self.ptr()[i]
+
+    @always_inline
+    def __add__(
+        self, n: Int
+    ) -> UnsafePointer[
+        Self.type, MutUntrackedOrigin, address_space = AddressSpace.SHARED
+    ]:
+        return self.ptr() + n
+
+    @always_inline
+    def store[
+        dt: DType, w: Int
+    ](self, offset: Int, val: SIMD[dt, w]):
+        self.ptr().bitcast[Scalar[dt]]().store(offset, val)
+
+    @always_inline
+    def load[
+        dt: DType, w: Int
+    ](self, offset: Int) -> SIMD[dt, w]:
+        return self.ptr().bitcast[Scalar[dt]]().load[width=w](offset)
+
+    @always_inline
+    def offset(self) -> Int:
+        """Byte offset within the `.spad` block, no base -- the backend replaces
+        this with the constant. Legal outside a kernel (it carries no base), so
+        `device_main` can form another unit's address of this region."""
+        return Int(
+            external_call["__m2ndp_spad_offset_by_name", Int64](
+                _get_kgen_string[Self.name](),
+                Self.count * size_of[Self.type](),
+                Self.alignment,
+            )
+        )
+
+    @always_inline
+    def declare_params(self):
+        """Mark this region as the parameter block, by name, so the backend
+        reserves it and exports the offset the launcher writes it to -- even
+        when no kernel reads it, which is why the size travels too."""
+        external_call["__m2ndp_declare_params", NoneType](
+            _get_kgen_string[Self.name](),
+            Self.count * size_of[Self.type](),
+            Self.alignment,
+        )
+
+
 @always_inline
 def scratchpad[
     count: Int,
@@ -723,39 +828,16 @@ def scratchpad[
     /,
     name: StaticString,
     alignment: Int = 4,
-]() -> UnsafePointer[
-    type, MutUntrackedOrigin, address_space = AddressSpace.SHARED
-]:
-    """`count` elements of named scratchpad, the CUDA `__shared__` equivalent.
+]() -> Scratchpad[count, type, name, alignment]:
+    """`count` elements of named scratchpad, shared per unit across launches.
 
         var tile = scratchpad[64, Float32, name="spmv_tile"]()
         tile[tid] = acc
 
-    Emits an `addrspace(3)` global; declare several and the compiler lays them
-    out, so no offsets appear in source.
-
-    This open-codes `pop.global_alloc` rather than calling `stack_allocation`,
-    whose promotion is gated on `is_gpu()` -- on a RISC-V triple the
-    addrspace(3) alloca falls through to an ordinary stack slot, which is
-    per-µthread and so shares nothing.
-
-    The signature mirrors `std._plugin`'s `stack_allocation_fn` hook, so this
-    body can move into a plugin overlay once a toolchain ships both a RISC-V
-    backend and the plugin selector. See docs/INTERFACE.md.
+    Declare several with distinct names and the backend lays them out, so no
+    offsets appear in source. See docs/INTERFACE.md and `Scratchpad`.
     """
-    return UnsafePointer[
-        type, MutUntrackedOrigin, address_space = AddressSpace.SHARED
-    ](
-        __mlir_op.`pop.global_alloc`[
-            name = _get_kgen_string[name](),
-            count = count.__mlir_index__(),
-            memoryType = __mlir_attr.`#pop<global_alloc_addr_space gpu_shared>`,
-            _type = UnsafePointer[
-                type, MutUntrackedOrigin, address_space = AddressSpace.SHARED
-            ]._mlir_type,
-            alignment = alignment.__mlir_index__(),
-        ]()
-    )
+    return Scratchpad[count, type, name, alignment]()
 
 
 # The M2NDP scratchpad region in the device address map (detour address_map.h):
@@ -776,35 +858,20 @@ def _spad_region_base(group: Int) -> Int:
 
 
 @always_inline
-def _spad_offset[
-    T: AnyType, //
-](
-    handle: UnsafePointer[T, MutUntrackedOrigin, address_space = AddressSpace.SHARED]
-) -> Int:
-    """Byte offset of scratchpad global `handle` within the .spad block, no base.
-
-    The backend replaces this call with the constant offset (see
-    RISCVM2ndpLowerScratchpad), so it carries no `scratchpad_base` and is legal
-    outside a kernel.
-    """
-    return Int(external_call["__m2ndp_scratchpad_offset", Int64](handle))
-
-
-@always_inline
 def spad_addr[
-    T: AnyType, //
+    count: Int, type: AnyType, name: StaticString, alignment: Int, //
 ](
-    handle: UnsafePointer[T, MutUntrackedOrigin, address_space = AddressSpace.SHARED],
+    handle: Scratchpad[count, type, name, alignment],
     group: Int,
-) -> UnsafePointer[T, MutAnyOrigin]:
+) -> UnsafePointer[type, MutAnyOrigin]:
     """Absolute address of scratchpad `handle` on `group` (see docs/PRIMITIVES.md).
 
-    device_main cannot index a scratchpad global directly; this forms the
-    address instead -- the target unit's region base plus the global's offset --
+    device_main cannot index a scratchpad region directly; this forms the
+    address instead -- the target unit's region base plus the region's offset --
     so the memory path routes it to that unit.
     """
-    var addr = _spad_region_base(group) + _spad_offset(handle)
-    return UnsafePointer[UInt8, MutAnyOrigin](unsafe_from_address=addr).bitcast[T]()
+    var addr = _spad_region_base(group) + handle.offset()
+    return UnsafePointer[UInt8, MutAnyOrigin](unsafe_from_address=addr).bitcast[type]()
 
 
 # ---------------------------------------------------------------- target

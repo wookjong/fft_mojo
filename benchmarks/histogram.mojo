@@ -83,7 +83,7 @@ struct Histogram(NDPTask):
         var base = global_uthread_id() * UNROLL
         var chunk = (Histogram.params[].samples + base).load[width=UNROLL]()
         _ = atomic_add_indexed(
-            Histogram.bins, chunk * 4, SIMD[DType.int32, UNROLL](1)
+            Histogram.bins.ptr(), chunk * 4, SIMD[DType.int32, UNROLL](1)
         )
 
     @staticmethod
