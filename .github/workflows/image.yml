@@ -37,6 +37,15 @@ on:
   # test.yml calls this, so what it tests is the image this branch produces
   # rather than whatever :main happens to point at. The digest comes back out.
   workflow_call:
+    # Declared here too, and defaulted on, so `inputs` is never null in a called
+    # run. A dispatch of test.yml reaches this workflow with event_name still
+    # workflow_dispatch but with the caller's inputs, where an undeclared name
+    # reads null -- and null == false is true, so the skip below would fire.
+    inputs:
+      build_toolchains:
+        description: The dispatch input of the same name. A caller never turns it off.
+        type: boolean
+        default: true
     outputs:
       image:
         description: The image this run published, by digest.
@@ -207,6 +216,10 @@ jobs:
             test -x /work/build/llvm/bin/llc
             test -x /work/build/llvm/bin/ld.lld
             ls /work/build/llvm/lib/libLLVM*.so* >/dev/null
+            # Present is not the same as working: an llc without the vendor
+            # extension compiles nothing we ship, and catching that here rather
+            # than in t0 keeps it from looking like the branch broke something.
+            /work/build/llvm/bin/llc -mtriple=riscv64-unknown-elf -mattr=help 2>&1 | grep -q xm2ndp
             test -x /work/third_party/m2ndp-detour/build/bin/m2ndp_run
             test -f /work/third_party/m2ndp-detour/build/lib/libNDPSim_lib.so
             test -f /work/third_party/m2ndp-detour/src/m2ndp_launch_abi.h
