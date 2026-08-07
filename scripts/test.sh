@@ -53,6 +53,9 @@ summary() {
     fi
 }
 
+# Not `| grep -q`: that closes the pipe early and pipefail reports the writer's SIGPIPE as a failed check.
+contains() { case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac; }
+
 # The case names in a tier: column 1 where column 2 (comma list) contains the tier.
 manifest_names() {
     awk -v t="$1" -F'\t' '
@@ -81,12 +84,15 @@ REQUIRE_ALL_GREEN="${REQUIRE_ALL_GREEN:-0}"
 tier_t0() {
     section "Toolchain — the pinned LLVM builds M2NDP device code"
     [ -x "$LLC" ] || { fail "llc is present and runnable" "not executable at $LLC"; return; }
-    local ver; ver="$("$LLC" --version 2>/dev/null | sed -n 's/.*LLVM version \([^ ]*\).*/\1/p' | head -1)"
+    local version attrs
+    version="$("$LLC" --version 2>/dev/null)"
+    local ver; ver="$(printf '%s\n' "$version" | sed -n 's/.*LLVM version \([^ ]*\).*/\1/p' | head -1)"
     pass "llc runs — the device compiler${ver:+ (LLVM $ver)}"
     [ -x "$LD" ] && pass "ld.lld runs — the task linker" || fail "ld.lld is present and runnable" "not executable at $LD"
-    "$LLC" --version 2>/dev/null | grep -q 'riscv64' \
+    contains "$version" 'riscv64' \
         && pass "riscv64 is a registered llc target" || fail "llc knows the riscv64 target"
-    if "$LLC" -mtriple=riscv64-unknown-elf -mattr=help 2>&1 | grep -qi 'xm2ndp'; then
+    attrs="$("$LLC" -mtriple=riscv64-unknown-elf -mattr=help 2>&1)"
+    if contains "$attrs" 'xm2ndp'; then
         pass "the xm2ndp vendor extension is available"
     else
         fail "llc has the xm2ndp extension"
@@ -94,10 +100,7 @@ tier_t0() {
     fi
 }
 
-# The above fails in CI now and then and passes on a re-run, with the same image
-# digest and an llc whose hash matches the release asset -- so the binary is not
-# the variable. This says which llc ran, what it linked, and whether the feature
-# list came out whole, since a truncated one would explain the miss.
+# Which llc ran and what it linked, for when the extension really is missing.
 _t0_why_no_xm2ndp() {
     local h; h="$(mktemp)"
     "$LLC" -mtriple=riscv64-unknown-elf -mattr=help >"$h" 2>&1
@@ -190,7 +193,7 @@ tier_t4() {
         # fills the pool, launches the task on the simulator, and checks the answer
         # against one it computes itself. "[host] <name> ok" is that self-check.
         out="$(./scripts/host-run.sh "$w" 2>&1)"
-        if printf '%s\n' "$out" | grep -q "\[host\] $w ok"; then
+        if contains "$out" "[host] $w ok"; then
             case "$expect" in
                 xfail) xpass "$w" ;;
                 *)     pass "$w — filled inputs, launched on the simulator, answer matched" ;;
