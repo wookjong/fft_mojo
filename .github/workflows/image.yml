@@ -171,7 +171,9 @@ jobs:
             type=sha,format=long
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
+      # ghcr 403s a push now and then, on the same token that works either side of it.
       - id: build
+        continue-on-error: true
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -192,6 +194,18 @@ jobs:
           build-args: |
             BUILD_TOOLCHAINS=${{ github.event_name == 'workflow_dispatch' && inputs.build_toolchains == false && '0' || '1' }}
 
+      # The layers are built by now, so this is the push again and little else.
+      - id: retry
+        if: steps.build.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_TOOLCHAINS=${{ github.event_name == 'workflow_dispatch' && inputs.build_toolchains == false && '0' || '1' }}
+
       # By digest, not by tag: this is the image this run built, whatever else
       # has since been pushed to the same tag. It is what a caller gets back
       # and what the tests then run on.
@@ -199,7 +213,9 @@ jobs:
       # The registry path has to be lowercase and the repository name is not.
       - id: ref
         run: |
-          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+          digest="${{ steps.build.outputs.digest || steps.retry.outputs.digest }}"
+          [ -n "$digest" ] || { echo "the image did not publish, on either attempt"; exit 1; }
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${digest}"
           echo "image=${image,,}" >> "$GITHUB_OUTPUT"
 
       # An image without a compiler in it is what this job exists to not
