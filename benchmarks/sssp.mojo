@@ -35,7 +35,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import (
-    PACKET,
+    VECTOR_WIDTH,
     NDPTask,
     PooledRange,
     global_uthread_id,
@@ -44,7 +44,7 @@ from m2ndp import (
 )
 from m2ndp_host import cxl_alloc
 
-comptime W = PACKET // size_of[Int32]()   # nodes in one packet of the row array
+comptime W = VECTOR_WIDTH // size_of[Int32]()   # nodes in one vector of the row array
 comptime UNREACHED = Int32(0x3FFFFFFF)    # far enough that no path is longer
 
 

@@ -96,7 +96,7 @@ check "device_main: 1 parallel + 2 serial launches" \
 check "task exports only its launch entry" \
       "grep -c '^define dso_local' out/histogram.ll | tr -d ' '" "1"
 # One load and one store in the kernel, and nothing else.
-# Width-agnostic: the lane count follows PACKET, and what is being checked is
+# Width-agnostic: the lane count follows VECTOR_WIDTH, and what is being checked is
 # that the kernel is one load and one store, not how wide they are.
 check "memcpy: one vector load, one store" \
       "test \$(grep -cE 'load <[0-9]+ x i32>' out/memcpy.ll) -eq \$(grep -cE 'store <[0-9]+ x i32>' out/memcpy.ll) && grep -cE 'load <[0-9]+ x i32>' out/memcpy.ll | tr -d ' '" "1"

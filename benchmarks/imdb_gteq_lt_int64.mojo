@@ -29,10 +29,10 @@ lane-at-a-time loop for the same reason.
 from std.sys import argv, size_of
 from std.random import random_si64, seed
 
-from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
+from m2ndp import VECTOR_WIDTH, NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import cxl_alloc
 
-comptime W = PACKET // size_of[Int64]()   # lanes in one packet;
+comptime W = VECTOR_WIDTH // size_of[Int64]()   # lanes in one vector;
                                           # one bitmap byte covers them
 
 

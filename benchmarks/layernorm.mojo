@@ -24,7 +24,7 @@ from std.math import sqrt
 from std.random import random_float64, seed
 
 from m2ndp import (
-    PACKET,
+    VECTOR_WIDTH,
     NDPTask,
     PooledRange,
     atomic_add,
@@ -33,7 +33,7 @@ from m2ndp import (
 )
 from m2ndp_host import cxl_alloc
 
-comptime W = PACKET // size_of[Float32]()   # lanes in one packet
+comptime W = VECTOR_WIDTH // size_of[Float32]()   # lanes in one vector
 comptime EPS = Float32(1e-5)
 
 

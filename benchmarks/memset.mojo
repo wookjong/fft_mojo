@@ -15,10 +15,10 @@ is the same splat.
 
 from std.sys import argv
 
-from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
+from m2ndp import VECTOR_WIDTH, NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import cxl_alloc
 
-comptime W = PACKET   # uint8 lanes in one packet
+comptime W = VECTOR_WIDTH   # uint8 lanes in one vector
 
 
 @fieldwise_init

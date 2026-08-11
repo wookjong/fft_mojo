@@ -25,7 +25,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import (
-    PACKET,
+    VECTOR_WIDTH,
     NDPTask,
     PooledRange,
     atomic_add_indexed,
@@ -34,7 +34,7 @@ from m2ndp import (
 )
 from m2ndp_host import cxl_alloc
 
-comptime W = PACKET // size_of[Float16]()   # weight lanes in one packet
+comptime W = VECTOR_WIDTH // size_of[Float16]()   # weight lanes in one vector
 comptime COLS = 256                         # output length
 comptime ROWS = 256                         # input length
 comptime TILES = COLS // W                  # packets across one weight row

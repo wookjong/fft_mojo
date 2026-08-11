@@ -25,10 +25,10 @@ over a whole dataset rather than a single point.
 from std.sys import argv, size_of
 from std.random import random_si64, seed
 
-from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
+from m2ndp import VECTOR_WIDTH, NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import cxl_alloc
 
-comptime CLUSTERS = PACKET // size_of[Int32]()   # distances in one packet
+comptime CLUSTERS = VECTOR_WIDTH // size_of[Int32]()   # distances in one vector
 
 
 @fieldwise_init

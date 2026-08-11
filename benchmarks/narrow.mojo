@@ -21,10 +21,10 @@ the narrow one and the input is reached by doubling the offset.
 from std.sys import argv, size_of
 from std.random import random_float64, seed
 
-from m2ndp import PACKET, NDPTask, PooledRange, global_uthread_id, launch_parallel
+from m2ndp import VECTOR_WIDTH, NDPTask, PooledRange, global_uthread_id, launch_parallel
 from m2ndp_host import cxl_alloc
 
-comptime W = PACKET // size_of[Float16]()   # fp16 lanes in one packet
+comptime W = VECTOR_WIDTH // size_of[Float16]()   # fp16 lanes in one vector
 
 
 @fieldwise_init

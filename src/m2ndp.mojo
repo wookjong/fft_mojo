@@ -50,7 +50,7 @@ from m2ndp_host import (
 # module on the assumption that one task owns it.
 #
 # What the host does is launch the task over a memory range. That range is
-# what settles how many µthreads there are -- one per packet -- which is why
+# what settles how many µthreads there are -- one per vector -- which is why
 # no kernel launch inside `device_main` carries a size.
 
 
@@ -58,7 +58,7 @@ from m2ndp_host import (
 struct PooledRange(Copyable, Movable):
     """The region of the memory pool a task is mapped over.
 
-    The range settles how many microthreads there are: one per packet of it.
+    The range settles how many microthreads there are: one per vector of it.
     Build one from the data it covers:
 
         PooledRange.over(samples)       # the whole of a buffer
@@ -70,8 +70,8 @@ struct PooledRange(Copyable, Movable):
     """Byte offset into the pool where this task's work starts."""
 
     var size: Int
-    """Bytes of it. Divided by the machine's packet, this is the microthread
-    count."""
+    """Bytes of it. Divided by the machine's vector width, this is the
+    microthread count."""
 
     @staticmethod
     def over[
@@ -91,42 +91,45 @@ struct PooledRange(Copyable, Movable):
         return PooledRange(Int(at), n)
 
 
-comptime PACKET = 32
-"""Bytes of a task's range one microthread is mapped to.
+comptime VECTOR_WIDTH = 32
+"""Bytes of one microthread's vector -- the machine's `VECTOR_REG_LENGTH`.
 
 The hardware's granule, not a workload's: a kernel is written against it, so
-it appears as a width here rather than a choice a task makes. The simulator
-config carries the same number as `packet_size` and `launch` refuses a machine
-that disagrees -- kernels compiled for one granule would silently get the wrong
-microthread count on another.
+it appears as a width here rather than a choice a task makes. The machine
+divides a launch range by the same number (`UTHREAD_SPAWN_UNIT`), which is what
+makes one microthread's slice exactly one vector.
 
 A constant rather than read from the config because a SIMD width has to be
-known at compile time, which a file read cannot be.
+known at compile time, which a file read cannot be -- and both simulator values
+are compile-time defines in common_defs.h, so the config does not carry either.
+`packet_size` is a different quantity: the CXL transaction packet.
 """
 
 
 @fieldwise_init
 struct Machine(Copyable, Movable):
     """The NDP hardware a run is modelled on -- read from the simulator config,
-    not the workload nor a launch argument. Only the packet granule reaches the
+    not the workload nor a launch argument. Only the vector width reaches the
     build; the rest of the machine is the device's own config to read.
     """
 
-    var packet: Int
+    var vector_width: Int
 
     @staticmethod
     def from_config() raises -> Machine:
         """The machine the environment points at. See `Config` for where."""
-        var packet = Config.load().get("packet_size")
-        if packet != PACKET:
-            # The kernels were compiled against PACKET. A machine with another
+        # FIXME: packet_size is the CXL transaction packet, not the granule the
+        # range is split by; that is UTHREAD_SPAWN_UNIT, which no key carries.
+        var width = Config.load().get("packet_size")
+        if width != VECTOR_WIDTH:
+            # The kernels were compiled against VECTOR_WIDTH. A machine with another
             # granule would take the same code and hand each microthread the
             # wrong slice, so say so rather than compute a wrong answer.
             raise Error(
-                String("this build's kernels are compiled for packet ")
-                + String(PACKET) + ", but the machine says " + String(packet)
+                String("this build's kernels are compiled for vector width ")
+                + String(VECTOR_WIDTH) + ", but the machine says " + String(width)
             )
-        return Machine(packet)
+        return Machine(width)
 
 
 # --------------------------------------------------------------- launching
@@ -144,7 +147,7 @@ struct Machine(Copyable, Movable):
 
 @always_inline
 def launch_parallel[F: ImplicitlyDeletable, //, kernel: F]():
-    """Run `kernel` over the task's range: one microthread per packet of it.
+    """Run `kernel` over the task's range: one microthread per vector of it.
 
         launch_parallel[Histogram.body]()
 
@@ -161,7 +164,7 @@ def launch_parallel[F: ImplicitlyDeletable, //, kernel: F]():
 @always_inline
 def launch_serial[F: ImplicitlyDeletable, //, kernel: F]():
     """Run `kernel` once on each core, for work that is per-core rather than
-    per-packet.
+    per-vector.
 
         launch_serial[Histogram.initialize]()
 
@@ -214,7 +217,7 @@ def _map_address_flags(machine: Machine, range_param: Int) raises -> String:
 
     A kernel indexes a parameter by the microthread's id, but the hardware
     already handed it the offset that index rebuilds and the address of its own
-    chunk. `packet` is what the id scales by, so the backend needs it to
+    chunk. The vector width is what the id scales by, so the backend needs it to
     recognize the stride. `addr` additionally names the parameter the range was
     taken over -- `range_param`, its byte offset in the block, or -1 if none is
     it -- so that parameter's accesses fold to the mapped address outright. See
@@ -232,7 +235,7 @@ def _map_address_flags(machine: Machine, range_param: Int) raises -> String:
 
     var flags = (
         String(" -m2ndp-map-address=") + mode
-        + " -m2ndp-packet=" + String(machine.packet)
+        + " -m2ndp-packet=" + String(machine.vector_width)
     )
     if mode == "addr" and range_param >= 0:
         flags += " -m2ndp-range-param=" + String(range_param)
@@ -277,7 +280,7 @@ trait NDPTask:
     Conforming is the whole interface: declare `Params` and `device_main`, and
     the task gains both the runtime entry point the host launches it through
     and the `launch` that reaches it. The granule its kernels are written
-    against is not among them -- that is `PACKET`, the hardware's.
+    against is not among them -- that is `VECTOR_WIDTH`, the hardware's.
 
     `device_main` says which kernels run and in what order, through
     `launch_parallel` and `launch_serial`. A launch names a kernel and nothing
@@ -435,7 +438,7 @@ trait NDPTask:
         and no parameter carries a direction.
 
         The device code is compiled here for the target the task declares.
-        `region` divided by the machine's packet is the microthread count, and
+        `region` divided by the machine's vector width is the microthread count,
         the hardware comes from the simulator config (M2NDP_CONFIG).
 
         Returns the simulator's exit code: 0 finished, 2 launcher error, 3 a

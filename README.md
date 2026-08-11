@@ -273,7 +273,7 @@ out/                  generated artifacts (not tracked by git)
 One file, three parts: what the host passes, the task, and the host code.
 
 ```mojo
-comptime UNROLL = PACKET // size_of[Int32]()   # samples in one packet
+comptime UNROLL = VECTOR_WIDTH // size_of[Int32]()   # samples in one vector
 
 @fieldwise_init
 struct HistogramParams(Movable):
@@ -320,7 +320,7 @@ the library -- `external_call` takes a function only where it is named at the
 call site, and a parameter is where it keeps that name.
 
 What a benchmark never says is what hardware it runs on -- not the core count,
-not the interleave, and not the packet its kernels index by, which is `PACKET`
+not the interleave, and not the packet its kernels index by, which is `VECTOR_WIDTH`
 and comes with the library. That is all the simulator config, which the runtime
 reads; pointing `M2NDP_CONFIG` at another description is how the same program is
 shown to give the same answer on a different machine.

@@ -33,7 +33,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import (
-    PACKET,
+    VECTOR_WIDTH,
     Machine,
     NDPTask,
     PooledRange,
@@ -66,7 +66,7 @@ comptime UTHREADS_PER_CORE = 64 # microthreads a core runs; stride = this * pack
 comptime PQ_SHIFTS = 256                     # codebook entries per subquantizer
 comptime SUBVECTOR_DIM = VECTOR_DIM // PQ_M  # dsub
 comptime LUT_SIZE = PQ_M * PQ_SHIFTS
-comptime W = PACKET // size_of[Float32]()    # lanes in one packet
+comptime W = VECTOR_WIDTH // size_of[Float32]()    # lanes in one vector
 comptime INF = Float32(3.0e38)
 
 
@@ -383,7 +383,7 @@ def main() raises:
     var machine = Machine.from_config()
     var cores = Config.load().get("num_ndp_units")
     var uthreads = UTHREADS_PER_CORE
-    var stride = uthreads * machine.packet
+    var stride = uthreads * machine.vector_width
 
     # The one thing the workload cannot derive: how many clusters a core walks
     # depends on how many cores there are. Checked rather than assumed, because

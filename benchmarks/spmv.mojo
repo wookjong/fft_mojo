@@ -10,7 +10,7 @@ Also exercises indirect access (x[col_idx[k]]).
 from std.random import random_float64, random_si64, seed
 
 from m2ndp import (
-    PACKET,
+    VECTOR_WIDTH,
     NDPTask,
     PooledRange,
     global_uthread_id,
@@ -88,7 +88,7 @@ def main() raises:
         row_ptr[r] = Int32(r * NNZ_PER_ROW)
 
     var rc = Spmv.launch(
-        PooledRange.of_bytes(row_ptr, ROWS * PACKET),
+        PooledRange.of_bytes(row_ptr, ROWS * VECTOR_WIDTH),
         SpmvParams(values, col_idx, x, row_ptr, y),
     )
     if rc != 0:

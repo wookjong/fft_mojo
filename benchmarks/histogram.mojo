@@ -34,7 +34,7 @@ from std.sys import argv, size_of
 from std.random import random_si64, seed
 
 from m2ndp import (
-    PACKET,
+    VECTOR_WIDTH,
     NDPTask,
     launch_parallel,
     launch_serial,
@@ -47,7 +47,7 @@ from m2ndp import (
 from m2ndp_host import cxl_alloc
 
 comptime BINS = 256
-comptime UNROLL = PACKET // size_of[Int32]()   # samples in one packet
+comptime UNROLL = VECTOR_WIDTH // size_of[Int32]()   # samples in one vector
 
 
 @fieldwise_init
