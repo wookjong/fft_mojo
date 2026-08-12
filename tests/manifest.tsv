@@ -47,6 +47,7 @@ softmax	t4	W	golden	pass	-
 vector_exp	t4	W	golden	pass	-
 wide	t4	W	golden	pass	-
 ivfpq	t4	W	golden	pass	-
+two_tasks	t4	W	golden	pass	-
 
 # t2 -- controller / device_main paths. A mojo workload whose device_main
 # computes on the controller itself (stack + a non-inlined call) and launches

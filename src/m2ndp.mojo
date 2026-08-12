@@ -343,7 +343,6 @@ trait NDPTask:
     Kernels only: the controller has no scratchpad of its own.
     """
 
-    @export
     @staticmethod
     def __m2ndp_rt_launch_task(base: Int, size: Int):
         """The host's launch, arriving on the device.
@@ -352,6 +351,9 @@ trait NDPTask:
         first: nothing can be launched until the microthread count is known.
         The parameters are not passed here -- the launcher already holds them
         and puts them where a kernel reads them.
+
+        The fixed name the launcher calls is given to the device module alone,
+        by `_add_export_alias`: a fixed name is one per binary.
         """
         # Which region holds the parameters, by name; the backend exports its
         # offset for the launcher and deletes the call.
@@ -411,15 +413,12 @@ trait NDPTask:
         var a = argv()
         if len(a) > 1 and String(a[1]) == "--emit-ir":
             var ir = Self.device_ir()
-            # The launcher calls the entry by its unmangled name. Whether the
-            # frontend emits that alongside the mangled definition depends on
-            # what else the module holds, so add it here -- as `launch` does for
-            # the copy it ships -- and every consumer of `--emit-ir` (the
-            # controller-image build among them) links against it.
+            # The launcher calls the entry by its unmangled name, so add it here
+            # too -- as `launch` does for the copy it ships.
             var tmp = _mktemp() + "/emit.ll"
             with open(tmp, "w") as f:
                 f.write(ir)
-            _add_export_alias(ir, tmp)
+            _add_export_alias(tmp)
             with open(tmp, "r") as f:
                 print(f.read(), end="")
             return True
@@ -468,7 +467,7 @@ trait NDPTask:
         var ir = Self.device_ir()
         with open(ll, "w") as f:
             f.write(ir)
-        _add_export_alias(ir, ll)
+        _add_export_alias(ll)
 
         # The mapping the hardware supplies is recovered here, at the one llc a
         # launch runs: the range's base and the parameter block are both known

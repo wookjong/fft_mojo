@@ -59,13 +59,13 @@ def _align_masked_gathers(ir: String) -> String:
         at = close + 1
 
 
-def _add_export_alias(ir: String, path: String) raises:
+def _add_export_alias(path: String) raises:
     """Give the entry point the name the launcher calls it by.
 
-    `compile_info` emits one function under the mangled name it has inside the
-    module. Whether the unmangled `@export` alias comes with it depends on what
-    else the module contains -- histogram's does, vector_add's does not -- so
-    this adds it when it is missing and leaves it alone when it is not.
+    `compile_info` emits the entry point under the mangled name it has inside
+    the module, and this is where it gets the fixed one. The task does not
+    export that name itself: it is one per binary, and a host program may hold
+    several tasks.
 
     The mangled name is pulled out with one grep pipeline, because the frontend
     spells it with quotes, brackets and commas that are easier matched than
@@ -73,11 +73,6 @@ def _add_export_alias(ir: String, path: String) raises:
     compound shell statement to do all three was one `/bin/sh` parsed less
     reliably than this does.
     """
-    # Already unmangled -- a whole-module build produced the plain symbol, and
-    # adding an alias would collide with it.
-    if ir.find("\ndefine dso_local void @__m2ndp_rt_launch_task(") >= 0:
-        return
-
     # The one line that declares the entry point, mangled, reduced to just its
     # @"..." name.
     var namefile = path + ".name"
