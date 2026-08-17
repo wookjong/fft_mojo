@@ -210,11 +210,18 @@ def emit_stage(e: Emitter, plan: FFTCodegenPlan, stage_id: int) -> None:
     e.add(f"        comptime OUTPUT_STRIDE = {stage.output_stride}")
     e.add()
 
-    # This first implementation deliberately maps the whole fused FFT to one
-    # logical µthread.  SIMD still computes multiple small FFTs in parallel.
-    e.add("        var uid = global_uthread_id()")
-    e.add("        if uid != 0:")
+    # One µthread computes one whole length-N FFT (SIMD still does RADIX of
+    # it in parallel within a stage). `local_id` is dense per unit, so it
+    # picks this µthread's private slice of the per-unit scratchpad --
+    # MAX_UTHREAD slices were reserved for exactly this. `batch` is dense
+    # across the whole launch, so it picks this µthread's slice of the
+    # batched DRAM input/output instead: two different units can both hand
+    # out local id 0, but never the same global id.
+    e.add("        var local_id = local_uthread_id()")
+    e.add("        if local_id >= MAX_UTHREAD:")
     e.add("            return")
+    e.add("        var spad_base = local_id * (2 * N)")
+    e.add("        var batch_base = global_uthread_id() * N")
     e.add()
 
     for simd_it in range(stage.simd_iteration_count):
@@ -231,20 +238,20 @@ def emit_stage(e: Emitter, plan: FFTCodegenPlan, stage_id: int) -> None:
             idx = input_batch_base + j * stage.input_stride
             if first:
                 e.add(
-                    f"        var rr{j} = p.input_real_base.load[width=W]({idx})"
+                    f"        var rr{j} = p.input_real_base.load[width=W](batch_base + {idx})"
                 )
                 e.add(
-                    f"        var ii{j} = p.input_imag_base.load[width=W]({idx})"
+                    f"        var ii{j} = p.input_imag_base.load[width=W](batch_base + {idx})"
                 )
             else:
                 # `FFTFP32.buf` is a Scratchpad, not a raw pointer: its
                 # `load` takes the element dtype and width by name (`dt`,
                 # `w`), unlike `UnsafePointer.load`'s `width=`.
                 e.add(
-                    f"        var rr{j} = FFTFP32.buf.load[DType.float32, W]({idx})"
+                    f"        var rr{j} = FFTFP32.buf.load[DType.float32, W](spad_base + {idx})"
                 )
                 e.add(
-                    f"        var ii{j} = FFTFP32.buf.load[DType.float32, W](N + {idx})"
+                    f"        var ii{j} = FFTFP32.buf.load[DType.float32, W](spad_base + N + {idx})"
                 )
         e.add()
 
@@ -276,8 +283,8 @@ def emit_stage(e: Emitter, plan: FFTCodegenPlan, stage_id: int) -> None:
             # output k is one W-wide contiguous vector.
             for k in range(stage.radix):
                 idx = output_batch_base + k * stage.output_stride
-                e.add(f"        p.output_real_base.store({idx}, or{k})")
-                e.add(f"        p.output_imag_base.store({idx}, oi{k})")
+                e.add(f"        p.output_real_base.store(batch_base + {idx}, or{k})")
+                e.add(f"        p.output_imag_base.store(batch_base + {idx}, oi{k})")
             e.add()
         elif stage.transpose_output:
             # Transpose while writing to scratchpad.  No extra DRAM pass.
@@ -288,14 +295,14 @@ def emit_stage(e: Emitter, plan: FFTCodegenPlan, stage_id: int) -> None:
                 global_bfly = simd_it * lanes + lane
                 for k in range(stage.radix):
                     idx = global_bfly * stage.output_batch_width + k
-                    e.add(f"        FFTFP32.buf.store({idx}, or{k}[{lane}])")
-                    e.add(f"        FFTFP32.buf.store(N + {idx}, oi{k}[{lane}])")
+                    e.add(f"        FFTFP32.buf.store(spad_base + {idx}, or{k}[{lane}])")
+                    e.add(f"        FFTFP32.buf.store(spad_base + N + {idx}, oi{k}[{lane}])")
             e.add()
         else:
             for k in range(stage.radix):
                 idx = output_batch_base + k * stage.output_stride
-                e.add(f"        FFTFP32.buf.store({idx}, or{k})")
-                e.add(f"        FFTFP32.buf.store(N + {idx}, oi{k})")
+                e.add(f"        FFTFP32.buf.store(spad_base + {idx}, or{k})")
+                e.add(f"        FFTFP32.buf.store(spad_base + N + {idx}, oi{k})")
             e.add()
 
 
@@ -308,12 +315,13 @@ def generate_fft_kernel(plan: FFTCodegenPlan) -> str:
     e.add()
     e.add(
         "from m2ndp import VECTOR_WIDTH, NDPTask, PooledRange, "
-        "global_uthread_id, launch_parallel, scratchpad"
+        "global_uthread_id, local_uthread_id, launch_parallel, scratchpad"
     )
     e.add("from m2ndp_host import cxl_alloc")
     e.add()
     e.add("comptime W = VECTOR_WIDTH // size_of[Float32]()")
     e.add(f"comptime N = {plan.spec.length}")
+    e.add(f"comptime MAX_UTHREAD = {plan.spec.max_uthread}")
     e.add()
 
     e.add("@fieldwise_init")
@@ -328,8 +336,11 @@ def generate_fft_kernel(plan: FFTCodegenPlan) -> str:
     e.add("struct FFTFP32(NDPTask):")
     e.add("    comptime Params = FFTFP32Params")
     e.add()
+    # One `2 * N`-element slice per µthread the unit can hold, so each keeps
+    # its own scratchpad slot at `local_uthread_id() * (2 * N)` -- see
+    # `emit_stage`'s `spad_base`.
     e.add(
-        f'    comptime buf = scratchpad[2 * {plan.spec.length}, Float32, name="fft_buffer"]()'
+        '    comptime buf = scratchpad[2 * N * MAX_UTHREAD, Float32, name="fft_buffer"]()'
     )
     e.add()
 
@@ -349,21 +360,106 @@ def generate_fft_kernel(plan: FFTCodegenPlan) -> str:
     e.add("    if FFTFP32.emit_ir_if_asked():")
     e.add("        return")
     e.add()
+
     e.add("    var input_real = cxl_alloc[Float32](N)")
     e.add("    var input_imag = cxl_alloc[Float32](N)")
     e.add("    var output_real = cxl_alloc[Float32](N)")
     e.add("    var output_imag = cxl_alloc[Float32](N)")
+    e.add("    var ref_real = cxl_alloc[Float32](N)")
+    e.add("    var ref_imag = cxl_alloc[Float32](N)")
     e.add()
-    e.add("    # TODO: host-side input initialization / reference check")
+
+    # ------------------------------------------------------------
+    # Test input
+    # ------------------------------------------------------------
+    e.add("    for i in range(N):")
+    e.add("        input_real[i] = Float32(0)")
+    e.add("        input_imag[i] = Float32(0)")
+    e.add("        output_real[i] = Float32(0)")
+    e.add("        output_imag[i] = Float32(0)")
+    e.add()
+
+    impulse_index = 0 if plan.spec.length == 1 else 1
+    impulse_amp = float(plan.spec.length) if plan.spec.inverse else 1.0
+
+    e.add(
+        f"    input_real[{impulse_index}] = {_f32(impulse_amp)}"
+    )
+    e.add()
+
+    # ------------------------------------------------------------
+    # Reference
+    # ------------------------------------------------------------
+    sign = 1.0 if plan.spec.inverse else -1.0
+
+    for k in range(plan.spec.length):
+        angle = (
+            sign
+            * 2.0
+            * pi
+            * impulse_index
+            * k
+            / plan.spec.length
+        )
+
+        e.add(
+            f"    ref_real[{k}] = {_f32(cos(angle))}"
+        )
+        e.add(
+            f"    ref_imag[{k}] = {_f32(sin(angle))}"
+        )
+    e.add()
+
+    # ------------------------------------------------------------
+    # Launch
+    # ------------------------------------------------------------
     e.add(f"    var pool_elems = W * {plan.spec.max_uthread}")
     e.add("    var rc = FFTFP32.launch(")
     e.add("        PooledRange.over(input_real, pool_elems),")
-    e.add("        FFTFP32Params(input_real, input_imag, output_real, output_imag),")
+    e.add(
+        "        FFTFP32Params("
+        "input_real, input_imag, output_real, output_imag"
+        "),"
+    )
     e.add("    )")
+    e.add()
+
     e.add("    if rc != 0:")
     e.add('        print("[host] FFT failed, exit", rc)')
     e.add("        return")
-    e.add('    print("[host] FFT finished")')
+    e.add()
+
+    # ------------------------------------------------------------
+    # Verification
+    # ------------------------------------------------------------
+    e.add("    var tol = Float32(1.0e-3)")
+    e.add("    for i in range(N):")
+    e.add("        var err_r = output_real[i] - ref_real[i]")
+    e.add("        var err_i = output_imag[i] - ref_imag[i]")
+    e.add()
+
+    # abs()를 import할 필요 없도록 직접 absolute value 계산
+    e.add("        if err_r < Float32(0):")
+    e.add("            err_r = -err_r")
+    e.add("        if err_i < Float32(0):")
+    e.add("            err_i = -err_i")
+    e.add()
+
+    e.add("        if err_r > tol or err_i > tol:")
+    e.add('            print("[host] FFT mismatch at", i)')
+    e.add(
+        '            print("  expected:", '
+        "ref_real[i], ref_imag[i])"
+    )
+    e.add(
+        '            print("  actual:  ", '
+        "output_real[i], output_imag[i])"
+    )
+    e.add('            print("  error:   ", err_r, err_i)')
+    e.add("            return")
+    e.add()
+
+    e.add('    print("[host] FFT verification passed")')
 
     return e.text()
 
