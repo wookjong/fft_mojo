@@ -804,13 +804,13 @@ def main() raises:
 
     var large_twiddle_real = cxl_alloc[Float32](n)
     var large_twiddle_imag = cxl_alloc[Float32](n)
-    var pi = Float64(3.141592653589793)
+    var lt_pi = Float64(3.141592653589793)
     var lt_sign = Float64(-1.0)
     var r = 0
     while r < 16:
         var c1 = 0
         while c1 < 16:
-            var angle = lt_sign * 2.0 * pi * Float64(r) * Float64(c1) / Float64(256)
+            var angle = lt_sign * 2.0 * lt_pi * Float64(r) * Float64(c1) / Float64(256)
             large_twiddle_real[r * 16 + c1] = Float32(host_cos(angle))
             large_twiddle_imag[r * 16 + c1] = Float32(host_sin(angle))
             c1 += 1

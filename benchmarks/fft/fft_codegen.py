@@ -351,8 +351,20 @@ def _emit_stage(e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan) -> Non
         e.add(f"        var out_batch_base = {_mapping_base_expr(plan.output_mapping)}")
     e.add()
 
+    # Each batch's rr{k}/ii{k}/or{k}/oi{k} (and friends) are local to that
+    # batch's own butterfly, not threads carried across batches -- but
+    # _emit_batch always names them the same way regardless of batch_id, so
+    # a stage with more than one SIMD batch needs each batch in its own
+    # block scope or the second batch's `var rr0` redefines the first's.
     for batch in stage.batches:
-        _emit_batch(e, plan=plan, stage=stage, batch=batch)
+        if len(stage.batches) > 1:
+            sub = Emitter()
+            _emit_batch(sub, plan=plan, stage=stage, batch=batch)
+            e.add(f"        if True:  # batch {batch.batch_id} scope")
+            for line in sub.lines:
+                e.add("    " + line if line else "")
+        else:
+            _emit_batch(e, plan=plan, stage=stage, batch=batch)
 
 
 def _emit_params_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
@@ -600,14 +612,14 @@ def generate_decomposed_fft_kernels(plan: DecomposedFFTPlan) -> str:
     lt = plan.kernel0.large_twiddle
     e.add(f"    var large_twiddle_real = cxl_alloc[Float32](n)")
     e.add(f"    var large_twiddle_imag = cxl_alloc[Float32](n)")
-    e.add("    var pi = Float64(3.141592653589793)")
+    e.add("    var lt_pi = Float64(3.141592653589793)")
     e.add(f"    var lt_sign = Float64({1.0 if lt.inverse else -1.0})")
     e.add("    var r = 0")
     e.add(f"    while r < {lt.row_count}:")
     e.add("        var c1 = 0")
     e.add(f"        while c1 < {lt.output_count}:")
     e.add(
-        "            var angle = lt_sign * 2.0 * pi * Float64(r) * Float64(c1) / "
+        "            var angle = lt_sign * 2.0 * lt_pi * Float64(r) * Float64(c1) / "
         f"Float64({lt.full_length})"
     )
     e.add(f"            large_twiddle_real[r * {lt.output_count} + c1] = Float32(host_cos(angle))")
