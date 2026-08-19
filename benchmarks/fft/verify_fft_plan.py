@@ -140,10 +140,22 @@ def run_kernel(
     exec()ing the actual text fft_codegen.py emits for each stage -- the
     same sequencing `launch_parallel[Self.stage_N]()` describes: every
     uthread finishes stage N before stage N+1 starts.
+
+    `plan.total_uthreads` (the whole launch) may exceed `plan.max_uthread`
+    (how many of this kernel's own uthreads share one NDP unit's
+    scratchpad -- see FFTCodegenPlan's docstring): group `g =
+    global_id // max_uthread` gets its own independent scratchpad
+    instance ("one instance per core," not one shared array for the whole
+    launch -- docs/INTERFACE.md), and `local_uthread_id() = global_id %
+    max_uthread` indexes within it.
     """
-    kernel_ns = types.SimpleNamespace()
-    for buf in plan.scratchpad_buffers:
-        setattr(kernel_ns, buf.name, Ptr(buf.elements))
+    num_groups = -(-plan.total_uthreads // plan.max_uthread)  # ceil div
+    group_namespaces: list[types.SimpleNamespace] = []
+    for _ in range(num_groups):
+        ns = types.SimpleNamespace()
+        for buf in plan.scratchpad_buffers:
+            setattr(ns, buf.name, Ptr(buf.elements))
+        group_namespaces.append(ns)
 
     p_ns = types.SimpleNamespace(
         input_real_base=input_real,
@@ -156,26 +168,27 @@ def run_kernel(
         p_ns.large_twiddle_real_base = large_twiddle_real
         p_ns.large_twiddle_imag_base = large_twiddle_imag
 
-    current_uid = {"id": 0}
+    current = {"global_id": 0, "local_id": 0}
 
     for stage in plan.stages:
         src = _translate_stage(plan, stage)
         namespace = {
             "Float32": float,
             "SIMD": _simd,
-            "local_uthread_id": lambda: current_uid["id"],
-            "global_uthread_id": lambda: current_uid["id"],
+            "local_uthread_id": lambda: current["local_id"],
+            "global_uthread_id": lambda: current["global_id"],
             "N": plan.length,
             "W": plan.simd_lanes,
             f"MAX_UTHREAD_{plan.kernel_name}": plan.max_uthread,
-            plan.kernel_name: kernel_ns,
             "p": p_ns,
         }
         code = compile(src, f"<{plan.kernel_name} stage {stage.stage_id}>", "exec")
         exec(code, namespace)
         stage_fn = namespace[f"stage_{stage.stage_id}"]
-        for uid in range(plan.max_uthread):
-            current_uid["id"] = uid
+        for global_id in range(plan.total_uthreads):
+            current["global_id"] = global_id
+            current["local_id"] = global_id % plan.max_uthread
+            namespace[plan.kernel_name] = group_namespaces[global_id // plan.max_uthread]
             stage_fn()
 
 
@@ -230,7 +243,7 @@ def verify_radix_sequence_plan(
     plan = _build_plan(
         length=length,
         inverse=inverse,
-        max_uthread=1,
+        total_uthreads=1,
         simd_lanes=simd_lanes,
         use_pingpong=True,
         layouts=layouts_for_radices(length, radices, simd_lanes),
@@ -287,7 +300,11 @@ def verify_decomposed_plan(*, n0: int, n1: int, inverse: bool, seed: int) -> flo
 
 
 def verify_multi_kernel_plan(
-    chunks: tuple[tuple[int, ...], ...], *, inverse: bool, seed: int
+    chunks: tuple[tuple[int, ...], ...],
+    *,
+    inverse: bool,
+    seed: int,
+    spad_capacity_bytes: int | None = None,
 ) -> float:
     """Stage 3/4's builder: like verify_decomposed_plan, but chunks[i] can
     itself be a multi-stage radix sequence (each kernel absorbing more than
@@ -295,8 +312,16 @@ def verify_multi_kernel_plan(
     M can be any length -- chains an arbitrary number of kernels through
     DRAM, one large-twiddle table per non-last kernel (see
     make_multi_kernel_plan for the general M-kernel formulas).
+
+    `spad_capacity_bytes`, when given, forces `run_kernel` to actually
+    exercise more than one NDP-unit group for a kernel whose total launch
+    exceeds what one unit's scratchpad holds (see FFTCodegenPlan's
+    max_uthread/total_uthreads split) rather than the always-one-group
+    case every other test here happens to stay within.
     """
-    plan = make_multi_kernel_plan(chunks, inverse=inverse)
+    plan = make_multi_kernel_plan(
+        chunks, inverse=inverse, spad_capacity_bytes=spad_capacity_bytes
+    )
     n = plan.n
     rng = np.random.default_rng(seed)
     x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
@@ -407,6 +432,25 @@ def main() -> None:
         for inverse in (False, True):
             err = verify_multi_kernel_plan(chunks, inverse=inverse, seed=1)
             tag = f"multi-kernel N={n} chunks={chunks} inverse={inverse}"
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    # max_uthread/total_uthreads split: force kernel0 of ((4,4,4),(3,))
+    # (N=192, kernel0 length=64, total_uthreads=3, 1024 bytes/uthread) into
+    # more than one NDP-unit group -- 1024 packs exactly one uthread per
+    # group (3 groups, each with its own scratchpad instance), 2048 packs
+    # two (an uneven 2+1 split, exercising a partial last group). Both
+    # must match the single-group (no cap) result from multi_kernel_cases
+    # above, proving run_kernel's per-group scratchpad isolation is real
+    # (see FFTCodegenPlan's docstring / run_kernel).
+    for cap in (1024, 2048):
+        for inverse in (False, True):
+            err = verify_multi_kernel_plan(
+                ((4, 4, 4), (3,)), inverse=inverse, seed=1, spad_capacity_bytes=cap
+            )
+            tag = f"multi-kernel N=192 spad_capacity_bytes={cap} inverse={inverse}"
             ok = err <= tolerance
             print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
             if not ok:

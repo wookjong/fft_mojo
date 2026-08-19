@@ -240,7 +240,7 @@ class HostPlan:
     total_elems: int
     pool_elems: int
     length: int
-    max_uthread: int
+    total_uthreads: int
     inverse: bool
     tolerance: float
 
@@ -255,10 +255,34 @@ class FFTCodegenPlan:
     chained through DRAM the way `two_tasks.mojo` chains `Scale`/`AddB` --
     never through a shared scratchpad, since nothing is guaranteed still
     resident once a kernel launch returns.
+
+    `total_uthreads` and `max_uthread` are two different quantities that
+    the field name `max_uthread` alone used to carry, ambiguously:
+
+    * `total_uthreads` -- how many microthreads this kernel's *launch*
+      covers in total (`PooledRange.over(pool, simd_lanes*total_uthreads)`),
+      spread across however many NDP units the hardware maps them onto.
+    * `max_uthread` -- how many of *one NDP unit's own* microthreads
+      `local_uthread_id()` ever ranges over (docs/PRIMITIVES.md's
+      `spad_capacity()`, "bytes of scratchpad on one unit", divided by
+      what one uthread's own scratchpad footprint costs -- see
+      `_build_plan`'s `spad_capacity_bytes`). This is what
+      `ScratchpadBufferPlan.elements` and the `MAX_UTHREAD_<kernel>`
+      device-side guard are sized against, since the scratchpad is one
+      instance *per core*, shared by every uthread that lands on it --
+      not one slot per uthread in the whole launch.
+
+    `max_uthread <= total_uthreads` always; they're equal (today's
+    behavior, unchanged) whenever `_build_plan` isn't given a
+    `spad_capacity_bytes` to size against, or the kernel uses no
+    scratchpad at all (a single-stage kernel -- see
+    `_scratchpad_buffer_names`), since then there's nothing to divide
+    across units.
     """
 
     length: int
     inverse: bool
+    total_uthreads: int
     max_uthread: int
     simd_lanes: int
     kernel_name: str
@@ -299,14 +323,14 @@ class _StageLayout:
 def _check_layouts(
     *,
     length: int,
-    max_uthread: int,
+    total_uthreads: int,
     simd_lanes: int,
     layouts: tuple[_StageLayout, ...],
 ) -> None:
     if length <= 0:
         raise ValueError("FFT length must be positive")
-    if max_uthread <= 0:
-        raise ValueError("max_uthread must be positive")
+    if total_uthreads <= 0:
+        raise ValueError("total_uthreads must be positive")
     if simd_lanes <= 0:
         raise ValueError("simd_lanes must be positive")
     if not layouts:
@@ -630,7 +654,7 @@ def _make_host_plan(
     *,
     length: int,
     inverse: bool,
-    max_uthread: int,
+    total_uthreads: int,
     simd_lanes: int,
 ) -> HostPlan:
     """No numbers are baked in here: `fft_codegen.py` emits Mojo that
@@ -641,10 +665,10 @@ def _make_host_plan(
     signal computed once by this planner and frozen into the source. See
     `fft_codegen.py`'s host-emission section for that computation."""
     return HostPlan(
-        total_elems=length * max_uthread,
-        pool_elems=simd_lanes * max_uthread,
+        total_elems=length * total_uthreads,
+        pool_elems=simd_lanes * total_uthreads,
         length=length,
-        max_uthread=max_uthread,
+        total_uthreads=total_uthreads,
         inverse=inverse,
         tolerance=1.0e-3,
     )
@@ -662,7 +686,7 @@ def _build_plan(
     *,
     length: int,
     inverse: bool,
-    max_uthread: int,
+    total_uthreads: int,
     simd_lanes: int,
     use_pingpong: bool,
     layouts: tuple[_StageLayout, ...],
@@ -671,10 +695,22 @@ def _build_plan(
     output_mapping: AddressMapping | None = None,
     large_twiddle: LargeTwiddlePlan | None = None,
     inverse_scale: float | None | _Default = _DEFAULT,
+    spad_capacity_bytes: int | None = None,
 ) -> FFTCodegenPlan:
+    """`spad_capacity_bytes` is one NDP unit's own scratchpad size (see
+    `FFTCodegenPlan`'s docstring) -- optional and `None` by default, which
+    keeps today's behavior exactly (`max_uthread == total_uthreads`, i.e.
+    assume the whole launch could land on one unit, the always-safe but
+    possibly oversized choice `elements = scratchpad_stride * total_uthreads`
+    already made). Given a real budget, `max_uthread` is capped to however
+    many of *this* kernel's own uthreads (each needing
+    `len(buffer_names) * scratchpad_stride * 4` bytes for its ping-pong
+    footprint) fit in it -- moot for a single-stage kernel, which uses no
+    scratchpad at all (see `_scratchpad_buffer_names`).
+    """
     _check_layouts(
         length=length,
-        max_uthread=max_uthread,
+        total_uthreads=total_uthreads,
         simd_lanes=simd_lanes,
         layouts=layouts,
     )
@@ -694,6 +730,19 @@ def _build_plan(
         use_pingpong=use_pingpong,
     )
     scratchpad_stride = 2 * length
+
+    if not buffer_names or spad_capacity_bytes is None:
+        max_uthread = total_uthreads
+    else:
+        bytes_per_uthread = len(buffer_names) * scratchpad_stride * 4
+        if bytes_per_uthread > spad_capacity_bytes:
+            raise ValueError(
+                f"spad_capacity_bytes={spad_capacity_bytes} is too small to "
+                f"fit even a single uthread of kernel {kernel_name!r} "
+                f"(needs {bytes_per_uthread} bytes)"
+            )
+        max_uthread = min(total_uthreads, spad_capacity_bytes // bytes_per_uthread)
+
     scratchpad_buffers = tuple(
         ScratchpadBufferPlan(
             name=name,
@@ -705,6 +754,7 @@ def _build_plan(
     return FFTCodegenPlan(
         length=length,
         inverse=inverse,
+        total_uthreads=total_uthreads,
         max_uthread=max_uthread,
         simd_lanes=simd_lanes,
         kernel_name=kernel_name,
@@ -727,7 +777,7 @@ def _build_plan(
         host=_make_host_plan(
             length=length,
             inverse=inverse,
-            max_uthread=max_uthread,
+            total_uthreads=total_uthreads,
             simd_lanes=simd_lanes,
         ),
     )
@@ -779,13 +829,13 @@ def layouts_for_radices(
     return tuple(layouts)
 
 
-def make_444_plan(*, inverse: bool = False, max_uthread: int = 1) -> FFTCodegenPlan:
+def make_444_plan(*, inverse: bool = False, total_uthreads: int = 1) -> FFTCodegenPlan:
     """Create the fully lowered N=64, radix-4 x radix-4 x radix-4 plan."""
 
     return _build_plan(
         length=64,
         inverse=inverse,
-        max_uthread=max_uthread,
+        total_uthreads=total_uthreads,
         simd_lanes=8,
         use_pingpong=True,
         layouts=layouts_for_radices(64, (4, 4, 4), simd_lanes=8),
@@ -863,7 +913,7 @@ def make_decomposed_plan(
     kernel0 = _build_plan(
         length=n1,
         inverse=inverse,
-        max_uthread=n0,
+        total_uthreads=n0,
         simd_lanes=simd_lanes,
         use_pingpong=False,
         layouts=layouts_for_radices(n1, (n1,), simd_lanes),
@@ -888,7 +938,7 @@ def make_decomposed_plan(
     kernel1 = _build_plan(
         length=n0,
         inverse=inverse,
-        max_uthread=n1,
+        total_uthreads=n1,
         simd_lanes=simd_lanes,
         use_pingpong=False,
         layouts=layouts_for_radices(n0, (n0,), simd_lanes),
@@ -1037,6 +1087,7 @@ def make_multi_kernel_plan(
     *,
     inverse: bool = False,
     simd_lanes: int = 8,
+    spad_capacity_bytes: int | None = None,
 ) -> MultiKernelFFTPlan:
     """Build the FFTCodegenPlan chain for an already-decided chunk
     sequence (see factor_into_kernel_chunks): kernel i processes chunks[i]
@@ -1076,10 +1127,11 @@ def make_multi_kernel_plan(
         kernel = _build_plan(
             length=n,
             inverse=inverse,
-            max_uthread=1,
+            total_uthreads=1,
             simd_lanes=simd_lanes,
             use_pingpong=True,
             layouts=layouts_for_radices(n, chunks[0], simd_lanes),
+            spad_capacity_bytes=spad_capacity_bytes,
         )
         return MultiKernelFFTPlan(n=n, inverse=inverse, kernels=(kernel,), host=host)
 
@@ -1087,8 +1139,8 @@ def make_multi_kernel_plan(
     a = 1  # product of the kernel lengths processed before the current one
     for i, ki in enumerate(lengths):
         is_last = i == m - 1
-        max_uthread = n // ki
-        input_mapping = AddressMapping.strided(row_stride=1, elem_stride=max_uthread)
+        total_uthreads = n // ki
+        input_mapping = AddressMapping.strided(row_stride=1, elem_stride=total_uthreads)
 
         if is_last:
             output_mapping = AddressMapping.strided(row_stride=1, elem_stride=a)
@@ -1098,7 +1150,7 @@ def make_multi_kernel_plan(
             output_mapping = AddressMapping.split(a)
             large_twiddle = LargeTwiddlePlan(
                 full_length=n,
-                row_count=max_uthread // a,
+                row_count=total_uthreads // a,
                 output_count=ki,
                 inverse=inverse,
                 a=a,
@@ -1109,7 +1161,7 @@ def make_multi_kernel_plan(
             _build_plan(
                 length=ki,
                 inverse=inverse,
-                max_uthread=max_uthread,
+                total_uthreads=total_uthreads,
                 simd_lanes=simd_lanes,
                 use_pingpong=True,
                 layouts=layouts_for_radices(ki, chunks[i], simd_lanes),
@@ -1118,6 +1170,7 @@ def make_multi_kernel_plan(
                 output_mapping=output_mapping,
                 large_twiddle=large_twiddle,
                 inverse_scale=inverse_scale,
+                spad_capacity_bytes=spad_capacity_bytes,
             )
         )
         a *= ki

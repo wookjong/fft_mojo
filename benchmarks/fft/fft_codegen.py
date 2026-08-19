@@ -477,8 +477,8 @@ def _emit_reference_check(
     fp32 rounding, rounding to Float32 only once, at the very end.
 
     `batch_count` independent length-`n` FFTs share one buffer, back to
-    back (`batch*n + n_`) -- a single-kernel plan's own max_uthread; always
-    1 for a decomposed plan (see DecomposedFFTPlan).
+    back (`batch*n + n_`) -- a single-kernel plan's own total_uthreads;
+    always 1 for a decomposed plan (see DecomposedFFTPlan).
     """
     e.add("    var pi = Float64(3.141592653589793)")
     e.add(f"    var sign = Float64({1.0 if inverse else -1.0})")
@@ -579,7 +579,7 @@ def generate_fft_kernel(plan: FFTCodegenPlan) -> str:
     _emit_reference_check(
         e,
         n=plan.length,
-        batch_count=plan.max_uthread,
+        batch_count=plan.total_uthreads,
         inverse=plan.inverse,
         input_real="input_real",
         input_imag="input_imag",
@@ -651,8 +651,8 @@ def generate_decomposed_fft_kernels(plan: DecomposedFFTPlan) -> str:
     e.add("        r += 1")
     e.add()
 
-    e.add(f"    var pool0_elems = {k0.simd_lanes * k0.max_uthread}")
-    e.add(f"    var pool1_elems = {k1.simd_lanes * k1.max_uthread}")
+    e.add(f"    var pool0_elems = {k0.simd_lanes * k0.total_uthreads}")
+    e.add(f"    var pool1_elems = {k1.simd_lanes * k1.total_uthreads}")
     e.add("    var pool0 = cxl_alloc[Float32](pool0_elems)")
     e.add("    var pool1 = cxl_alloc[Float32](pool1_elems)")
     e.add()
@@ -823,7 +823,7 @@ def generate_multi_kernel_fft_kernels(plan: MultiKernelFFTPlan) -> str:
         )
 
     for i, kernel in enumerate(plan.kernels):
-        e.add(f"    var pool{i}_elems = {kernel.simd_lanes * kernel.max_uthread}")
+        e.add(f"    var pool{i}_elems = {kernel.simd_lanes * kernel.total_uthreads}")
         e.add(f"    var pool{i} = cxl_alloc[Float32](pool{i}_elems)")
     e.add()
 
