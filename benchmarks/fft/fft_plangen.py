@@ -266,7 +266,6 @@ class _StageLayout:
     twiddle_modulus: int | None = None
     twiddle_stride: int = 1
     twiddle_lane_divisor: int = 1
-    store_layout: str = "linear"
 
 
 def _check_layouts(
@@ -306,14 +305,6 @@ def _check_layouts(
         if simd_lanes % stage.twiddle_lane_divisor != 0:
             raise ValueError(
                 f"stage {sid}: twiddle_lane_divisor must divide simd_lanes"
-            )
-        if stage.store_layout not in (
-            "linear",
-            "stage0_b_k2",
-            "stage1_a_k1_k2",
-        ):
-            raise ValueError(
-                f"stage {sid}: unknown store_layout {stage.store_layout!r}"
             )
         product *= stage.radix
 
@@ -480,47 +471,28 @@ def _make_store(
     if write_buffer is None:
         raise ValueError("intermediate stage requires a resolved write buffer")
 
-    if layout.store_layout == "stage0_b_k2":
-        offsets = []
-        for lane in range(valid_lanes):
-            global_bfly = simd_it * simd_lanes + lane
-            offsets.append(global_bfly * layout.output_batch_width + output)
-        return StorePlan(
-            destination="scratchpad",
-            buffer_name=write_buffer,
-            mode="scalar_lanes",
-            lane_offsets=tuple(offsets),
-        )
-
-    if layout.store_layout == "stage1_a_k1_k2":
-        divisor = layout.twiddle_lane_divisor
-        group_stride = layout.radix * divisor
-        offsets = []
-        for lane in range(valid_lanes):
-            global_bfly = simd_it * simd_lanes + lane
-            a = global_bfly // divisor
-            k2 = global_bfly % divisor
-            offsets.append(a * group_stride + output * divisor + k2)
-        return StorePlan(
-            destination="scratchpad",
-            buffer_name=write_buffer,
-            mode="scalar_lanes",
-            lane_offsets=tuple(offsets),
-        )
-
-    base = output_batch_base + output * layout.output_stride
-    if valid_lanes == simd_lanes:
-        return StorePlan(
-            destination="scratchpad",
-            buffer_name=write_buffer,
-            mode="vector",
-            base_offset=base,
-        )
+    # One formula for every non-last (Stockham-autosort) stage. P_s --
+    # this stage's twiddle_lane_divisor, the product of the radices before
+    # it -- picks both the twiddle exponent (in _make_twiddle) and this
+    # store permutation, so the next stage's read is always the same
+    # "N_local/radix contiguous blocks" shape (see _make_load's
+    # input_stride) regardless of which stage wrote it or what radix it
+    # was. Was two hand-authored special cases (one per stage position);
+    # collapsed after confirming both were this same formula evaluated at
+    # P_s=1 and P_s=radix respectively.
+    p_s = layout.twiddle_lane_divisor
+    group_stride = layout.radix * p_s
+    offsets = []
+    for lane in range(valid_lanes):
+        bfly = simd_it * simd_lanes + lane
+        n2 = bfly // p_s
+        b_s = bfly % p_s
+        offsets.append(n2 * group_stride + output * p_s + b_s)
     return StorePlan(
         destination="scratchpad",
         buffer_name=write_buffer,
         mode="scalar_lanes",
-        lane_offsets=tuple(base + lane for lane in range(valid_lanes)),
+        lane_offsets=tuple(offsets),
     )
 
 
@@ -737,45 +709,54 @@ def _build_plan(
     )
 
 
+def layouts_for_radices(
+    length: int, radices: tuple[int, ...], simd_lanes: int
+) -> tuple[_StageLayout, ...]:
+    """Every stage's _StageLayout for a length-`length` FFT run as one
+    kernel's `radices` sequence (in Cooley-Tukey/Stockham order: `length`
+    == product(radices)), derived from nothing but the radix sequence
+    itself -- no per-stage hand authoring.
+
+    `P_s` (this stage's `twiddle_lane_divisor`) is the product of the
+    radices before it; both `_make_twiddle`'s exponent and `_make_store`'s
+    intermediate-stage permutation key off it (see `_make_store`), which
+    is what makes every non-last stage's read of its input always the same
+    "length/radix contiguous blocks" shape regardless of which stage wrote
+    it (`input_stride = length // radix` here, on every stage).
+
+    `input_batch_width`/`output_batch_width` are pinned to `simd_lanes`:
+    they only matter (`simd_it * width`) once a stage has more than one
+    SIMD batch, and at that point the load/store math requires the batch
+    stride to be exactly the lane count.
+    """
+    stage_count = len(radices)
+    layouts: list[_StageLayout] = []
+    p = 1
+    for stage_id, radix in enumerate(radices):
+        last_stage = stage_id == stage_count - 1
+        layouts.append(
+            _StageLayout(
+                radix=radix,
+                butterfly_count=length // radix,
+                input_batch_width=simd_lanes,
+                input_stride=length // radix,
+                output_batch_width=simd_lanes,
+                output_stride=p if last_stage else 1,
+                twiddle_modulus=None if last_stage else length // p,
+                twiddle_stride=1,
+                # Unused (and not necessarily a divisor of simd_lanes) on
+                # the last stage: there is no twiddle there (modulus=None
+                # above short-circuits _make_twiddle), and _make_store's
+                # last-stage branch doesn't read this field either.
+                twiddle_lane_divisor=1 if last_stage else p,
+            )
+        )
+        p *= radix
+    return tuple(layouts)
+
+
 def make_444_plan(*, inverse: bool = False, max_uthread: int = 1) -> FFTCodegenPlan:
     """Create the fully lowered N=64, radix-4 x radix-4 x radix-4 plan."""
-
-    layouts = (
-        _StageLayout(
-            radix=4,
-            butterfly_count=16,
-            input_batch_width=8,
-            input_stride=16,
-            output_batch_width=4,
-            output_stride=4,
-            twiddle_modulus=64,
-            twiddle_stride=1,
-            twiddle_lane_divisor=1,
-            store_layout="stage0_b_k2",
-        ),
-        _StageLayout(
-            radix=4,
-            butterfly_count=16,
-            input_batch_width=8,
-            input_stride=16,
-            output_batch_width=8,
-            output_stride=16,
-            twiddle_modulus=16,
-            twiddle_stride=1,
-            twiddle_lane_divisor=4,
-            store_layout="stage1_a_k1_k2",
-        ),
-        _StageLayout(
-            radix=4,
-            butterfly_count=16,
-            input_batch_width=8,
-            input_stride=16,
-            output_batch_width=8,
-            output_stride=16,
-            twiddle_modulus=None,
-            store_layout="linear",
-        ),
-    )
 
     return _build_plan(
         length=64,
@@ -783,7 +764,7 @@ def make_444_plan(*, inverse: bool = False, max_uthread: int = 1) -> FFTCodegenP
         max_uthread=max_uthread,
         simd_lanes=8,
         use_pingpong=True,
-        layouts=layouts,
+        layouts=layouts_for_radices(64, (4, 4, 4), simd_lanes=8),
     )
 
 
@@ -800,28 +781,9 @@ def make_444_plan(*, inverse: bool = False, max_uthread: int = 1) -> FFTCodegenP
 #     FFT over n0, strided store out[k0*N1+k1]
 #
 # Both kernels are ordinary single-stage FFTCodegenPlans (radix == their own
-# length, the existing machinery already handles that -- see
-# _single_radix_layout); only their AddressMapping and (kernel0's)
-# LargeTwiddlePlan differ from a single-kernel plan's defaults.
-
-
-def _single_radix_layout(radix: int) -> _StageLayout:
-    """One stage, radix == the whole sub-FFT length: a full length-`radix`
-    FFT in one fixed butterfly call (see fft_butterflies.SUPPORTED_RADICES),
-    no intra-kernel digit-reversal permutation to plan. `_lower_stages`'s
-    ordinary single-stage path (butterfly_count == 1, store_layout=linear)
-    already covers this; nothing new to it beyond picking radix == length.
-    """
-    return _StageLayout(
-        radix=radix,
-        butterfly_count=1,
-        input_batch_width=radix,
-        input_stride=1,
-        output_batch_width=radix,
-        output_stride=1,
-        twiddle_modulus=None,
-        store_layout="linear",
-    )
+# length, `layouts_for_radices(radix, (radix,), simd_lanes)` already covers
+# this); only their AddressMapping and (kernel0's) LargeTwiddlePlan differ
+# from a single-kernel plan's defaults.
 
 
 @dataclass(frozen=True)
@@ -870,7 +832,7 @@ def make_decomposed_plan(
 
     One independent length-N FFT per call (see DecomposedFFTPlan); pass N0
     and N1 in SUPPORTED_RADICES (each becomes one kernel's single-stage
-    radix -- see _single_radix_layout).
+    radix -- see layouts_for_radices).
     """
     n = n0 * n1
 
@@ -880,7 +842,7 @@ def make_decomposed_plan(
         max_uthread=n0,
         simd_lanes=simd_lanes,
         use_pingpong=False,
-        layouts=(_single_radix_layout(n1),),
+        layouts=layouts_for_radices(n1, (n1,), simd_lanes),
         kernel_name="FFTFP32Kernel0",
         # x[n1*N0 + n0]: this uthread's row is n0 (row_stride=1), its N1
         # elements are spaced N0 apart in the original contiguous input.
@@ -905,7 +867,7 @@ def make_decomposed_plan(
         max_uthread=n1,
         simd_lanes=simd_lanes,
         use_pingpong=False,
-        layouts=(_single_radix_layout(n0),),
+        layouts=layouts_for_radices(n0, (n0,), simd_lanes),
         kernel_name="FFTFP32Kernel1",
         # mid[n0*N1 + k1]: kernel0 wrote this contiguously by *its* row n0
         # (output_mapping above). Read back by k1 instead, each of this
