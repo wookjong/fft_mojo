@@ -330,10 +330,6 @@ def _check_layouts(
             raise ValueError(f"stage {sid}: twiddle_modulus must be positive")
         if stage.twiddle_lane_divisor <= 0:
             raise ValueError(f"stage {sid}: twiddle_lane_divisor must be positive")
-        if simd_lanes % stage.twiddle_lane_divisor != 0:
-            raise ValueError(
-                f"stage {sid}: twiddle_lane_divisor must divide simd_lanes"
-            )
         product *= stage.radix
 
     if product != length:
@@ -963,77 +959,54 @@ def _prime_factors_supported(n: int) -> list[int]:
     return factors
 
 
-def _max_pow2_exponent(simd_lanes: int) -> int:
-    """Largest e such that 2**e divides simd_lanes."""
-    e = 0
-    while simd_lanes % (2 ** (e + 1)) == 0:
-        e += 1
-    return e
-
-
 def factor_into_kernel_chunks(
-    n: int, *, scratchpad_byte_budget: int, simd_lanes: int = 8
+    n: int, *, scratchpad_byte_budget: int
 ) -> tuple[tuple[int, ...], ...]:
     """Factor n into a sequence of per-kernel radix chunks -- chunk i
     becomes kernel i's radix sequence for layouts_for_radices, processed
     in order and chained through DRAM by make_multi_kernel_plan.
 
-    Each chunk is built greedily under two independent caps:
-      * scratchpad: `16 * chunk_product <= scratchpad_byte_budget` (the
-        `scratchpad_uthread_stride = 2*length` times 2 ping-pong buffers
-        times 4 bytes/float convention `_build_plan` already uses). No
-        default is offered: the real M2NDP per-uthread scratchpad size
-        isn't established in this codebase, so callers pick a value.
-      * layouts_for_radices/_check_layouts's real constraint (confirmed
-        in Stage 2's tests by bypassing it and watching correct results
-        go to ~O(1) wrong -- not overly conservative, not relaxable):
-        every non-last *stage*'s cumulative radix product must divide
-        simd_lanes. A chunk may carry at most one prime that isn't a
-        power of two, and it always goes last within the chunk; a leading
-        run of radix-2 stages is capped so its own cumulative products
-        (1, 2, 4, ...) stay within simd_lanes too.
+    Built greedily under one cap: `16 * chunk_product <= scratchpad_byte_budget`
+    (the `scratchpad_uthread_stride = 2*length` times 2 ping-pong buffers
+    times 4 bytes/float convention `_build_plan` already uses). No default
+    is offered: the real M2NDP per-uthread scratchpad size isn't
+    established in this codebase, so callers pick a value.
+
+    An earlier version of this also capped chunk depth/ordering to satisfy
+    what looked like a real constraint in `_check_layouts` (every non-last
+    *stage*'s cumulative radix product dividing simd_lanes) -- verified at
+    the time by bypassing the check and watching results go to ~O(1)
+    wrong. That verification was itself standing on a bug in the
+    verification harness (numpy aliasing on `var or0 = rr0`-style copies --
+    see verify_fft_plan.py's SimdVec), and re-run after fixing it, every
+    previously-failing case (mixed radix, depth-8 same-radix towers, etc.)
+    passes cleanly. The constraint was removed from `_check_layouts`
+    accordingly, and chunk order/composition here is unconstrained beyond
+    the scratchpad budget.
     """
     if scratchpad_byte_budget <= 0:
         raise ValueError("scratchpad_byte_budget must be positive")
 
     factors = _prime_factors_supported(n)
-    twos_left = factors.count(2)
-    others_left = [f for f in factors if f != 2]
-
-    max_e = _max_pow2_exponent(simd_lanes)
     cap = scratchpad_byte_budget // 16
 
     chunks: list[tuple[int, ...]] = []
-    while twos_left > 0 or others_left:
-        if others_left:
-            other = others_left.pop(0)
-            if other > cap:
-                raise ValueError(
-                    f"scratchpad_byte_budget={scratchpad_byte_budget} is "
-                    f"too small to fit even a single radix-{other} stage"
-                )
-            max_j = max_e + 1  # leading 2's, then this trailing non-2 prime
-            j = 0
-            product = other
-            while j < max_j and twos_left > 0 and product * 2 <= cap:
-                j += 1
-                twos_left -= 1
-                product *= 2
-            chunks.append(tuple([2] * j + [other]))
-        else:
-            if 2 > cap:
-                raise ValueError(
-                    f"scratchpad_byte_budget={scratchpad_byte_budget} is "
-                    "too small to fit even a single radix-2 stage"
-                )
-            max_j = max_e + 2  # pure radix-2 tower, its last stage exempt
-            j = 0
+    current: list[int] = []
+    product = 1
+    for f in factors:
+        if current and product * f > cap:
+            chunks.append(tuple(current))
+            current = []
             product = 1
-            while j < max_j and twos_left > 0 and product * 2 <= cap:
-                j += 1
-                twos_left -= 1
-                product *= 2
-            chunks.append(tuple([2] * j))
+        if f > cap:
+            raise ValueError(
+                f"scratchpad_byte_budget={scratchpad_byte_budget} is "
+                f"too small to fit even a single radix-{f} stage"
+            )
+        current.append(f)
+        product *= f
+    if current:
+        chunks.append(tuple(current))
 
     return tuple(chunks)
 

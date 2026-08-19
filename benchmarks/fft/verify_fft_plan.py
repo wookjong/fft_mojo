@@ -286,19 +286,6 @@ def verify_decomposed_plan(*, n0: int, n1: int, inverse: bool, seed: int) -> flo
     return float(np.max(np.abs(got - expected)))
 
 
-# Non-last stages that are *expected* to be rejected: _check_layouts
-# requires simd_lanes % twiddle_lane_divisor == 0 where twiddle_lane_divisor
-# is P_s, the product of radices before that stage (see layouts_for_radices).
-# Confirmed real (not overly conservative) by bypassing the check once and
-# watching the numeric result go from ~1e-9 to ~O(1) wrong -- see the plan
-# doc's Stage 2 notes. Every entry here must raise ValueError, not run.
-_EXPECTED_INVALID_RADIX_SEQUENCES: tuple[tuple[int, ...], ...] = (
-    (4, 4, 4, 4),  # P_2 = 16, doesn't divide simd_lanes=8
-    (3, 4, 2),  # P_1 = 3
-    (5, 2, 3),  # P_1 = 5
-)
-
-
 def verify_multi_kernel_plan(
     chunks: tuple[tuple[int, ...], ...], *, inverse: bool, seed: int
 ) -> float:
@@ -352,12 +339,21 @@ def main() -> None:
 
     # Stage 2: layouts_for_radices generalizes beyond the hardcoded (4,4,4)
     # case make_444_plan calls it with -- single-stage sweep over every
-    # supported radix, same-radix towers of depth 2 and (validly-ordered)
-    # depth 5, and several mixed-radix orderings, forward and inverse.
+    # supported radix, same-radix towers of depth 2 and up, and several
+    # mixed-radix orderings, forward and inverse. Depth-4/5 same-radix and
+    # (3,4,2)/(5,2,3) were rejected by an earlier _check_layouts constraint
+    # (simd_lanes % twiddle_lane_divisor == 0); that constraint's own
+    # "confirmed real" check was standing on a bug in this harness (numpy
+    # aliasing on `var or0 = rr0`-style copies, fixed below as SimdVec) and
+    # didn't survive re-verification, so it was removed -- these are
+    # ordinary passing cases now, not a special "expected rejection" list.
     radix_sequence_cases: list[tuple[int, ...]] = (
         [(r,) for r in sorted(SUPPORTED_RADICES)]
-        + [(2, 2), (3, 3), (4, 4), (2, 2, 2, 2, 2)]
-        + [(2, 3, 4), (4, 3, 2), (7, 3), (9, 2), (13, 2), (11, 3)]
+        + [(2, 2), (3, 3), (4, 4), (2, 2, 2, 2, 2), (2,) * 8, (3,) * 5]
+        + [
+            (2, 3, 4), (4, 3, 2), (7, 3), (9, 2), (13, 2), (11, 3),
+            (4, 4, 4, 4), (3, 4, 2), (5, 2, 3),
+        ]
     )
     for radices in radix_sequence_cases:
         for inverse in (False, True):
@@ -366,17 +362,6 @@ def main() -> None:
             ok = err <= tolerance
             print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
             if not ok:
-                failures.append(tag)
-
-    for radices in _EXPECTED_INVALID_RADIX_SEQUENCES:
-        for inverse in (False, True):
-            tag = f"radix sequence {radices} inverse={inverse} (expected rejection)"
-            try:
-                verify_radix_sequence_plan(radices, inverse=inverse, seed=1)
-            except ValueError:
-                print(f"  OK   {tag}: correctly rejected")
-            else:
-                print(f"  FAIL {tag}: should have been rejected but ran")
                 failures.append(tag)
 
     for inverse in (False, True):
