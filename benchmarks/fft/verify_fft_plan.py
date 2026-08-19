@@ -30,10 +30,13 @@ from dataclasses import replace
 
 import numpy as np
 
+from fft_butterflies import SUPPORTED_RADICES
 from fft_codegen import Emitter, _emit_stage
 from fft_plangen import (
     DecomposedFFTPlan,
     FFTCodegenPlan,
+    _build_plan,
+    layouts_for_radices,
     make_444_plan,
     make_decomposed_plan,
 )
@@ -68,15 +71,44 @@ def _translate_stage(plan: FFTCodegenPlan, stage) -> str:
     return "\n".join(out)
 
 
+class SimdVec(np.ndarray):
+    """A numpy array with Mojo's SIMD value semantics instead of numpy's.
+
+    `var or0 = rr0` (a bare name-to-name assignment -- e.g.
+    fft_butterflies._emit_symmetric_odd_radix's `or0 = rr0; or0 += ...`
+    accumulation pattern) is a *copy* in Mojo: SIMD is a value type, so
+    later mutating `or0` never touches `rr0`. Plain numpy aliases the same
+    buffer and `+=` mutates it in place, silently corrupting `rr0` for
+    every later line that reads it -- caught by the radix-7/11/13/17 cases
+    in Stage 2 (radix-2/3/4/6/8/9/10/16's butterflies never do a bare
+    copy-then-accumulate, so this stayed latent through every earlier
+    verified case). Disabling the in-place dunders makes Python's `+=`
+    fall back to `self = self + other`, which rebinds instead of
+    mutating -- exactly Mojo's copy behavior.
+    """
+
+    def __iadd__(self, other):
+        return self + other
+
+    def __isub__(self, other):
+        return self - other
+
+    def __imul__(self, other):
+        return self * other
+
+    def __itruediv__(self, other):
+        return self / other
+
+
 class Ptr:
     """Stand-in for an UnsafePointer[Float32]: a flat float64 buffer."""
 
     def __init__(self, n: int) -> None:
         self.arr = np.zeros(n, dtype=np.float64)
 
-    def load(self, offset: int, width: int) -> np.ndarray:
+    def load(self, offset: int, width: int) -> SimdVec:
         offset = int(offset)
-        return self.arr[offset : offset + int(width)].copy()
+        return self.arr[offset : offset + int(width)].copy().view(SimdVec)
 
     def store(self, offset: int, value) -> None:
         offset = int(offset)
@@ -88,8 +120,8 @@ class Ptr:
             self.arr[offset : offset + flat.size] = flat
 
 
-def _simd(*args: float) -> np.ndarray:
-    return np.array(args, dtype=np.float64)
+def _simd(*args: float) -> SimdVec:
+    return np.array(args, dtype=np.float64).view(SimdVec)
 
 
 def run_kernel(
@@ -172,6 +204,40 @@ def verify_single_kernel_plan(*, inverse: bool, seed: int) -> float:
     return float(np.max(np.abs(got - expected)))
 
 
+def verify_radix_sequence_plan(
+    radices: tuple[int, ...], *, inverse: bool, seed: int, simd_lanes: int = 8
+) -> float:
+    """Same shape as verify_single_kernel_plan, but for an arbitrary radix
+    sequence within one kernel (Stage 2 of the planner generalization:
+    proving `layouts_for_radices` -- not just the hardcoded (4,4,4) case
+    `make_444_plan` calls it with -- by actually re-executing the emitted
+    stage text)."""
+    length = 1
+    for r in radices:
+        length *= r
+    plan = _build_plan(
+        length=length,
+        inverse=inverse,
+        max_uthread=1,
+        simd_lanes=simd_lanes,
+        use_pingpong=True,
+        layouts=layouts_for_radices(length, radices, simd_lanes),
+    )
+    rng = np.random.default_rng(seed)
+    x = rng.uniform(-1, 1, length) + 1j * rng.uniform(-1, 1, length)
+
+    in_r, in_i = Ptr(length), Ptr(length)
+    in_r.arr[:] = x.real
+    in_i.arr[:] = x.imag
+    out_r, out_i = Ptr(length), Ptr(length)
+
+    run_kernel(plan, input_real=in_r, input_imag=in_i, output_real=out_r, output_imag=out_i)
+
+    got = out_r.arr + 1j * out_i.arr
+    expected = np.fft.ifft(x) if inverse else np.fft.fft(x)
+    return float(np.max(np.abs(got - expected)))
+
+
 def verify_decomposed_plan(*, n0: int, n1: int, inverse: bool, seed: int) -> float:
     plan = make_decomposed_plan(n0, n1, inverse=inverse)
     n = plan.n
@@ -208,9 +274,51 @@ def verify_decomposed_plan(*, n0: int, n1: int, inverse: bool, seed: int) -> flo
     return float(np.max(np.abs(got - expected)))
 
 
+# Non-last stages that are *expected* to be rejected: _check_layouts
+# requires simd_lanes % twiddle_lane_divisor == 0 where twiddle_lane_divisor
+# is P_s, the product of radices before that stage (see layouts_for_radices).
+# Confirmed real (not overly conservative) by bypassing the check once and
+# watching the numeric result go from ~1e-9 to ~O(1) wrong -- see the plan
+# doc's Stage 2 notes. Every entry here must raise ValueError, not run.
+_EXPECTED_INVALID_RADIX_SEQUENCES: tuple[tuple[int, ...], ...] = (
+    (4, 4, 4, 4),  # P_2 = 16, doesn't divide simd_lanes=8
+    (3, 4, 2),  # P_1 = 3
+    (5, 2, 3),  # P_1 = 5
+)
+
+
 def main() -> None:
     tolerance = 1.0e-3
     failures: list[str] = []
+
+    # Stage 2: layouts_for_radices generalizes beyond the hardcoded (4,4,4)
+    # case make_444_plan calls it with -- single-stage sweep over every
+    # supported radix, same-radix towers of depth 2 and (validly-ordered)
+    # depth 5, and several mixed-radix orderings, forward and inverse.
+    radix_sequence_cases: list[tuple[int, ...]] = (
+        [(r,) for r in sorted(SUPPORTED_RADICES)]
+        + [(2, 2), (3, 3), (4, 4), (2, 2, 2, 2, 2)]
+        + [(2, 3, 4), (4, 3, 2), (7, 3), (9, 2), (13, 2), (11, 3)]
+    )
+    for radices in radix_sequence_cases:
+        for inverse in (False, True):
+            err = verify_radix_sequence_plan(radices, inverse=inverse, seed=1)
+            tag = f"radix sequence {radices} inverse={inverse}"
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    for radices in _EXPECTED_INVALID_RADIX_SEQUENCES:
+        for inverse in (False, True):
+            tag = f"radix sequence {radices} inverse={inverse} (expected rejection)"
+            try:
+                verify_radix_sequence_plan(radices, inverse=inverse, seed=1)
+            except ValueError:
+                print(f"  OK   {tag}: correctly rejected")
+            else:
+                print(f"  FAIL {tag}: should have been rejected but ran")
+                failures.append(tag)
 
     for inverse in (False, True):
         err = verify_single_kernel_plan(inverse=inverse, seed=1 if inverse else 0)
