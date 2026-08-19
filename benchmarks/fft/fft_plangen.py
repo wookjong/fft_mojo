@@ -25,16 +25,74 @@ It must not reconstruct FFT layout, twiddle, masking, or ping-pong decisions.
 """
 
 from dataclasses import dataclass
+from enum import Enum
 from math import cos, pi, sin
 from typing import Literal
 
 from fft_butterflies import SUPPORTED_RADICES
 
 
-LoadSource = Literal["input", "scratchpad"]
+LoadSource = Literal["input", "scratchpad", "large_twiddle"]
 LoadMode = Literal["vector", "scalar_pack"]
 StoreDestination = Literal["output", "scratchpad"]
 StoreMode = Literal["vector", "scalar_lanes"]
+
+
+class AddressMappingKind(Enum):
+    """How a kernel's DRAM-facing side (its first-stage load or its
+    last-stage store) walks memory across the sub-FFT's own N elements.
+
+    CONTIGUOUS: element index i sits at `row*row_stride + i` -- a unit-stride
+    vector load/store, one instruction per SIMD batch.
+
+    STRIDED: element index i sits at `row*row_stride + i*elem_stride` with
+    `elem_stride != 1` -- there is no vector instruction for that, so codegen
+    falls back to one scalar access per lane (the same fallback already used
+    for a partial/tail SIMD batch).
+
+    `row` is always `global_uthread_id()`: the logical sub-FFT id. This is
+    address generation, not a physical shared-memory transpose -- see
+    `AddressMapping`.
+    """
+
+    CONTIGUOUS = "contiguous"
+    STRIDED = "strided"
+
+
+@dataclass(frozen=True)
+class AddressMapping:
+    """addr(row, elem) = base + row*row_stride + elem*elem_stride.
+
+    `row` is this sub-FFT's logical id (`global_uthread_id()`, a runtime
+    value -- one multiply). `elem` is the natural in-FFT element index
+    (0..length-1), which `_lower_stages` already resolves to a plan-time
+    constant per load/store; multiplying it by `elem_stride` stays a
+    plan-time constant too. Nothing here is decided by codegen: a plan
+    carries one `AddressMapping` for its DRAM input and one for its DRAM
+    output, and codegen only ever reads `row_stride`/`elem_stride`/`base`
+    off of them.
+
+    A single-kernel FFT's input and output are both
+    `AddressMapping.contiguous(length)` -- the plan's `batch_stride` today.
+    A decomposed FFT's kernels use `strided(...)` on whichever side isn't
+    naturally contiguous, so that the *other* side keeps its vector
+    load/store. See `make_decomposed_plan` for how N0*N1 picks these.
+    """
+
+    kind: AddressMappingKind
+    row_stride: int
+    elem_stride: int = 1
+    base: int = 0
+
+    @staticmethod
+    def contiguous(row_stride: int, base: int = 0) -> "AddressMapping":
+        return AddressMapping(AddressMappingKind.CONTIGUOUS, row_stride, 1, base)
+
+    @staticmethod
+    def strided(row_stride: int, elem_stride: int, base: int = 0) -> "AddressMapping":
+        if elem_stride == 1:
+            raise ValueError("a strided mapping needs elem_stride != 1")
+        return AddressMapping(AddressMappingKind.STRIDED, row_stride, elem_stride, base)
 
 
 @dataclass(frozen=True)
@@ -84,10 +142,45 @@ class StorePlan:
 
 
 @dataclass(frozen=True)
+class LargeTwiddlePlan:
+    """Cross-block twiddle for one factor of an N = N0*N1 decomposition,
+    fused into a kernel's final-stage output path (never a separate stage
+    or kernel -- see module docstring).
+
+    W_N^(row*output), row = global_uthread_id() (this kernel's logical
+    sub-FFT id, a *runtime* value) and output = this stage's plan-time-known
+    output digit. That runtime dependency is exactly what makes this
+    different from the ordinary per-stage `TwiddlePlan`: an exponent that
+    depends on `global_uthread_id()` cannot be folded into a SIMD compile-time
+    constant, so it cannot reuse that mechanism.
+
+    twiddle source: a small DRAM table the host precomputes once at startup,
+    with std.math cos/sin -- the same "computed at host runtime, not baked
+    into the plan" approach `fft_codegen.py` already uses for the reference
+    DFT. `row_count`*`output_count` == `full_length`, and the table is laid
+    out to match this kernel's own `output_mapping` (row_stride, elem_stride)
+    so the fetch reuses the store's own already-computed address, rather
+    than being a second, independent address computation.
+
+    A full twiddle table is the direct approach; it is what's needed here.
+    rocFFT/clFFT-style digit-split reconstruction (W_N^u = T0[u0]*T1[u1]*...)
+    would trade table size for extra multiplies on very large N -- worth
+    adding if a table of size N stops being affordable, not before.
+    """
+
+    full_length: int
+    row_count: int
+    output_count: int
+    inverse: bool
+    table_name: str = "large_twiddle"
+
+
+@dataclass(frozen=True)
 class OutputPlan:
     output: int
     twiddle: TwiddlePlan | None
     scale: float | None
+    large_twiddle: bool
     store: StorePlan
 
 
@@ -126,15 +219,29 @@ class HostPlan:
 
 @dataclass(frozen=True)
 class FFTCodegenPlan:
-    """Fully lowered plan consumed by fft_codegen.py."""
+    """Fully lowered plan consumed by fft_codegen.py.
+
+    One `FFTCodegenPlan` is one *kernel*: one `NDPTask` struct, one launch,
+    one `local_uthread_id()`-gated scratchpad region. A single-kernel FFT is
+    exactly one of these. A decomposed FFT (see `DecomposedFFTPlan`) is two,
+    chained through DRAM the way `two_tasks.mojo` chains `Scale`/`AddB` --
+    never through a shared scratchpad, since nothing is guaranteed still
+    resident once a kernel launch returns.
+    """
 
     length: int
     inverse: bool
     max_uthread: int
     simd_lanes: int
+    kernel_name: str
 
-    # Runtime address strides are also planner decisions.
-    batch_stride: int
+    # DRAM-facing address mappings -- see `AddressMapping`. A single-kernel
+    # FFT's are both `contiguous(length)`, which is today's `batch_stride`
+    # generalized: row_stride==length, elem_stride==1 on both sides.
+    input_mapping: AddressMapping
+    output_mapping: AddressMapping
+    large_twiddle: LargeTwiddlePlan | None
+
     scratchpad_uthread_stride: int
 
     scratchpad_buffers: tuple[ScratchpadBufferPlan, ...]
@@ -267,6 +374,7 @@ def _make_load(
     base_offset: int,
     valid_lanes: int,
     simd_lanes: int,
+    dram_elem_stride: int = 1,
 ) -> LoadPlan:
     source: LoadSource = "input" if first_stage else "scratchpad"
     buffer_name = None if first_stage else read_buffer
@@ -274,7 +382,14 @@ def _make_load(
     if source == "scratchpad" and buffer_name is None:
         raise ValueError("scratchpad load requires a resolved buffer name")
 
-    if valid_lanes == simd_lanes:
+    # A non-unit DRAM element stride (this kernel's input_mapping is
+    # STRIDED -- see AddressMapping) has no vector-load form: fall back to
+    # one scalar load per lane, same fallback a partial/tail SIMD batch
+    # already uses. Only the DRAM ("input") side can be strided this way;
+    # scratchpad loads are always this kernel's own contiguous layout.
+    force_scalar = source == "input" and dram_elem_stride != 1
+
+    if valid_lanes == simd_lanes and not force_scalar:
         return LoadPlan(
             operand=operand,
             source=source,
@@ -283,13 +398,14 @@ def _make_load(
             base_offset=base_offset,
         )
 
+    stride = dram_elem_stride if source == "input" else 1
     return LoadPlan(
         operand=operand,
         source=source,
         buffer_name=buffer_name,
         mode="scalar_pack",
         packed_lane_offsets=tuple(
-            (base_offset + lane) if lane < valid_lanes else None
+            ((base_offset + lane) * stride) if lane < valid_lanes else None
             for lane in range(simd_lanes)
         ),
     )
@@ -337,12 +453,15 @@ def _make_store(
     output: int,
     valid_lanes: int,
     simd_lanes: int,
+    dram_elem_stride: int = 1,
 ) -> StorePlan:
     output_batch_base = simd_it * layout.output_batch_width
 
     if last_stage:
-        base = output_batch_base + output * layout.output_stride
-        if valid_lanes == simd_lanes:
+        base = (output_batch_base + output * layout.output_stride) * dram_elem_stride
+        # Symmetric with _make_load: a non-unit DRAM element stride (this
+        # kernel's output_mapping is STRIDED) has no vector-store form.
+        if valid_lanes == simd_lanes and dram_elem_stride == 1:
             return StorePlan(
                 destination="output",
                 buffer_name=None,
@@ -353,7 +472,9 @@ def _make_store(
             destination="output",
             buffer_name=None,
             mode="scalar_lanes",
-            lane_offsets=tuple(base + lane for lane in range(valid_lanes)),
+            lane_offsets=tuple(
+                base + lane * dram_elem_stride for lane in range(valid_lanes)
+            ),
         )
 
     if write_buffer is None:
@@ -410,6 +531,10 @@ def _lower_stages(
     simd_lanes: int,
     layouts: tuple[_StageLayout, ...],
     buffer_names: tuple[str, ...],
+    input_mapping: AddressMapping,
+    output_mapping: AddressMapping,
+    large_twiddle: LargeTwiddlePlan | None,
+    inverse_scale: float | None,
 ) -> tuple[FFTStagePlan, ...]:
     stages: list[FFTStagePlan] = []
     stage_count = len(layouts)
@@ -444,6 +569,9 @@ def _lower_stages(
                     base_offset=input_batch_base + operand * layout.input_stride,
                     valid_lanes=valid_lanes,
                     simd_lanes=simd_lanes,
+                    dram_elem_stride=(
+                        input_mapping.elem_stride if first_stage else 1
+                    ),
                 )
                 for operand in range(layout.radix)
             )
@@ -463,7 +591,8 @@ def _lower_stages(
                             stride=layout.twiddle_stride,
                             lane_divisor=layout.twiddle_lane_divisor,
                         ),
-                        scale=(1.0 / length) if (last_stage and inverse) else None,
+                        scale=inverse_scale if last_stage else None,
+                        large_twiddle=last_stage and large_twiddle is not None,
                         store=_make_store(
                             last_stage=last_stage,
                             write_buffer=write_buffer,
@@ -472,6 +601,9 @@ def _lower_stages(
                             output=output,
                             valid_lanes=valid_lanes,
                             simd_lanes=simd_lanes,
+                            dram_elem_stride=(
+                                output_mapping.elem_stride if last_stage else 1
+                            ),
                         ),
                     )
                 )
@@ -530,6 +662,11 @@ def _build_plan(
     simd_lanes: int,
     use_pingpong: bool,
     layouts: tuple[_StageLayout, ...],
+    kernel_name: str = "FFTFP32",
+    input_mapping: AddressMapping | None = None,
+    output_mapping: AddressMapping | None = None,
+    large_twiddle: LargeTwiddlePlan | None = None,
+    inverse_scale: float | None = None,
 ) -> FFTCodegenPlan:
     _check_layouts(
         length=length,
@@ -537,6 +674,16 @@ def _build_plan(
         simd_lanes=simd_lanes,
         layouts=layouts,
     )
+
+    # Default: today's single-kernel behavior -- one contiguous row per
+    # sub-FFT, `row_stride == length`, unchanged from the old hardcoded
+    # `batch_stride`.
+    if input_mapping is None:
+        input_mapping = AddressMapping.contiguous(length)
+    if output_mapping is None:
+        output_mapping = AddressMapping.contiguous(length)
+    if inverse_scale is None:
+        inverse_scale = (1.0 / length) if inverse else None
 
     buffer_names = _scratchpad_buffer_names(
         stage_count=len(layouts),
@@ -556,7 +703,10 @@ def _build_plan(
         inverse=inverse,
         max_uthread=max_uthread,
         simd_lanes=simd_lanes,
-        batch_stride=length,
+        kernel_name=kernel_name,
+        input_mapping=input_mapping,
+        output_mapping=output_mapping,
+        large_twiddle=large_twiddle,
         scratchpad_uthread_stride=scratchpad_stride,
         scratchpad_buffers=scratchpad_buffers,
         stages=_lower_stages(
@@ -565,6 +715,10 @@ def _build_plan(
             simd_lanes=simd_lanes,
             layouts=layouts,
             buffer_names=buffer_names,
+            input_mapping=input_mapping,
+            output_mapping=output_mapping,
+            large_twiddle=large_twiddle,
+            inverse_scale=inverse_scale,
         ),
         host=_make_host_plan(
             length=length,
@@ -622,4 +776,148 @@ def make_444_plan(*, inverse: bool = False, max_uthread: int = 1) -> FFTCodegenP
         simd_lanes=8,
         use_pingpong=True,
         layouts=layouts,
+    )
+
+
+# --------------------------------------------------------------- decomposition
+#
+# N too large for one uthread's scratchpad: N = N0*N1, run as two kernels
+# chained through DRAM. See the module docstring's index-mapping walkthrough
+# for the derivation; the short version is:
+#
+#   kernel0 (N0 uthreads, row=n0): strided load x[n1*N0+n0], forward N1-point
+#     FFT over n1, multiply by W_N^(n0*k1), contiguous store mid[n0*N1+k1]
+#   kernel1 (N1 uthreads, row=k1): contiguous load mid[k1*N0+n0], forward
+#     N0-point FFT over n0, strided store out[k0*N1+k1]
+#
+# Both kernels are ordinary single-stage FFTCodegenPlans (radix == their own
+# length, the existing machinery already handles that -- see
+# _single_radix_layout); only their AddressMapping and (kernel0's)
+# LargeTwiddlePlan differ from a single-kernel plan's defaults.
+
+
+def _single_radix_layout(radix: int) -> _StageLayout:
+    """One stage, radix == the whole sub-FFT length: a full length-`radix`
+    FFT in one fixed butterfly call (see fft_butterflies.SUPPORTED_RADICES),
+    no intra-kernel digit-reversal permutation to plan. `_lower_stages`'s
+    ordinary single-stage path (butterfly_count == 1, store_layout=linear)
+    already covers this; nothing new to it beyond picking radix == length.
+    """
+    return _StageLayout(
+        radix=radix,
+        butterfly_count=1,
+        input_batch_width=radix,
+        input_stride=1,
+        output_batch_width=radix,
+        output_stride=1,
+        twiddle_modulus=None,
+        store_layout="linear",
+    )
+
+
+@dataclass(frozen=True)
+class DecomposedHostPlan:
+    """Host-side shape for the two-kernel main(). Same philosophy as
+    HostPlan: fresh random input and an independent O(N^2) DFT reference
+    (over the *full* N, not the N0/N1 decomposition either kernel runs) are
+    generated/computed at Mojo host runtime -- nothing numeric is baked in
+    here, only sizes."""
+
+    n: int
+    n0: int
+    n1: int
+    inverse: bool
+    tolerance: float
+
+
+@dataclass(frozen=True)
+class DecomposedFFTPlan:
+    """N = N0*N1, run as two kernels chained through DRAM -- never through a
+    shared scratchpad, since nothing survives a kernel launch boundary but
+    what was written to DRAM (see module docstring). Exactly one independent
+    length-N FFT (no cross-FFT batching yet: `AddressMapping` is one runtime
+    multiply, and batching would need a second one to fold the batch index
+    in without falling back to runtime division -- see make_decomposed_plan).
+    """
+
+    n: int
+    n0: int
+    n1: int
+    inverse: bool
+    kernel0: FFTCodegenPlan
+    kernel1: FFTCodegenPlan
+    host: DecomposedHostPlan
+
+
+def make_decomposed_plan(
+    n0: int, n1: int, *, inverse: bool = False, simd_lanes: int = 8
+) -> DecomposedFFTPlan:
+    """N = n0*n1, planned as kernel0 (N0 uthreads, N1-point sub-FFTs, large
+    twiddle fused into its output store) then kernel1 (N1 uthreads, N0-point
+    sub-FFTs), chained through DRAM. Every decomposition decision -- which
+    factor each kernel owns, each kernel's DRAM AddressMapping, the large
+    twiddle's table shape, where the final 1/N inverse scale lands -- is
+    made here; fft_codegen.py only renders what this plan already decided.
+
+    One independent length-N FFT per call (see DecomposedFFTPlan); pass N0
+    and N1 in SUPPORTED_RADICES (each becomes one kernel's single-stage
+    radix -- see _single_radix_layout).
+    """
+    n = n0 * n1
+
+    kernel0 = _build_plan(
+        length=n1,
+        inverse=inverse,
+        max_uthread=n0,
+        simd_lanes=simd_lanes,
+        use_pingpong=False,
+        layouts=(_single_radix_layout(n1),),
+        kernel_name="FFTFP32Kernel0",
+        # x[n1*N0 + n0]: this uthread's row is n0 (row_stride=1), its N1
+        # elements are spaced N0 apart in the original contiguous input.
+        input_mapping=AddressMapping.strided(row_stride=1, elem_stride=n0),
+        # mid[n0*N1 + k1]: contiguous per row -- kernel1 reads this same
+        # buffer with row=k1 instead, which is what makes *its* load
+        # contiguous too (see kernel1's input_mapping below).
+        output_mapping=AddressMapping.contiguous(row_stride=n1),
+        large_twiddle=LargeTwiddlePlan(
+            full_length=n, row_count=n0, output_count=n1, inverse=inverse
+        ),
+        # The intra-kernel butterfly must NOT apply 1/N here: this is not
+        # the final kernel of the decomposition. The overall inverse scale
+        # (1/n, not 1/n1) lands once, at kernel1.
+        inverse_scale=None,
+    )
+
+    kernel1 = _build_plan(
+        length=n0,
+        inverse=inverse,
+        max_uthread=n1,
+        simd_lanes=simd_lanes,
+        use_pingpong=False,
+        layouts=(_single_radix_layout(n0),),
+        kernel_name="FFTFP32Kernel1",
+        # mid[k1*N0 + n0]: this uthread's row is k1 (row_stride=N0), its N0
+        # elements are contiguous -- kernel0's own contiguous store, reread
+        # with the other kernel's row.
+        input_mapping=AddressMapping.contiguous(row_stride=n0),
+        # out[k0*N1 + k1]: k1 (this row) is the *fast* digit of the true
+        # output index, so scattering across k0 (what this kernel produces)
+        # is inherently strided by N1 -- see module docstring; no kernel
+        # split avoids this for the kernel that owns k1.
+        output_mapping=AddressMapping.strided(row_stride=1, elem_stride=n1),
+        large_twiddle=None,
+        inverse_scale=(1.0 / n) if inverse else None,
+    )
+
+    return DecomposedFFTPlan(
+        n=n,
+        n0=n0,
+        n1=n1,
+        inverse=inverse,
+        kernel0=kernel0,
+        kernel1=kernel1,
+        host=DecomposedHostPlan(
+            n=n, n0=n0, n1=n1, inverse=inverse, tolerance=1.0e-3
+        ),
     )

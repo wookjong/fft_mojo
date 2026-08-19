@@ -7,7 +7,7 @@ from m2ndp_host import cxl_alloc
 
 comptime W = VECTOR_WIDTH // size_of[Float32]()
 comptime N = 64
-comptime MAX_UTHREAD = 1
+comptime MAX_UTHREAD_FFTFP32 = 1
 
 @fieldwise_init
 struct FFTFP32Params(Movable):
@@ -20,8 +20,8 @@ struct FFTFP32Params(Movable):
 struct FFTFP32(NDPTask):
     comptime Params = FFTFP32Params
 
-    comptime buf_a = scratchpad[128, Float32, name="fft_buf_a"]()
-    comptime buf_b = scratchpad[128, Float32, name="fft_buf_b"]()
+    comptime buf_a = scratchpad[128, Float32, name="fftfp32_buf_a"]()
+    comptime buf_b = scratchpad[128, Float32, name="fftfp32_buf_b"]()
 
     @staticmethod
     def stage_0():
@@ -30,20 +30,20 @@ struct FFTFP32(NDPTask):
         comptime SIMD_ITERS = 2
 
         var local_id = local_uthread_id()
-        if local_id >= MAX_UTHREAD:
+        if local_id >= MAX_UTHREAD_FFTFP32:
             return
         var spad_base = local_id * 128
-        var batch_base = global_uthread_id() * 64
+        var in_batch_base = global_uthread_id() * 64
 
         # ===== stage 0, SIMD batch 0 (valid lanes: 8/8) =====
-        var rr0 = p.input_real_base.load[width=W](batch_base + 0)
-        var ii0 = p.input_imag_base.load[width=W](batch_base + 0)
-        var rr1 = p.input_real_base.load[width=W](batch_base + 16)
-        var ii1 = p.input_imag_base.load[width=W](batch_base + 16)
-        var rr2 = p.input_real_base.load[width=W](batch_base + 32)
-        var ii2 = p.input_imag_base.load[width=W](batch_base + 32)
-        var rr3 = p.input_real_base.load[width=W](batch_base + 48)
-        var ii3 = p.input_imag_base.load[width=W](batch_base + 48)
+        var rr0 = p.input_real_base.load[width=W](in_batch_base + 0)
+        var ii0 = p.input_imag_base.load[width=W](in_batch_base + 0)
+        var rr1 = p.input_real_base.load[width=W](in_batch_base + 16)
+        var ii1 = p.input_imag_base.load[width=W](in_batch_base + 16)
+        var rr2 = p.input_real_base.load[width=W](in_batch_base + 32)
+        var ii2 = p.input_imag_base.load[width=W](in_batch_base + 32)
+        var rr3 = p.input_real_base.load[width=W](in_batch_base + 48)
+        var ii3 = p.input_imag_base.load[width=W](in_batch_base + 48)
 
         # fixed radix-4 butterfly
         var oa0r = rr0 + rr2
@@ -150,14 +150,14 @@ struct FFTFP32(NDPTask):
         FFTFP32.buf_a.store(spad_base + N + 31, oi3[7])
 
         # ===== stage 0, SIMD batch 1 (valid lanes: 8/8) =====
-        var rr0 = p.input_real_base.load[width=W](batch_base + 8)
-        var ii0 = p.input_imag_base.load[width=W](batch_base + 8)
-        var rr1 = p.input_real_base.load[width=W](batch_base + 24)
-        var ii1 = p.input_imag_base.load[width=W](batch_base + 24)
-        var rr2 = p.input_real_base.load[width=W](batch_base + 40)
-        var ii2 = p.input_imag_base.load[width=W](batch_base + 40)
-        var rr3 = p.input_real_base.load[width=W](batch_base + 56)
-        var ii3 = p.input_imag_base.load[width=W](batch_base + 56)
+        var rr0 = p.input_real_base.load[width=W](in_batch_base + 8)
+        var ii0 = p.input_imag_base.load[width=W](in_batch_base + 8)
+        var rr1 = p.input_real_base.load[width=W](in_batch_base + 24)
+        var ii1 = p.input_imag_base.load[width=W](in_batch_base + 24)
+        var rr2 = p.input_real_base.load[width=W](in_batch_base + 40)
+        var ii2 = p.input_imag_base.load[width=W](in_batch_base + 40)
+        var rr3 = p.input_real_base.load[width=W](in_batch_base + 56)
+        var ii3 = p.input_imag_base.load[width=W](in_batch_base + 56)
 
         # fixed radix-4 butterfly
         var oa0r = rr0 + rr2
@@ -270,10 +270,9 @@ struct FFTFP32(NDPTask):
         comptime SIMD_ITERS = 2
 
         var local_id = local_uthread_id()
-        if local_id >= MAX_UTHREAD:
+        if local_id >= MAX_UTHREAD_FFTFP32:
             return
         var spad_base = local_id * 128
-        var batch_base = global_uthread_id() * 64
 
         # ===== stage 1, SIMD batch 0 (valid lanes: 8/8) =====
         var rr0 = FFTFP32.buf_a.load[DType.float32, W](spad_base + 0)
@@ -510,10 +509,10 @@ struct FFTFP32(NDPTask):
         comptime SIMD_ITERS = 2
 
         var local_id = local_uthread_id()
-        if local_id >= MAX_UTHREAD:
+        if local_id >= MAX_UTHREAD_FFTFP32:
             return
         var spad_base = local_id * 128
-        var batch_base = global_uthread_id() * 64
+        var out_batch_base = global_uthread_id() * 64
 
         # ===== stage 2, SIMD batch 0 (valid lanes: 8/8) =====
         var rr0 = FFTFP32.buf_b.load[DType.float32, W](spad_base + 0)
@@ -543,17 +542,17 @@ struct FFTFP32(NDPTask):
         var or3 = oa1r - ob1i
         var oi3 = oa1i + ob1r
 
-        p.output_real_base.store(batch_base + 0, or0)
-        p.output_imag_base.store(batch_base + 0, oi0)
+        p.output_real_base.store(out_batch_base + 0, or0)
+        p.output_imag_base.store(out_batch_base + 0, oi0)
 
-        p.output_real_base.store(batch_base + 16, or1)
-        p.output_imag_base.store(batch_base + 16, oi1)
+        p.output_real_base.store(out_batch_base + 16, or1)
+        p.output_imag_base.store(out_batch_base + 16, oi1)
 
-        p.output_real_base.store(batch_base + 32, or2)
-        p.output_imag_base.store(batch_base + 32, oi2)
+        p.output_real_base.store(out_batch_base + 32, or2)
+        p.output_imag_base.store(out_batch_base + 32, oi2)
 
-        p.output_real_base.store(batch_base + 48, or3)
-        p.output_imag_base.store(batch_base + 48, oi3)
+        p.output_real_base.store(out_batch_base + 48, or3)
+        p.output_imag_base.store(out_batch_base + 48, oi3)
 
         # ===== stage 2, SIMD batch 1 (valid lanes: 8/8) =====
         var rr0 = FFTFP32.buf_b.load[DType.float32, W](spad_base + 8)
@@ -583,17 +582,17 @@ struct FFTFP32(NDPTask):
         var or3 = oa1r - ob1i
         var oi3 = oa1i + ob1r
 
-        p.output_real_base.store(batch_base + 8, or0)
-        p.output_imag_base.store(batch_base + 8, oi0)
+        p.output_real_base.store(out_batch_base + 8, or0)
+        p.output_imag_base.store(out_batch_base + 8, oi0)
 
-        p.output_real_base.store(batch_base + 24, or1)
-        p.output_imag_base.store(batch_base + 24, oi1)
+        p.output_real_base.store(out_batch_base + 24, or1)
+        p.output_imag_base.store(out_batch_base + 24, oi1)
 
-        p.output_real_base.store(batch_base + 40, or2)
-        p.output_imag_base.store(batch_base + 40, oi2)
+        p.output_real_base.store(out_batch_base + 40, or2)
+        p.output_imag_base.store(out_batch_base + 40, oi2)
 
-        p.output_real_base.store(batch_base + 56, or3)
-        p.output_imag_base.store(batch_base + 56, oi3)
+        p.output_real_base.store(out_batch_base + 56, or3)
+        p.output_imag_base.store(out_batch_base + 56, oi3)
 
     @staticmethod
     def device_main():
@@ -637,24 +636,24 @@ def main() raises:
 
     var pi = Float64(3.141592653589793)
     var sign = Float64(-1.0)
-    for batch in range(MAX_UTHREAD):
-        var batch_base = batch * N
-        for k in range(N):
+    for batch in range(1):
+        var batch_base = batch * 64
+        for k in range(64):
             var acc_r = Float64(0)
             var acc_i = Float64(0)
-            for n in range(N):
-                var angle = sign * 2.0 * pi * Float64(n) * Float64(k) / Float64(N)
+            for n_ in range(64):
+                var angle = sign * 2.0 * pi * Float64(n_) * Float64(k) / Float64(64)
                 var c = host_cos(angle)
                 var s = host_sin(angle)
-                var xr = Float64(input_real[batch_base + n])
-                var xi = Float64(input_imag[batch_base + n])
+                var xr = Float64(input_real[batch_base + n_])
+                var xi = Float64(input_imag[batch_base + n_])
                 acc_r += xr * c - xi * s
                 acc_i += xr * s + xi * c
             ref_real[batch_base + k] = Float32(acc_r)
             ref_imag[batch_base + k] = Float32(acc_i)
 
     var tol = Float32(0.001)
-    for i in range(total_elems):
+    for i in range(64):
         var err_r = output_real[i] - ref_real[i]
         var err_i = output_imag[i] - ref_imag[i]
         if err_r < Float32(0):
