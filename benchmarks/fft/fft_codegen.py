@@ -28,6 +28,7 @@ to emit.
 from fft_butterflies import emit_butterfly
 from fft_plangen import (
     AddressMapping,
+    AddressMappingKind,
     DecomposedFFTPlan,
     FFTCodegenPlan,
     FFTStagePlan,
@@ -65,14 +66,27 @@ def _spad(kernel_name: str, name: str) -> str:
     return f"{kernel_name}.{name}"
 
 
-def _mapping_base_expr(mapping: AddressMapping) -> str:
+def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
     """`global_uthread_id() * row_stride [+ base]` -- the one runtime
-    multiply an AddressMapping ever costs. `elem*elem_stride` is folded into
-    each load/store's own offset at plan time (see fft_plangen._make_load /
-    _make_store), so this is the whole of what codegen computes at runtime
-    for DRAM addressing: no per-access division or modulo, here or anywhere
-    else in this module.
+    multiply a CONTIGUOUS/STRIDED AddressMapping ever costs. `elem*elem_stride`
+    is folded into each load/store's own offset at plan time (see
+    fft_plangen._make_load / _make_store), so that's the whole of what
+    codegen computes at runtime for those two kinds: no per-access division
+    or modulo.
+
+    SPLIT is the one exception (a middle kernel's output in an M>=3
+    multi-kernel chain -- see AddressMappingKind.SPLIT / make_multi_kernel_plan):
+    `global_uthread_id()` mixes an already-transformed digit run (weight
+    < a) with a not-yet-transformed remainder (weight >= a), and this
+    kernel's own new digit needs to land *between* them, so recovering
+    each part costs one `%` and one `//` here.
     """
+    if mapping.kind == AddressMappingKind.SPLIT:
+        a = mapping.row_stride  # == elem_stride too, by AddressMapping.split
+        return (
+            f"(global_uthread_id() % {a}) + "
+            f"(global_uthread_id() // {a}) * {a * kernel_length}"
+        )
     expr = f"global_uthread_id() * {mapping.row_stride}"
     if mapping.base:
         expr += f" + {mapping.base}"
@@ -342,13 +356,20 @@ def _emit_stage(e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan) -> Non
     if plan.scratchpad_buffers:
         e.add(f"        var spad_base = local_id * {plan.scratchpad_uthread_stride}")
     # Each kernel's own AddressMapping settles this in one runtime multiply
-    # (plus, only where the mapping isn't the origin, one add) -- no
-    # division or modulo, and each is declared only on the stage that
+    # (plus, only where the mapping isn't the origin, one add) -- except
+    # SPLIT, a middle kernel's output in an M>=3 chain, which costs one %
+    # and one // (see _mapping_base_expr). Declared only on the stage that
     # actually reads/writes DRAM through it.
     if is_first:
-        e.add(f"        var in_batch_base = {_mapping_base_expr(plan.input_mapping)}")
+        e.add(
+            f"        var in_batch_base = "
+            f"{_mapping_base_expr(plan.input_mapping, plan.length)}"
+        )
     if is_last:
-        e.add(f"        var out_batch_base = {_mapping_base_expr(plan.output_mapping)}")
+        e.add(
+            f"        var out_batch_base = "
+            f"{_mapping_base_expr(plan.output_mapping, plan.length)}"
+        )
     e.add()
 
     # Each batch's rr{k}/ii{k}/or{k}/oi{k} (and friends) are local to that

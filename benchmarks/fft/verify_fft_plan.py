@@ -180,13 +180,23 @@ def run_kernel(
 
 
 def _make_large_twiddle_table(lt) -> tuple[np.ndarray, np.ndarray]:
-    """Matches generate_decomposed_fft_kernels' host precompute exactly:
-    large_twiddle[row*output_count + c1] = W_full_length^(row*c1)."""
+    """Built directly over the fetch address (0..full_length-1), matching
+    generate_decomposed_fft_kernels' host precompute -- which is this
+    formula's a=1 case, where it degenerates to the simpler
+    large_twiddle[row*output_count+c1] = W_full_length^(row*c1). For a>1
+    (a SPLIT output_mapping, a middle kernel in an M>=3 chain -- see
+    AddressMapping.split), an address decomposes as
+    addr = out_a + digit*a + b*a*output_count (out_a in [0,a), redundant),
+    and the twiddle depends only on (b, digit): b = addr // (a*output_count),
+    digit = (addr % (a*output_count)) // a, angle = b*digit*a / full_length.
+    """
     sign = 1.0 if lt.inverse else -1.0
-    row = np.arange(lt.row_count)
-    col = np.arange(lt.output_count)
-    angle = sign * 2.0 * np.pi * np.outer(row, col) / lt.full_length
-    return np.cos(angle).reshape(-1), np.sin(angle).reshape(-1)
+    addr = np.arange(lt.full_length)
+    a_ki = lt.a * lt.output_count
+    b = addr // a_ki
+    digit = (addr % a_ki) // lt.a
+    angle = sign * 2.0 * np.pi * (b * digit * lt.a) / lt.full_length
+    return np.cos(angle), np.sin(angle)
 
 
 def verify_single_kernel_plan(*, inverse: bool, seed: int) -> float:
@@ -294,50 +304,42 @@ def verify_multi_kernel_plan(
 ) -> float:
     """Stage 3/4's builder: like verify_decomposed_plan, but chunks[i] can
     itself be a multi-stage radix sequence (each kernel absorbing more than
-    one stage via scratchpad ping-pong), not just a single bare radix --
-    the actual new capability, not just reaching a bigger N. M=1 and M=2
-    only, matching make_multi_kernel_plan.
+    one stage via scratchpad ping-pong), not just a single bare radix, and
+    M can be any length -- chains an arbitrary number of kernels through
+    DRAM, one large-twiddle table per non-last kernel (see
+    make_multi_kernel_plan for the general M-kernel formulas).
     """
     plan = make_multi_kernel_plan(chunks, inverse=inverse)
     n = plan.n
     rng = np.random.default_rng(seed)
     x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
 
-    if len(plan.kernels) == 1:
-        in_r, in_i = Ptr(n), Ptr(n)
-        in_r.arr[:] = x.real
-        in_i.arr[:] = x.imag
-        out_r, out_i = Ptr(n), Ptr(n)
-        run_kernel(
-            plan.kernels[0],
-            input_real=in_r, input_imag=in_i, output_real=out_r, output_imag=out_i,
-        )
-    else:
-        k0 = plan.kernels[0]
-        in_r, in_i = Ptr(n), Ptr(n)
-        in_r.arr[:] = x.real
-        in_i.arr[:] = x.imag
-        mid_r, mid_i = Ptr(n), Ptr(n)
-        out_r, out_i = Ptr(n), Ptr(n)
+    in_r, in_i = Ptr(n), Ptr(n)
+    in_r.arr[:] = x.real
+    in_i.arr[:] = x.imag
 
-        lt = k0.large_twiddle
+    cur_r, cur_i = in_r, in_i
+    for kernel in plan.kernels[:-1]:
+        next_r, next_i = Ptr(n), Ptr(n)
+        lt = kernel.large_twiddle
         assert lt is not None
         lt_real_vals, lt_imag_vals = _make_large_twiddle_table(lt)
         lt_r, lt_i = Ptr(n), Ptr(n)
         lt_r.arr[:] = lt_real_vals
         lt_i.arr[:] = lt_imag_vals
-
         run_kernel(
-            k0,
-            input_real=in_r, input_imag=in_i,
-            output_real=mid_r, output_imag=mid_i,
+            kernel,
+            input_real=cur_r, input_imag=cur_i,
+            output_real=next_r, output_imag=next_i,
             large_twiddle_real=lt_r, large_twiddle_imag=lt_i,
         )
-        run_kernel(
-            plan.kernels[1],
-            input_real=mid_r, input_imag=mid_i,
-            output_real=out_r, output_imag=out_i,
-        )
+        cur_r, cur_i = next_r, next_i
+
+    out_r, out_i = Ptr(n), Ptr(n)
+    run_kernel(
+        plan.kernels[-1],
+        input_real=cur_r, input_imag=cur_i, output_real=out_r, output_imag=out_i,
+    )
 
     got = out_r.arr + 1j * out_i.arr
     expected = np.fft.ifft(x) if inverse else np.fft.fft(x)
@@ -397,11 +399,24 @@ def main() -> None:
     # (not just one bare radix, like make_decomposed_plan) -- the actual new
     # capability. M=1 chunking sanity, then M=2 with a multi-stage kernel on
     # each side, chained through DRAM + the large-twiddle table.
+    #
+    # Stage 4: M>=3 -- every non-last kernel's output uses AddressMapping.SPLIT
+    # (a middle kernel's uthread id mixes an already-transformed digit run
+    # with a not-yet-transformed remainder) and a LargeTwiddlePlan scoped to
+    # a smaller angle modulus but the *same* full_length-sized, a-fold
+    # redundant table (see LargeTwiddlePlan/make_multi_kernel_plan). Up to
+    # N=1155 (11x7x3x5) and depth-5 all-radix-2 chains.
     multi_kernel_cases: list[tuple[int, tuple[tuple[int, ...], ...]]] = [
         (64, ((4, 4, 4),)),  # M=1, matches make_444_plan's shape
         (192, ((4, 4, 4), (3,))),  # M=2, multi-stage kernel0, bare kernel1
         (40, ((2, 2, 2), (5,))),  # M=2, multi-stage kernel0, small N
         (48, ((4, 4), (3,))),  # M=2, both sides different depths
+        (24, ((2,), (3,), (4,))),  # M=3, bare radices
+        (105, ((7,), (3,), (5,))),  # M=3, all odd primes
+        (960, ((4, 4, 4), (3,), (5,))),  # M=3, multi-stage first kernel
+        (768, ((2, 2, 2, 2, 2), (3,), (2, 2, 2))),  # M=3, multi-stage on both ends
+        (32, ((2,), (2,), (2,), (2,), (2,))),  # M=5, chained one radix-2 at a time
+        (1155, ((11,), (7,), (3,), (5,))),  # M=4, largest N tested
     ]
     for n, chunks in multi_kernel_cases:
         for inverse in (False, True):

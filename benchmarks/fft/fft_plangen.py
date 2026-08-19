@@ -53,10 +53,19 @@ class AddressMappingKind(Enum):
     `row` is always `global_uthread_id()`: the logical sub-FFT id. This is
     address generation, not a physical shared-memory transpose -- see
     `AddressMapping`.
+
+    SPLIT: element index i sits at `(row % a) + (row // a) * (a * kernel_length)
+    + i * a` -- a middle kernel's output within an M>=3 multi-kernel chain
+    (see make_multi_kernel_plan), whose `row` mixes an already-transformed
+    digit run (weight < a) with a not-yet-transformed remainder (weight
+    >= a). CONTIGUOUS is the a=1 special case of this (the modulo/div both
+    vanish) -- kept as its own kind because it needs neither a division
+    nor the kernel's own length, and is the only kind M<=2 chains ever use.
     """
 
     CONTIGUOUS = "contiguous"
     STRIDED = "strided"
+    SPLIT = "split"
 
 
 @dataclass(frozen=True)
@@ -93,6 +102,17 @@ class AddressMapping:
         if elem_stride == 1:
             raise ValueError("a strided mapping needs elem_stride != 1")
         return AddressMapping(AddressMappingKind.STRIDED, row_stride, elem_stride, base)
+
+    @staticmethod
+    def split(a: int, base: int = 0) -> "AddressMapping":
+        """`a` (this kind's `row_stride` and `elem_stride` both, by
+        construction -- see AddressMappingKind.SPLIT) is the accumulated
+        product of the kernels processed before this one in the chain.
+        `a=1` is valid and degenerates to plain contiguous(kernel_length).
+        """
+        if a <= 0:
+            raise ValueError("a split mapping needs a > 0")
+        return AddressMapping(AddressMappingKind.SPLIT, a, a, base)
 
 
 @dataclass(frozen=True)
@@ -157,10 +177,17 @@ class LargeTwiddlePlan:
     twiddle source: a small DRAM table the host precomputes once at startup,
     with std.math cos/sin -- the same "computed at host runtime, not baked
     into the plan" approach `fft_codegen.py` already uses for the reference
-    DFT. `row_count`*`output_count` == `full_length`, and the table is laid
-    out to match this kernel's own `output_mapping` (row_stride, elem_stride)
-    so the fetch reuses the store's own already-computed address, rather
-    than being a second, independent address computation.
+    DFT. `full_length` (== the overall FFT's N, not a per-kernel value) is
+    the table's own size, laid out to match this kernel's own
+    `output_mapping` exactly -- `row_count*output_count == full_length //
+    a` distinct values, but the table itself is `full_length` long and the
+    fetch reuses the store's own already-computed address as-is (so a
+    SPLIT output_mapping's address, which mixes an already-transformed `a`
+    with this stage's `output`, reads a value that's the same across every
+    `a` -- `a`-fold redundant, not a second independent address
+    computation). `a=1` (the default, and every M<=2 chain's only case) is
+    the M=2/kernel0 form: row_count*output_count == full_length exactly,
+    no redundancy.
 
     A full twiddle table is the direct approach; it is what's needed here.
     rocFFT/clFFT-style digit-split reconstruction (W_N^u = T0[u0]*T1[u1]*...)
@@ -172,6 +199,7 @@ class LargeTwiddlePlan:
     row_count: int
     output_count: int
     inverse: bool
+    a: int = 1
     table_name: str = "large_twiddle"
 
 
@@ -1042,13 +1070,26 @@ def make_multi_kernel_plan(
     -- its own layouts_for_radices multi-stage FFT -- in order, chained
     through DRAM.
 
-    M=1 and M=2 only for now: the M=2 formulas are make_decomposed_plan's,
-    generalized from a single bare radix per kernel to a full
-    layouts_for_radices chunk (chunks[0] plays make_decomposed_plan's
-    `n1` -- the first kernel's own length -- and chunks[1] its `n0`).
-    M>=3 needs LargeTwiddlePlan's exponent generalized for a kernel whose
-    own uthread id mixes an already- and not-yet-transformed digit -- not
-    yet derived; see the plan doc's Stage 4.
+    Every kernel's DRAM input read is `strided(elem_stride=n//K_i)`,
+    uniformly regardless of position (first, middle, or last). Every
+    non-last kernel's output is `AddressMapping.split(a)` (`a` = the
+    product of the kernel lengths processed before it; `a=1` for the
+    first kernel, where split degenerates to plain contiguous -- see
+    AddressMappingKind.SPLIT) plus a LargeTwiddlePlan scoped to `n // a`
+    rather than the full `n`. The last kernel's output is
+    `strided(elem_stride=a)` and only it carries the 1/n inverse scale --
+    both exactly make_decomposed_plan's M=2 formulas, which this
+    generalizes without changing.
+
+    None of this was carried over from the M=2 case by analogy: it's an
+    independent numpy simulation of the general M-kernel decomposition
+    (cascaded per-kernel local DFT, a cross-kernel twiddle scoped to the
+    *remaining* problem size, and a re-split store threading the new
+    digit between the already- and not-yet-transformed parts of the
+    uthread id) that was verified against numpy's fft/ifft for up to 6
+    chained kernels and mixed radices before being written here -- see
+    the plan doc's Stage 4 write-up for the derivation and where the
+    first version of this went wrong.
     """
     if not chunks:
         raise ValueError("at least one kernel chunk is required")
@@ -1069,43 +1110,43 @@ def make_multi_kernel_plan(
         )
         return MultiKernelFFTPlan(n=n, inverse=inverse, kernels=(kernel,), host=host)
 
-    if m == 2:
-        k0, k1 = lengths
-        kernel0 = _build_plan(
-            length=k0,
-            inverse=inverse,
-            max_uthread=k1,
-            simd_lanes=simd_lanes,
-            use_pingpong=True,
-            layouts=layouts_for_radices(k0, chunks[0], simd_lanes),
-            kernel_name="FFTFP32Kernel0",
-            input_mapping=AddressMapping.strided(row_stride=1, elem_stride=k1),
-            output_mapping=AddressMapping.contiguous(row_stride=k0),
-            large_twiddle=LargeTwiddlePlan(
-                full_length=n, row_count=k1, output_count=k0, inverse=inverse
-            ),
-            inverse_scale=None,
-        )
-        kernel1 = _build_plan(
-            length=k1,
-            inverse=inverse,
-            max_uthread=k0,
-            simd_lanes=simd_lanes,
-            use_pingpong=True,
-            layouts=layouts_for_radices(k1, chunks[1], simd_lanes),
-            kernel_name="FFTFP32Kernel1",
-            input_mapping=AddressMapping.strided(row_stride=1, elem_stride=k0),
-            output_mapping=AddressMapping.strided(row_stride=1, elem_stride=k0),
-            large_twiddle=None,
-            inverse_scale=(1.0 / n) if inverse else None,
-        )
-        return MultiKernelFFTPlan(
-            n=n, inverse=inverse, kernels=(kernel0, kernel1), host=host
-        )
+    kernels: list[FFTCodegenPlan] = []
+    a = 1  # product of the kernel lengths processed before the current one
+    for i, ki in enumerate(lengths):
+        is_last = i == m - 1
+        max_uthread = n // ki
+        input_mapping = AddressMapping.strided(row_stride=1, elem_stride=max_uthread)
 
-    raise NotImplementedError(
-        f"{m} kernels: chaining more than 2 needs LargeTwiddlePlan's "
-        "exponent generalized for a kernel whose own uthread id mixes an "
-        "already-transformed digit with not-yet-transformed ones -- see "
-        "plan Stage 4, not yet derived/verified."
-    )
+        if is_last:
+            output_mapping = AddressMapping.strided(row_stride=1, elem_stride=a)
+            large_twiddle = None
+            inverse_scale = (1.0 / n) if inverse else None
+        else:
+            output_mapping = AddressMapping.split(a)
+            large_twiddle = LargeTwiddlePlan(
+                full_length=n,
+                row_count=max_uthread // a,
+                output_count=ki,
+                inverse=inverse,
+                a=a,
+            )
+            inverse_scale = None
+
+        kernels.append(
+            _build_plan(
+                length=ki,
+                inverse=inverse,
+                max_uthread=max_uthread,
+                simd_lanes=simd_lanes,
+                use_pingpong=True,
+                layouts=layouts_for_radices(ki, chunks[i], simd_lanes),
+                kernel_name=f"FFTFP32Kernel{i}",
+                input_mapping=input_mapping,
+                output_mapping=output_mapping,
+                large_twiddle=large_twiddle,
+                inverse_scale=inverse_scale,
+            )
+        )
+        a *= ki
+
+    return MultiKernelFFTPlan(n=n, inverse=inverse, kernels=tuple(kernels), host=host)
