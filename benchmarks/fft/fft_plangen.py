@@ -787,8 +787,9 @@ def make_444_plan(*, inverse: bool = False, max_uthread: int = 1) -> FFTCodegenP
 #
 #   kernel0 (N0 uthreads, row=n0): strided load x[n1*N0+n0], forward N1-point
 #     FFT over n1, multiply by W_N^(n0*k1), contiguous store mid[n0*N1+k1]
-#   kernel1 (N1 uthreads, row=k1): contiguous load mid[k1*N0+n0], forward
-#     N0-point FFT over n0, strided store out[k0*N1+k1]
+#   kernel1 (N1 uthreads, row=k1): strided load mid[n0*N1+k1] (the actual
+#     transpose read of kernel0's contiguous-by-n0 store), forward N0-point
+#     FFT over n0, strided store out[k0*N1+k1]
 #
 # Both kernels are ordinary single-stage FFTCodegenPlans (radix == their own
 # length, the existing machinery already handles that -- see
@@ -876,9 +877,10 @@ def make_decomposed_plan(
         # x[n1*N0 + n0]: this uthread's row is n0 (row_stride=1), its N1
         # elements are spaced N0 apart in the original contiguous input.
         input_mapping=AddressMapping.strided(row_stride=1, elem_stride=n0),
-        # mid[n0*N1 + k1]: contiguous per row -- kernel1 reads this same
-        # buffer with row=k1 instead, which is what makes *its* load
-        # contiguous too (see kernel1's input_mapping below).
+        # mid[n0*N1 + k1]: contiguous per row -- this uthread's own N1
+        # outputs land next to each other. kernel1 (row=k1) reads this same
+        # buffer *transposed*: fixed k1, n0 stepping by N1 -- see kernel1's
+        # input_mapping below, which is strided, not contiguous.
         output_mapping=AddressMapping.contiguous(row_stride=n1),
         large_twiddle=LargeTwiddlePlan(
             full_length=n, row_count=n0, output_count=n1, inverse=inverse
@@ -897,10 +899,14 @@ def make_decomposed_plan(
         use_pingpong=False,
         layouts=(_single_radix_layout(n0),),
         kernel_name="FFTFP32Kernel1",
-        # mid[k1*N0 + n0]: this uthread's row is k1 (row_stride=N0), its N0
-        # elements are contiguous -- kernel0's own contiguous store, reread
-        # with the other kernel's row.
-        input_mapping=AddressMapping.contiguous(row_stride=n0),
+        # mid[n0*N1 + k1]: kernel0 wrote this contiguously by *its* row n0
+        # (output_mapping above). Read back by k1 instead, each of this
+        # uthread's N0 elements (n0 = 0..N0-1) sits N1 apart in that same
+        # layout -- this is the actual transpose read, and it is strided,
+        # not contiguous (an earlier version of this function wrongly
+        # assumed mid[k1*N0+n0], which is a different set of elements
+        # entirely except where n0 happens to equal k1).
+        input_mapping=AddressMapping.strided(row_stride=1, elem_stride=n1),
         # out[k0*N1 + k1]: k1 (this row) is the *fast* digit of the true
         # output index, so scattering across k0 (what this kernel produces)
         # is inherently strided by N1 -- see module docstring; no kernel
