@@ -456,6 +456,19 @@ def main() -> None:
             if not ok:
                 failures.append(tag)
 
+    # Same, but more than two per group and more than two groups: N=960's
+    # kernel0 (length=64, total_uthreads=15) at 4096 bytes -> 4 uthreads/
+    # group -> 4 groups sized 4,4,4,3 (three full, one partial).
+    for inverse in (False, True):
+        err = verify_multi_kernel_plan(
+            ((4, 4, 4), (3,), (5,)), inverse=inverse, seed=9, spad_capacity_bytes=4096
+        )
+        tag = f"multi-kernel N=960 spad_capacity_bytes=4096 (4 uthreads/group, 4 groups) inverse={inverse}"
+        ok = err <= tolerance
+        print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+        if not ok:
+            failures.append(tag)
+
     if failures:
         raise AssertionError(f"{len(failures)} plan(s) failed: {failures}")
     print("[verify] all FFT plans matched numpy's FFT")
