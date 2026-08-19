@@ -654,6 +654,14 @@ def _make_host_plan(
     )
 
 
+class _Default:
+    """Sentinel distinguishing 'caller didn't say' from 'caller explicitly
+    said None' -- see `_build_plan`'s `inverse_scale`."""
+
+
+_DEFAULT = _Default()
+
+
 def _build_plan(
     *,
     length: int,
@@ -666,7 +674,7 @@ def _build_plan(
     input_mapping: AddressMapping | None = None,
     output_mapping: AddressMapping | None = None,
     large_twiddle: LargeTwiddlePlan | None = None,
-    inverse_scale: float | None = None,
+    inverse_scale: float | None | _Default = _DEFAULT,
 ) -> FFTCodegenPlan:
     _check_layouts(
         length=length,
@@ -682,7 +690,7 @@ def _build_plan(
         input_mapping = AddressMapping.contiguous(length)
     if output_mapping is None:
         output_mapping = AddressMapping.contiguous(length)
-    if inverse_scale is None:
+    if inverse_scale is _DEFAULT:
         inverse_scale = (1.0 / length) if inverse else None
 
     buffer_names = _scratchpad_buffer_names(
