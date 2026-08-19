@@ -36,9 +36,11 @@ from fft_plangen import (
     DecomposedFFTPlan,
     FFTCodegenPlan,
     _build_plan,
+    factor_into_kernel_chunks,
     layouts_for_radices,
     make_444_plan,
     make_decomposed_plan,
+    make_multi_kernel_plan,
 )
 
 _VAR_RE = re.compile(r"^(\s*)var ")
@@ -287,6 +289,61 @@ _EXPECTED_INVALID_RADIX_SEQUENCES: tuple[tuple[int, ...], ...] = (
 )
 
 
+def verify_multi_kernel_plan(
+    chunks: tuple[tuple[int, ...], ...], *, inverse: bool, seed: int
+) -> float:
+    """Stage 3/4's builder: like verify_decomposed_plan, but chunks[i] can
+    itself be a multi-stage radix sequence (each kernel absorbing more than
+    one stage via scratchpad ping-pong), not just a single bare radix --
+    the actual new capability, not just reaching a bigger N. M=1 and M=2
+    only, matching make_multi_kernel_plan.
+    """
+    plan = make_multi_kernel_plan(chunks, inverse=inverse)
+    n = plan.n
+    rng = np.random.default_rng(seed)
+    x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
+
+    if len(plan.kernels) == 1:
+        in_r, in_i = Ptr(n), Ptr(n)
+        in_r.arr[:] = x.real
+        in_i.arr[:] = x.imag
+        out_r, out_i = Ptr(n), Ptr(n)
+        run_kernel(
+            plan.kernels[0],
+            input_real=in_r, input_imag=in_i, output_real=out_r, output_imag=out_i,
+        )
+    else:
+        k0 = plan.kernels[0]
+        in_r, in_i = Ptr(n), Ptr(n)
+        in_r.arr[:] = x.real
+        in_i.arr[:] = x.imag
+        mid_r, mid_i = Ptr(n), Ptr(n)
+        out_r, out_i = Ptr(n), Ptr(n)
+
+        lt = k0.large_twiddle
+        assert lt is not None
+        lt_real_vals, lt_imag_vals = _make_large_twiddle_table(lt)
+        lt_r, lt_i = Ptr(n), Ptr(n)
+        lt_r.arr[:] = lt_real_vals
+        lt_i.arr[:] = lt_imag_vals
+
+        run_kernel(
+            k0,
+            input_real=in_r, input_imag=in_i,
+            output_real=mid_r, output_imag=mid_i,
+            large_twiddle_real=lt_r, large_twiddle_imag=lt_i,
+        )
+        run_kernel(
+            plan.kernels[1],
+            input_real=mid_r, input_imag=mid_i,
+            output_real=out_r, output_imag=out_i,
+        )
+
+    got = out_r.arr + 1j * out_i.arr
+    expected = np.fft.ifft(x) if inverse else np.fft.fft(x)
+    return float(np.max(np.abs(got - expected)))
+
+
 def main() -> None:
     tolerance = 1.0e-3
     failures: list[str] = []
@@ -335,6 +392,25 @@ def main() -> None:
         print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
         if not ok:
             failures.append(tag)
+
+    # Stage 3: multi-kernel chaining where each kernel is itself multi-stage
+    # (not just one bare radix, like make_decomposed_plan) -- the actual new
+    # capability. M=1 chunking sanity, then M=2 with a multi-stage kernel on
+    # each side, chained through DRAM + the large-twiddle table.
+    multi_kernel_cases: list[tuple[int, tuple[tuple[int, ...], ...]]] = [
+        (64, ((4, 4, 4),)),  # M=1, matches make_444_plan's shape
+        (192, ((4, 4, 4), (3,))),  # M=2, multi-stage kernel0, bare kernel1
+        (40, ((2, 2, 2), (5,))),  # M=2, multi-stage kernel0, small N
+        (48, ((4, 4), (3,))),  # M=2, both sides different depths
+    ]
+    for n, chunks in multi_kernel_cases:
+        for inverse in (False, True):
+            err = verify_multi_kernel_plan(chunks, inverse=inverse, seed=1)
+            tag = f"multi-kernel N={n} chunks={chunks} inverse={inverse}"
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
 
     if failures:
         raise AssertionError(f"{len(failures)} plan(s) failed: {failures}")

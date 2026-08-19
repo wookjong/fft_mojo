@@ -26,7 +26,7 @@ It must not reconstruct FFT layout, twiddle, masking, or ping-pong decisions.
 
 from dataclasses import dataclass
 from enum import Enum
-from math import cos, pi, sin
+from math import cos, pi, prod, sin
 from typing import Literal
 
 from fft_butterflies import SUPPORTED_RADICES
@@ -896,4 +896,216 @@ def make_decomposed_plan(
         host=DecomposedHostPlan(
             n=n, n0=n0, n1=n1, inverse=inverse, tolerance=1.0e-3
         ),
+    )
+
+
+# ------------------------------------------------------- M-kernel chaining
+#
+# Generalizes DecomposedFFTPlan (exactly 2 kernels, each one bare radix)
+# to a chain of M>=1 kernels, each itself a layouts_for_radices multi-stage
+# FFT via scratchpad ping-pong -- absorbing as many radix stages as fit in
+# one uthread's scratchpad budget per kernel, minimizing DRAM handoffs
+# instead of the two extremes make_444_plan/make_decomposed_plan cover
+# today. M=1 and M=2 are exact generalizations of those two, verified
+# equivalent (see verify_fft_plan.py). M>=3 needs LargeTwiddlePlan's
+# exponent generalized for a kernel whose own uthread id mixes an
+# already-transformed digit with not-yet-transformed ones -- not yet
+# derived/verified, see the plan doc's Stage 4.
+
+
+def _prime_factors_supported(n: int) -> list[int]:
+    """Factor n into primes SUPPORTED_RADICES covers. Composite-radix
+    coalescing (e.g. four radix-2 stages -> one radix-16) is deferred --
+    see plan Stage 6 -- so only the prime subset of SUPPORTED_RADICES is
+    used here, even though composites like 16 are themselves valid radices
+    elsewhere in this module.
+    """
+    primes = sorted(r for r in SUPPORTED_RADICES if all(r % d for d in range(2, r)))
+    factors: list[int] = []
+    remaining = n
+    for p in primes:
+        while remaining % p == 0:
+            factors.append(p)
+            remaining //= p
+    if remaining != 1:
+        raise ValueError(
+            f"{n} has a prime factor outside the primes SUPPORTED_RADICES "
+            f"covers ({primes}); cannot factor for kernel chunking"
+        )
+    return factors
+
+
+def _max_pow2_exponent(simd_lanes: int) -> int:
+    """Largest e such that 2**e divides simd_lanes."""
+    e = 0
+    while simd_lanes % (2 ** (e + 1)) == 0:
+        e += 1
+    return e
+
+
+def factor_into_kernel_chunks(
+    n: int, *, scratchpad_byte_budget: int, simd_lanes: int = 8
+) -> tuple[tuple[int, ...], ...]:
+    """Factor n into a sequence of per-kernel radix chunks -- chunk i
+    becomes kernel i's radix sequence for layouts_for_radices, processed
+    in order and chained through DRAM by make_multi_kernel_plan.
+
+    Each chunk is built greedily under two independent caps:
+      * scratchpad: `16 * chunk_product <= scratchpad_byte_budget` (the
+        `scratchpad_uthread_stride = 2*length` times 2 ping-pong buffers
+        times 4 bytes/float convention `_build_plan` already uses). No
+        default is offered: the real M2NDP per-uthread scratchpad size
+        isn't established in this codebase, so callers pick a value.
+      * layouts_for_radices/_check_layouts's real constraint (confirmed
+        in Stage 2's tests by bypassing it and watching correct results
+        go to ~O(1) wrong -- not overly conservative, not relaxable):
+        every non-last *stage*'s cumulative radix product must divide
+        simd_lanes. A chunk may carry at most one prime that isn't a
+        power of two, and it always goes last within the chunk; a leading
+        run of radix-2 stages is capped so its own cumulative products
+        (1, 2, 4, ...) stay within simd_lanes too.
+    """
+    if scratchpad_byte_budget <= 0:
+        raise ValueError("scratchpad_byte_budget must be positive")
+
+    factors = _prime_factors_supported(n)
+    twos_left = factors.count(2)
+    others_left = [f for f in factors if f != 2]
+
+    max_e = _max_pow2_exponent(simd_lanes)
+    cap = scratchpad_byte_budget // 16
+
+    chunks: list[tuple[int, ...]] = []
+    while twos_left > 0 or others_left:
+        if others_left:
+            other = others_left.pop(0)
+            if other > cap:
+                raise ValueError(
+                    f"scratchpad_byte_budget={scratchpad_byte_budget} is "
+                    f"too small to fit even a single radix-{other} stage"
+                )
+            max_j = max_e + 1  # leading 2's, then this trailing non-2 prime
+            j = 0
+            product = other
+            while j < max_j and twos_left > 0 and product * 2 <= cap:
+                j += 1
+                twos_left -= 1
+                product *= 2
+            chunks.append(tuple([2] * j + [other]))
+        else:
+            if 2 > cap:
+                raise ValueError(
+                    f"scratchpad_byte_budget={scratchpad_byte_budget} is "
+                    "too small to fit even a single radix-2 stage"
+                )
+            max_j = max_e + 2  # pure radix-2 tower, its last stage exempt
+            j = 0
+            product = 1
+            while j < max_j and twos_left > 0 and product * 2 <= cap:
+                j += 1
+                twos_left -= 1
+                product *= 2
+            chunks.append(tuple([2] * j))
+
+    return tuple(chunks)
+
+
+@dataclass(frozen=True)
+class MultiKernelHostPlan:
+    n: int
+    inverse: bool
+    tolerance: float
+
+
+@dataclass(frozen=True)
+class MultiKernelFFTPlan:
+    """N run as a chain of M>=1 kernels (see factor_into_kernel_chunks /
+    make_multi_kernel_plan), each itself a layouts_for_radices multi-stage
+    FFT. M=1 is exactly a single-kernel plan; M=2 exactly matches
+    make_decomposed_plan's addressing (verified in verify_fft_plan.py).
+    """
+
+    n: int
+    inverse: bool
+    kernels: tuple[FFTCodegenPlan, ...]
+    host: MultiKernelHostPlan
+
+
+def make_multi_kernel_plan(
+    chunks: tuple[tuple[int, ...], ...],
+    *,
+    inverse: bool = False,
+    simd_lanes: int = 8,
+) -> MultiKernelFFTPlan:
+    """Build the FFTCodegenPlan chain for an already-decided chunk
+    sequence (see factor_into_kernel_chunks): kernel i processes chunks[i]
+    -- its own layouts_for_radices multi-stage FFT -- in order, chained
+    through DRAM.
+
+    M=1 and M=2 only for now: the M=2 formulas are make_decomposed_plan's,
+    generalized from a single bare radix per kernel to a full
+    layouts_for_radices chunk (chunks[0] plays make_decomposed_plan's
+    `n1` -- the first kernel's own length -- and chunks[1] its `n0`).
+    M>=3 needs LargeTwiddlePlan's exponent generalized for a kernel whose
+    own uthread id mixes an already- and not-yet-transformed digit -- not
+    yet derived; see the plan doc's Stage 4.
+    """
+    if not chunks:
+        raise ValueError("at least one kernel chunk is required")
+
+    lengths = [prod(chunk) for chunk in chunks]
+    n = prod(lengths)
+    m = len(chunks)
+    host = MultiKernelHostPlan(n=n, inverse=inverse, tolerance=1.0e-3)
+
+    if m == 1:
+        kernel = _build_plan(
+            length=n,
+            inverse=inverse,
+            max_uthread=1,
+            simd_lanes=simd_lanes,
+            use_pingpong=True,
+            layouts=layouts_for_radices(n, chunks[0], simd_lanes),
+        )
+        return MultiKernelFFTPlan(n=n, inverse=inverse, kernels=(kernel,), host=host)
+
+    if m == 2:
+        k0, k1 = lengths
+        kernel0 = _build_plan(
+            length=k0,
+            inverse=inverse,
+            max_uthread=k1,
+            simd_lanes=simd_lanes,
+            use_pingpong=True,
+            layouts=layouts_for_radices(k0, chunks[0], simd_lanes),
+            kernel_name="FFTFP32Kernel0",
+            input_mapping=AddressMapping.strided(row_stride=1, elem_stride=k1),
+            output_mapping=AddressMapping.contiguous(row_stride=k0),
+            large_twiddle=LargeTwiddlePlan(
+                full_length=n, row_count=k1, output_count=k0, inverse=inverse
+            ),
+            inverse_scale=None,
+        )
+        kernel1 = _build_plan(
+            length=k1,
+            inverse=inverse,
+            max_uthread=k0,
+            simd_lanes=simd_lanes,
+            use_pingpong=True,
+            layouts=layouts_for_radices(k1, chunks[1], simd_lanes),
+            kernel_name="FFTFP32Kernel1",
+            input_mapping=AddressMapping.strided(row_stride=1, elem_stride=k0),
+            output_mapping=AddressMapping.strided(row_stride=1, elem_stride=k0),
+            large_twiddle=None,
+            inverse_scale=(1.0 / n) if inverse else None,
+        )
+        return MultiKernelFFTPlan(
+            n=n, inverse=inverse, kernels=(kernel0, kernel1), host=host
+        )
+
+    raise NotImplementedError(
+        f"{m} kernels: chaining more than 2 needs LargeTwiddlePlan's "
+        "exponent generalized for a kernel whose own uthread id mixes an "
+        "already-transformed digit with not-yet-transformed ones -- see "
+        "plan Stage 4, not yet derived/verified."
     )
