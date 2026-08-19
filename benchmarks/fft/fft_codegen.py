@@ -32,7 +32,9 @@ from fft_plangen import (
     DecomposedFFTPlan,
     FFTCodegenPlan,
     FFTStagePlan,
+    LargeTwiddlePlan,
     LoadPlan,
+    MultiKernelFFTPlan,
     OutputPlan,
     SIMDBatchPlan,
     StorePlan,
@@ -703,6 +705,175 @@ def generate_decomposed_fft_kernels(plan: DecomposedFFTPlan) -> str:
         ref_imag="ref_imag",
         tolerance=host.tolerance,
         label="decomposed FFT",
+    )
+
+    return e.text()
+
+
+def _emit_large_twiddle_table_precompute(
+    e: Emitter, *, lt: LargeTwiddlePlan, real_name: str, imag_name: str, suffix: str
+) -> None:
+    """Host precompute for one non-last kernel's large-twiddle table (see
+    fft_plangen.LargeTwiddlePlan / generate_multi_kernel_fft_kernels).
+    `real_name`/`imag_name` are each `lt.full_length` Float32 elements,
+    filled at every address the on-device fetch will ever read.
+
+    Every local variable is suffixed: this runs once per non-last kernel
+    in the same main(), and an earlier version of the single-kernel host
+    check hit exactly this collision (two `var pi = ...`s in one scope --
+    see the fft_plangen.make_decomposed_plan inverse_scale/lt_pi fix) for
+    the same reason.
+    """
+    sign = 1.0 if lt.inverse else -1.0
+    pi, lsign = f"lt_pi_{suffix}", f"lt_sign_{suffix}"
+    r, c1 = f"lt_r_{suffix}", f"lt_c1_{suffix}"
+    angle, val_r, val_i = f"lt_angle_{suffix}", f"lt_val_r_{suffix}", f"lt_val_i_{suffix}"
+
+    e.add(f"    var {pi} = Float64(3.141592653589793)")
+    e.add(f"    var {lsign} = Float64({sign})")
+    e.add(f"    var {r} = 0")
+    e.add(f"    while {r} < {lt.row_count}:")
+    e.add(f"        var {c1} = 0")
+    e.add(f"        while {c1} < {lt.output_count}:")
+    e.add(
+        f"            var {angle} = {lsign} * 2.0 * {pi} * Float64({r}) * "
+        f"Float64({c1}) * Float64({lt.a}) / Float64({lt.full_length})"
+    )
+    e.add(f"            var {val_r} = Float32(host_cos({angle}))")
+    e.add(f"            var {val_i} = Float32(host_sin({angle}))")
+    if lt.a == 1:
+        # Dense: every address visited exactly once.
+        e.add(f"            {real_name}[{r} * {lt.output_count} + {c1}] = {val_r}")
+        e.add(f"            {imag_name}[{r} * {lt.output_count} + {c1}] = {val_i}")
+    else:
+        # a-fold redundant: the SPLIT-addressed fetch reads the same value
+        # for every out_a in [0, a) -- see AddressMappingKind.SPLIT.
+        out_a, addr = f"lt_out_a_{suffix}", f"lt_addr_{suffix}"
+        e.add(f"            var {out_a} = 0")
+        e.add(f"            while {out_a} < {lt.a}:")
+        e.add(
+            f"                var {addr} = {out_a} + {c1} * {lt.a} + "
+            f"{r} * {lt.a * lt.output_count}"
+        )
+        e.add(f"                {real_name}[{addr}] = {val_r}")
+        e.add(f"                {imag_name}[{addr}] = {val_i}")
+        e.add(f"                {out_a} += 1")
+    e.add(f"            {c1} += 1")
+    e.add(f"        {r} += 1")
+    e.add()
+
+
+def generate_multi_kernel_fft_kernels(plan: MultiKernelFFTPlan) -> str:
+    """Render an M-kernel chained plan (see fft_plangen.make_multi_kernel_plan):
+    M NDPTask structs, chained through DRAM one launch after another from
+    one host main(), each non-last kernel's own large-twiddle table
+    precomputed alongside it. Generalizes generate_decomposed_fft_kernels
+    (exactly M=2, one bare radix per kernel) to any M>=1 and to each
+    kernel's own layouts_for_radices multi-stage structure. This function
+    performs no FFT planning: every AddressMapping and LargeTwiddlePlan is
+    already decided in `plan`.
+    """
+    e = Emitter()
+    _emit_prelude(e)
+    e.add(f"comptime N = {plan.n}")
+    e.add()
+
+    for kernel in plan.kernels:
+        _emit_kernel(e, plan=kernel)
+
+    host = plan.host
+    m = len(plan.kernels)
+    k0 = plan.kernels[0]
+
+    def buf_name(idx: int, part: str) -> str:
+        # idx: -1 is the original input, m-1 is the final output, anything
+        # in between is the intermediate buffer that many kernels wrote.
+        if idx == -1:
+            return f"input_{part}"
+        if idx == m - 1:
+            return f"output_{part}"
+        return f"mid{idx}_{part}"
+
+    e.add("def main() raises:")
+    e.add(f"    if {k0.kernel_name}.emit_ir_if_asked():")
+    e.add("        return")
+    e.add()
+    e.add(f"    var n = {host.n}")
+    e.add("    var input_real = cxl_alloc[Float32](n)")
+    e.add("    var input_imag = cxl_alloc[Float32](n)")
+    for i in range(m - 1):
+        e.add(f"    var mid{i}_real = cxl_alloc[Float32](n)")
+        e.add(f"    var mid{i}_imag = cxl_alloc[Float32](n)")
+    e.add("    var output_real = cxl_alloc[Float32](n)")
+    e.add("    var output_imag = cxl_alloc[Float32](n)")
+    e.add("    var ref_real = cxl_alloc[Float32](n)")
+    e.add("    var ref_imag = cxl_alloc[Float32](n)")
+    e.add()
+
+    for i, kernel in enumerate(plan.kernels[:-1]):
+        assert kernel.large_twiddle is not None
+        e.add(f"    var large_twiddle{i}_real = cxl_alloc[Float32](n)")
+        e.add(f"    var large_twiddle{i}_imag = cxl_alloc[Float32](n)")
+        _emit_large_twiddle_table_precompute(
+            e,
+            lt=kernel.large_twiddle,
+            real_name=f"large_twiddle{i}_real",
+            imag_name=f"large_twiddle{i}_imag",
+            suffix=str(i),
+        )
+
+    for i, kernel in enumerate(plan.kernels):
+        e.add(f"    var pool{i}_elems = {kernel.simd_lanes * kernel.max_uthread}")
+        e.add(f"    var pool{i} = cxl_alloc[Float32](pool{i}_elems)")
+    e.add()
+
+    e.add("    seed(0)")
+    e.add("    for i in range(n):")
+    e.add("        input_real[i] = Float32(random_float64(-1.0, 1.0))")
+    e.add("        input_imag[i] = Float32(random_float64(-1.0, 1.0))")
+    for i in range(m - 1):
+        e.add(f"        mid{i}_real[i] = Float32(0)")
+        e.add(f"        mid{i}_imag[i] = Float32(0)")
+    e.add("        output_real[i] = Float32(0)")
+    e.add("        output_imag[i] = Float32(0)")
+    e.add("        ref_real[i] = Float32(0)")
+    e.add("        ref_imag[i] = Float32(0)")
+    e.add()
+
+    for i, kernel in enumerate(plan.kernels):
+        is_last = i == m - 1
+        in_r, in_i = buf_name(i - 1, "real"), buf_name(i - 1, "imag")
+        out_r, out_i = buf_name(i, "real"), buf_name(i, "imag")
+        e.add(f"    var rc{i} = {kernel.kernel_name}.launch(")
+        e.add(f"        PooledRange.over(pool{i}, pool{i}_elems),")
+        if is_last:
+            e.add(
+                f"        {kernel.kernel_name}Params({in_r}, {in_i}, {out_r}, {out_i}),"
+            )
+        else:
+            e.add(
+                f"        {kernel.kernel_name}Params({in_r}, {in_i}, {out_r}, {out_i}, "
+                f"large_twiddle{i}_real, large_twiddle{i}_imag),"
+            )
+        e.add("    )")
+        e.add(f"    if rc{i} != 0:")
+        e.add(f'        print("[host] FFT kernel{i} failed, exit", rc{i})')
+        e.add("        return")
+        e.add()
+
+    _emit_reference_check(
+        e,
+        n=plan.n,
+        batch_count=1,
+        inverse=plan.inverse,
+        input_real="input_real",
+        input_imag="input_imag",
+        output_real="output_real",
+        output_imag="output_imag",
+        ref_real="ref_real",
+        ref_imag="ref_imag",
+        tolerance=host.tolerance,
+        label="multi-kernel FFT",
     )
 
     return e.text()

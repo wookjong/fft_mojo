@@ -4,8 +4,12 @@ from pathlib import Path
 import numpy as np
 
 from fft_butterflies import SUPPORTED_RADICES, emit_butterfly
-from fft_codegen import generate_decomposed_fft_kernels, generate_fft_kernel
-from fft_plangen import make_444_plan, make_decomposed_plan
+from fft_codegen import (
+    generate_decomposed_fft_kernels,
+    generate_fft_kernel,
+    generate_multi_kernel_fft_kernels,
+)
+from fft_plangen import make_444_plan, make_decomposed_plan, make_multi_kernel_plan
 
 _VAR_RE = re.compile(r"^(\s*)var ")
 
@@ -117,6 +121,18 @@ def main() -> None:
     decomposed_output = here / "fft_fp32_decomposed_generated.mojo"
     decomposed_output.write_text(decomposed_source, encoding="utf-8")
     print(f"generated: {decomposed_output}")
+
+    # Test case C: N=960 = (4*4*4)*3*5, three kernels chained through DRAM
+    # -- kernel0 absorbs a full 4x4x4 multi-stage FFT via scratchpad
+    # ping-pong (the same structure as test case A), then a bare radix-3
+    # and a bare radix-5 kernel each add one more DRAM handoff. Exercises
+    # AddressMappingKind.SPLIT (the runtime %/// a middle kernel's output
+    # needs) end to end. See fft_plangen.make_multi_kernel_plan.
+    multi = make_multi_kernel_plan(((4, 4, 4), (3,), (5,)))
+    multi_source = generate_multi_kernel_fft_kernels(multi)
+    multi_output = here / "fft_fp32_multikernel_generated.mojo"
+    multi_output.write_text(multi_source, encoding="utf-8")
+    print(f"generated: {multi_output}")
 
 
 if __name__ == "__main__":
