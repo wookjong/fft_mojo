@@ -162,7 +162,7 @@ struct FFTFP32Kernel0(NDPTask):
         if local_id >= MAX_UTHREAD_FFTFP32Kernel0:
             return
         var spad_base = local_id * 32
-        var out_batch_base = (global_uthread_id() % 1) + (global_uthread_id() // 1) * 16
+        var out_batch_base = (((global_uthread_id() // 1) % 1) * 256) + ((global_uthread_id() % 1) * 16) + ((global_uthread_id() // 1) // 1)
 
         # ===== stage 1, SIMD batch 0 (valid lanes: 4/4) =====
         var rr0 = FFTFP32Kernel0.buf_a.load[DType.float32, 4](spad_base + 0)
@@ -191,41 +191,97 @@ struct FFTFP32Kernel0(NDPTask):
         var oi1 = oa1i - ob1r
         var or3 = oa1r - ob1i
         var oi3 = oa1i + ob1r
-        var ltwr0 = p.large_twiddle_real_base.load[width=4](out_batch_base + 0)
-        var ltwi0 = p.large_twiddle_imag_base.load[width=4](out_batch_base + 0)
+        var ltwr0_lane0 = p.large_twiddle_real_base.load[width=1](out_batch_base + 0)
+        var ltwi0_lane0 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 0)
+        var ltwr0_lane1 = p.large_twiddle_real_base.load[width=1](out_batch_base + 16)
+        var ltwi0_lane1 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 16)
+        var ltwr0_lane2 = p.large_twiddle_real_base.load[width=1](out_batch_base + 32)
+        var ltwi0_lane2 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 32)
+        var ltwr0_lane3 = p.large_twiddle_real_base.load[width=1](out_batch_base + 48)
+        var ltwi0_lane3 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 48)
+        var ltwr0 = SIMD[DType.float32, 4](ltwr0_lane0[0], ltwr0_lane1[0], ltwr0_lane2[0], ltwr0_lane3[0])
+        var ltwi0 = SIMD[DType.float32, 4](ltwi0_lane0[0], ltwi0_lane1[0], ltwi0_lane2[0], ltwi0_lane3[0])
         var ltr0 = or0 * ltwr0 - oi0 * ltwi0
         var lti0 = or0 * ltwi0 + oi0 * ltwr0
         or0 = ltr0
         oi0 = lti0
-        p.output_real_base.store(out_batch_base + 0, or0)
-        p.output_imag_base.store(out_batch_base + 0, oi0)
+        p.output_real_base.store(out_batch_base + 0, or0[0])
+        p.output_imag_base.store(out_batch_base + 0, oi0[0])
+        p.output_real_base.store(out_batch_base + 16, or0[1])
+        p.output_imag_base.store(out_batch_base + 16, oi0[1])
+        p.output_real_base.store(out_batch_base + 32, or0[2])
+        p.output_imag_base.store(out_batch_base + 32, oi0[2])
+        p.output_real_base.store(out_batch_base + 48, or0[3])
+        p.output_imag_base.store(out_batch_base + 48, oi0[3])
 
-        var ltwr1 = p.large_twiddle_real_base.load[width=4](out_batch_base + 4)
-        var ltwi1 = p.large_twiddle_imag_base.load[width=4](out_batch_base + 4)
+        var ltwr1_lane0 = p.large_twiddle_real_base.load[width=1](out_batch_base + 64)
+        var ltwi1_lane0 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 64)
+        var ltwr1_lane1 = p.large_twiddle_real_base.load[width=1](out_batch_base + 80)
+        var ltwi1_lane1 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 80)
+        var ltwr1_lane2 = p.large_twiddle_real_base.load[width=1](out_batch_base + 96)
+        var ltwi1_lane2 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 96)
+        var ltwr1_lane3 = p.large_twiddle_real_base.load[width=1](out_batch_base + 112)
+        var ltwi1_lane3 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 112)
+        var ltwr1 = SIMD[DType.float32, 4](ltwr1_lane0[0], ltwr1_lane1[0], ltwr1_lane2[0], ltwr1_lane3[0])
+        var ltwi1 = SIMD[DType.float32, 4](ltwi1_lane0[0], ltwi1_lane1[0], ltwi1_lane2[0], ltwi1_lane3[0])
         var ltr1 = or1 * ltwr1 - oi1 * ltwi1
         var lti1 = or1 * ltwi1 + oi1 * ltwr1
         or1 = ltr1
         oi1 = lti1
-        p.output_real_base.store(out_batch_base + 4, or1)
-        p.output_imag_base.store(out_batch_base + 4, oi1)
+        p.output_real_base.store(out_batch_base + 64, or1[0])
+        p.output_imag_base.store(out_batch_base + 64, oi1[0])
+        p.output_real_base.store(out_batch_base + 80, or1[1])
+        p.output_imag_base.store(out_batch_base + 80, oi1[1])
+        p.output_real_base.store(out_batch_base + 96, or1[2])
+        p.output_imag_base.store(out_batch_base + 96, oi1[2])
+        p.output_real_base.store(out_batch_base + 112, or1[3])
+        p.output_imag_base.store(out_batch_base + 112, oi1[3])
 
-        var ltwr2 = p.large_twiddle_real_base.load[width=4](out_batch_base + 8)
-        var ltwi2 = p.large_twiddle_imag_base.load[width=4](out_batch_base + 8)
+        var ltwr2_lane0 = p.large_twiddle_real_base.load[width=1](out_batch_base + 128)
+        var ltwi2_lane0 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 128)
+        var ltwr2_lane1 = p.large_twiddle_real_base.load[width=1](out_batch_base + 144)
+        var ltwi2_lane1 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 144)
+        var ltwr2_lane2 = p.large_twiddle_real_base.load[width=1](out_batch_base + 160)
+        var ltwi2_lane2 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 160)
+        var ltwr2_lane3 = p.large_twiddle_real_base.load[width=1](out_batch_base + 176)
+        var ltwi2_lane3 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 176)
+        var ltwr2 = SIMD[DType.float32, 4](ltwr2_lane0[0], ltwr2_lane1[0], ltwr2_lane2[0], ltwr2_lane3[0])
+        var ltwi2 = SIMD[DType.float32, 4](ltwi2_lane0[0], ltwi2_lane1[0], ltwi2_lane2[0], ltwi2_lane3[0])
         var ltr2 = or2 * ltwr2 - oi2 * ltwi2
         var lti2 = or2 * ltwi2 + oi2 * ltwr2
         or2 = ltr2
         oi2 = lti2
-        p.output_real_base.store(out_batch_base + 8, or2)
-        p.output_imag_base.store(out_batch_base + 8, oi2)
+        p.output_real_base.store(out_batch_base + 128, or2[0])
+        p.output_imag_base.store(out_batch_base + 128, oi2[0])
+        p.output_real_base.store(out_batch_base + 144, or2[1])
+        p.output_imag_base.store(out_batch_base + 144, oi2[1])
+        p.output_real_base.store(out_batch_base + 160, or2[2])
+        p.output_imag_base.store(out_batch_base + 160, oi2[2])
+        p.output_real_base.store(out_batch_base + 176, or2[3])
+        p.output_imag_base.store(out_batch_base + 176, oi2[3])
 
-        var ltwr3 = p.large_twiddle_real_base.load[width=4](out_batch_base + 12)
-        var ltwi3 = p.large_twiddle_imag_base.load[width=4](out_batch_base + 12)
+        var ltwr3_lane0 = p.large_twiddle_real_base.load[width=1](out_batch_base + 192)
+        var ltwi3_lane0 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 192)
+        var ltwr3_lane1 = p.large_twiddle_real_base.load[width=1](out_batch_base + 208)
+        var ltwi3_lane1 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 208)
+        var ltwr3_lane2 = p.large_twiddle_real_base.load[width=1](out_batch_base + 224)
+        var ltwi3_lane2 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 224)
+        var ltwr3_lane3 = p.large_twiddle_real_base.load[width=1](out_batch_base + 240)
+        var ltwi3_lane3 = p.large_twiddle_imag_base.load[width=1](out_batch_base + 240)
+        var ltwr3 = SIMD[DType.float32, 4](ltwr3_lane0[0], ltwr3_lane1[0], ltwr3_lane2[0], ltwr3_lane3[0])
+        var ltwi3 = SIMD[DType.float32, 4](ltwi3_lane0[0], ltwi3_lane1[0], ltwi3_lane2[0], ltwi3_lane3[0])
         var ltr3 = or3 * ltwr3 - oi3 * ltwi3
         var lti3 = or3 * ltwi3 + oi3 * ltwr3
         or3 = ltr3
         oi3 = lti3
-        p.output_real_base.store(out_batch_base + 12, or3)
-        p.output_imag_base.store(out_batch_base + 12, oi3)
+        p.output_real_base.store(out_batch_base + 192, or3[0])
+        p.output_imag_base.store(out_batch_base + 192, oi3[0])
+        p.output_real_base.store(out_batch_base + 208, or3[1])
+        p.output_imag_base.store(out_batch_base + 208, oi3[1])
+        p.output_real_base.store(out_batch_base + 224, or3[2])
+        p.output_imag_base.store(out_batch_base + 224, oi3[2])
+        p.output_real_base.store(out_batch_base + 240, or3[3])
+        p.output_imag_base.store(out_batch_base + 240, oi3[3])
 
 
     @staticmethod
@@ -260,49 +316,17 @@ struct FFTFP32Kernel1(NDPTask):
         if local_id >= MAX_UTHREAD_FFTFP32Kernel1:
             return
         var spad_base = local_id * 32
-        var in_batch_base = global_uthread_id() * 1
+        var in_batch_base = global_uthread_id() * 16
 
         # ===== stage 0, SIMD batch 0 (valid lanes: 4/4) =====
-        var rr0_lane0 = p.input_real_base.load[width=1](in_batch_base + 0)
-        var ii0_lane0 = p.input_imag_base.load[width=1](in_batch_base + 0)
-        var rr0_lane1 = p.input_real_base.load[width=1](in_batch_base + 16)
-        var ii0_lane1 = p.input_imag_base.load[width=1](in_batch_base + 16)
-        var rr0_lane2 = p.input_real_base.load[width=1](in_batch_base + 32)
-        var ii0_lane2 = p.input_imag_base.load[width=1](in_batch_base + 32)
-        var rr0_lane3 = p.input_real_base.load[width=1](in_batch_base + 48)
-        var ii0_lane3 = p.input_imag_base.load[width=1](in_batch_base + 48)
-        var rr0 = SIMD[DType.float32, 4](rr0_lane0[0], rr0_lane1[0], rr0_lane2[0], rr0_lane3[0])
-        var ii0 = SIMD[DType.float32, 4](ii0_lane0[0], ii0_lane1[0], ii0_lane2[0], ii0_lane3[0])
-        var rr1_lane0 = p.input_real_base.load[width=1](in_batch_base + 64)
-        var ii1_lane0 = p.input_imag_base.load[width=1](in_batch_base + 64)
-        var rr1_lane1 = p.input_real_base.load[width=1](in_batch_base + 80)
-        var ii1_lane1 = p.input_imag_base.load[width=1](in_batch_base + 80)
-        var rr1_lane2 = p.input_real_base.load[width=1](in_batch_base + 96)
-        var ii1_lane2 = p.input_imag_base.load[width=1](in_batch_base + 96)
-        var rr1_lane3 = p.input_real_base.load[width=1](in_batch_base + 112)
-        var ii1_lane3 = p.input_imag_base.load[width=1](in_batch_base + 112)
-        var rr1 = SIMD[DType.float32, 4](rr1_lane0[0], rr1_lane1[0], rr1_lane2[0], rr1_lane3[0])
-        var ii1 = SIMD[DType.float32, 4](ii1_lane0[0], ii1_lane1[0], ii1_lane2[0], ii1_lane3[0])
-        var rr2_lane0 = p.input_real_base.load[width=1](in_batch_base + 128)
-        var ii2_lane0 = p.input_imag_base.load[width=1](in_batch_base + 128)
-        var rr2_lane1 = p.input_real_base.load[width=1](in_batch_base + 144)
-        var ii2_lane1 = p.input_imag_base.load[width=1](in_batch_base + 144)
-        var rr2_lane2 = p.input_real_base.load[width=1](in_batch_base + 160)
-        var ii2_lane2 = p.input_imag_base.load[width=1](in_batch_base + 160)
-        var rr2_lane3 = p.input_real_base.load[width=1](in_batch_base + 176)
-        var ii2_lane3 = p.input_imag_base.load[width=1](in_batch_base + 176)
-        var rr2 = SIMD[DType.float32, 4](rr2_lane0[0], rr2_lane1[0], rr2_lane2[0], rr2_lane3[0])
-        var ii2 = SIMD[DType.float32, 4](ii2_lane0[0], ii2_lane1[0], ii2_lane2[0], ii2_lane3[0])
-        var rr3_lane0 = p.input_real_base.load[width=1](in_batch_base + 192)
-        var ii3_lane0 = p.input_imag_base.load[width=1](in_batch_base + 192)
-        var rr3_lane1 = p.input_real_base.load[width=1](in_batch_base + 208)
-        var ii3_lane1 = p.input_imag_base.load[width=1](in_batch_base + 208)
-        var rr3_lane2 = p.input_real_base.load[width=1](in_batch_base + 224)
-        var ii3_lane2 = p.input_imag_base.load[width=1](in_batch_base + 224)
-        var rr3_lane3 = p.input_real_base.load[width=1](in_batch_base + 240)
-        var ii3_lane3 = p.input_imag_base.load[width=1](in_batch_base + 240)
-        var rr3 = SIMD[DType.float32, 4](rr3_lane0[0], rr3_lane1[0], rr3_lane2[0], rr3_lane3[0])
-        var ii3 = SIMD[DType.float32, 4](ii3_lane0[0], ii3_lane1[0], ii3_lane2[0], ii3_lane3[0])
+        var rr0 = p.input_real_base.load[width=4](in_batch_base + 0)
+        var ii0 = p.input_imag_base.load[width=4](in_batch_base + 0)
+        var rr1 = p.input_real_base.load[width=4](in_batch_base + 4)
+        var ii1 = p.input_imag_base.load[width=4](in_batch_base + 4)
+        var rr2 = p.input_real_base.load[width=4](in_batch_base + 8)
+        var ii2 = p.input_imag_base.load[width=4](in_batch_base + 8)
+        var rr3 = p.input_real_base.load[width=4](in_batch_base + 12)
+        var ii3 = p.input_imag_base.load[width=4](in_batch_base + 12)
 
         # fixed radix-4 butterfly
         var oa0r = rr0 + rr2
@@ -483,8 +507,14 @@ def main() raises:
             var lt_angle_0 = lt_sign_0 * 2.0 * lt_pi_0 * Float64(lt_r_0) * Float64(lt_c1_0) * Float64(1) / Float64(256)
             var lt_val_r_0 = Float32(host_cos(lt_angle_0))
             var lt_val_i_0 = Float32(host_sin(lt_angle_0))
-            large_twiddle0_real[lt_r_0 * 16 + lt_c1_0] = lt_val_r_0
-            large_twiddle0_imag[lt_r_0 * 16 + lt_c1_0] = lt_val_i_0
+            var lt_dnext_0 = lt_r_0 // 1
+            var lt_rest_0 = lt_r_0 % 1
+            var lt_out_a_0 = 0
+            while lt_out_a_0 < 1:
+                var lt_addr_0 = lt_rest_0 * 256 + (lt_out_a_0 + lt_c1_0 * 1) * 16 + lt_dnext_0
+                large_twiddle0_real[lt_addr_0] = lt_val_r_0
+                large_twiddle0_imag[lt_addr_0] = lt_val_i_0
+                lt_out_a_0 += 1
             lt_c1_0 += 1
         lt_r_0 += 1
 

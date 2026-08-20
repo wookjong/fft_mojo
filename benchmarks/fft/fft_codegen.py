@@ -76,18 +76,32 @@ def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
     codegen computes at runtime for those two kinds: no per-access division
     or modulo.
 
-    SPLIT is the one exception (a middle kernel's output in an M>=3
+    SPLIT is one exception (a middle kernel's output in an M>=3
     multi-kernel chain -- see AddressMappingKind.SPLIT / make_multi_kernel_plan):
     `global_uthread_id()` mixes an already-transformed digit run (weight
     < a) with a not-yet-transformed remainder (weight >= a), and this
     kernel's own new digit needs to land *between* them, so recovering
     each part costs one `%` and one `//` here.
+
+    PEELED is the other (see AddressMappingKind.PEELED): the
+    not-yet-transformed remainder itself splits further, into the *next*
+    kernel's own digit (pulled to the innermost slot) and everything after
+    it -- two `%`/`//` pairs instead of SPLIT's one.
     """
     if mapping.kind == AddressMappingKind.SPLIT:
         a = mapping.row_stride  # == elem_stride too, by AddressMapping.split
         return (
             f"(global_uthread_id() % {a}) + "
             f"(global_uthread_id() // {a}) * {a * kernel_length}"
+        )
+    if mapping.kind == AddressMappingKind.PEELED:
+        a = mapping.peel_a
+        k_next = mapping.peel_k_next
+        tail = mapping.peel_tail_size
+        return (
+            f"(((global_uthread_id() // {a}) % {tail}) * {a * kernel_length * k_next}) + "
+            f"((global_uthread_id() % {a}) * {k_next}) + "
+            f"((global_uthread_id() // {a}) // {tail})"
         )
     expr = f"global_uthread_id() * {mapping.row_stride}"
     if mapping.base:
@@ -748,7 +762,27 @@ def _emit_large_twiddle_table_precompute(
     )
     e.add(f"            var {val_r} = Float32(host_cos({angle}))")
     e.add(f"            var {val_i} = Float32(host_sin({angle}))")
-    if lt.a == 1:
+    if lt.k_next:
+        # PEELED-addressed (see AddressMappingKind.PEELED): fill every
+        # address the fetch can land on, for every already-transformed
+        # out_a in [0, a) -- mirrors the kernel's own write formula
+        # exactly (fft_codegen._mapping_base_expr's PEELED branch), split
+        # here into d_next/rest since this loop already has `r` (=
+        # remaining) directly rather than a packed address to invert.
+        out_a, addr = f"lt_out_a_{suffix}", f"lt_addr_{suffix}"
+        d_next, rest = f"lt_dnext_{suffix}", f"lt_rest_{suffix}"
+        e.add(f"            var {d_next} = {r} // {lt.tail_size}")
+        e.add(f"            var {rest} = {r} % {lt.tail_size}")
+        e.add(f"            var {out_a} = 0")
+        e.add(f"            while {out_a} < {lt.a}:")
+        e.add(
+            f"                var {addr} = {rest} * {lt.a * lt.output_count * lt.k_next} + "
+            f"({out_a} + {c1} * {lt.a}) * {lt.k_next} + {d_next}"
+        )
+        e.add(f"                {real_name}[{addr}] = {val_r}")
+        e.add(f"                {imag_name}[{addr}] = {val_i}")
+        e.add(f"                {out_a} += 1")
+    elif lt.a == 1:
         # Dense: every address visited exactly once.
         e.add(f"            {real_name}[{r} * {lt.output_count} + {c1}] = {val_r}")
         e.add(f"            {imag_name}[{r} * {lt.output_count} + {c1}] = {val_i}")

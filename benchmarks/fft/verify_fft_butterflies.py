@@ -120,10 +120,14 @@ def main() -> None:
     # uthreads, another 4x4 multi-stage sub-FFT each), chained through DRAM.
     #
     # Built via make_multi_kernel_plan(((4, 4), (4, 4))) rather than
-    # make_decomposed_plan(16, 16) -- both produce the identical M=2,
-    # N0=N1=16 DRAM-transpose decomposition (make_multi_kernel_plan's M=2
-    # case is checkpointed field-for-field against make_decomposed_plan's),
-    # but an atomic radix-16 butterfly spills to DRAM regardless of
+    # make_decomposed_plan(16, 16) -- both produce a working M=2, N0=N1=16
+    # decomposition, but no longer field-for-field identical addressing:
+    # make_multi_kernel_plan's non-last kernel now uses
+    # AddressMappingKind.PEELED (kernel1's read is a real vector load
+    # instead of the uniform scalar strided(elem_stride=n//K) both used to
+    # share), while make_decomposed_plan is untouched, still SPLIT/
+    # contiguous-based. Both are independently numpy-verified correct.
+    # Also: an atomic radix-16 butterfly spills to DRAM regardless of
     # simd_lanes (confirmed down to simd_lanes=1): _emit_factorized's
     # first-stage "groups" for a=4,b=4 needs 16 pairs live simultaneously
     # before any final output exists, independent of store timing or SIMD

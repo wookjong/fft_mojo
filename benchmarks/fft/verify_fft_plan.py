@@ -115,6 +115,53 @@ def verify_layout_bijection(chunks: tuple[tuple[int, ...], ...]) -> None:
                 )
 
 
+def verify_boundary_consistency(chunks: tuple[tuple[int, ...], ...]) -> None:
+    """Each non-last kernel's large-twiddle table is filled by an
+    *independent* second implementation of the address formula (host-side
+    _make_large_twiddle_table, inverting addr -> (row, output) with plain
+    numpy) from the one the kernel's own store uses to compute that same
+    address forward (row, output) -> addr (fft_codegen._mapping_base_expr,
+    the same formula every load/store in this kernel actually emits).
+    This is exactly the pairing that broke once already this session (the
+    fetch and the fill silently used two different address formulas after
+    output_mapping changed from SPLIT to PEELED, and every FFT numeric
+    check still ran -- it just produced garbage) -- so check it directly,
+    for every (row, output) pair a kernel's own stage visits, rather than
+    relying on a floating-point FFT mismatch to notice a mismatch here.
+    """
+    plan = make_multi_kernel_plan(chunks)
+    for kernel in plan.kernels:
+        lt = kernel.large_twiddle
+        if lt is None:
+            continue
+        expr = _mapping_base_expr(kernel.output_mapping, kernel.length)
+        for row in range(kernel.total_uthreads):
+            base = eval(expr, {"global_uthread_id": lambda: row})  # noqa: B023
+            for output in range(kernel.length):
+                addr = base + output * kernel.output_mapping.elem_stride
+                # Independently invert addr -> (b, digit) the same way
+                # _make_large_twiddle_table does, and check it recovers
+                # exactly the (row, output) that produced this address.
+                if lt.k_next:
+                    d_next = addr % lt.k_next
+                    combined_ao = (addr // lt.k_next) % (lt.a * lt.output_count)
+                    rest = addr // (lt.k_next * lt.a * lt.output_count)
+                    digit = combined_ao // lt.a
+                    b = d_next * lt.tail_size + rest
+                else:
+                    a_ki = lt.a * lt.output_count
+                    b = addr // a_ki
+                    digit = (addr % a_ki) // lt.a
+                expected_b = row // lt.a
+                if b != expected_b or digit != output:
+                    raise AssertionError(
+                        f"{kernel.kernel_name}: twiddle table address {addr} "
+                        f"(from row={row}, output={output}) inverts to "
+                        f"(b={b}, digit={digit}), expected "
+                        f"(b={expected_b}, digit={output}) (chunks={chunks})"
+                    )
+
+
 class SimdVec(np.ndarray):
     """A numpy array with Mojo's SIMD value semantics instead of numpy's.
 
@@ -236,20 +283,34 @@ def run_kernel(
 
 def _make_large_twiddle_table(lt) -> tuple[np.ndarray, np.ndarray]:
     """Built directly over the fetch address (0..full_length-1), matching
-    generate_decomposed_fft_kernels' host precompute -- which is this
-    formula's a=1 case, where it degenerates to the simpler
-    large_twiddle[row*output_count+c1] = W_full_length^(row*c1). For a>1
-    (a SPLIT output_mapping, a middle kernel in an M>=3 chain -- see
-    AddressMapping.split), an address decomposes as
-    addr = out_a + digit*a + b*a*output_count (out_a in [0,a), redundant),
-    and the twiddle depends only on (b, digit): b = addr // (a*output_count),
-    digit = (addr % (a*output_count)) // a, angle = b*digit*a / full_length.
+    the host precompute this plan's kernel actually emits (see
+    fft_codegen._emit_large_twiddle_table_precompute) -- the twiddle
+    *value* only ever depends on (b, digit) (b = the not-yet-transformed
+    remainder row//a, digit = this kernel's own output), never on which
+    address formula placed it, so only the addr -> (b, digit) inverse
+    below differs between mapping kinds.
+
+    SPLIT (a middle kernel's output in an M<=2-generalizing chain -- see
+    AddressMapping.split): addr = out_a + digit*a + b*a*output_count
+    (out_a in [0,a), redundant); a=1 degenerates to
+    large_twiddle[row*output_count+c1] = W_full_length^(row*c1).
+
+    PEELED (see AddressMapping.peeled / AddressMappingKind.PEELED):
+    addr = rest*(a*output_count*k_next) + (out_a+digit*a)*k_next + d_next
+    (out_a in [0,a), redundant); b = remaining = d_next*tail_size + rest.
     """
     sign = 1.0 if lt.inverse else -1.0
     addr = np.arange(lt.full_length)
-    a_ki = lt.a * lt.output_count
-    b = addr // a_ki
-    digit = (addr % a_ki) // lt.a
+    if lt.k_next:
+        d_next = addr % lt.k_next
+        combined_ao = (addr // lt.k_next) % (lt.a * lt.output_count)
+        rest = addr // (lt.k_next * lt.a * lt.output_count)
+        digit = combined_ao // lt.a
+        b = d_next * lt.tail_size + rest
+    else:
+        a_ki = lt.a * lt.output_count
+        b = addr // a_ki
+        digit = (addr % a_ki) // lt.a
     angle = sign * 2.0 * np.pi * (b * digit * lt.a) / lt.full_length
     return np.cos(angle), np.sin(angle)
 
@@ -486,6 +547,15 @@ def main() -> None:
             failures.append(tag)
 
     for n, chunks in multi_kernel_cases:
+        tag = f"boundary consistency N={n} chunks={chunks}"
+        try:
+            verify_boundary_consistency(chunks)
+            print(f"  OK   {tag}")
+        except AssertionError as exc:
+            print(f"  FAIL {tag}: {exc}")
+            failures.append(tag)
+
+    for n, chunks in multi_kernel_cases:
         for inverse in (False, True):
             err = verify_multi_kernel_plan(chunks, inverse=inverse, seed=1)
             tag = f"multi-kernel N={n} chunks={chunks} inverse={inverse}"
@@ -600,6 +670,34 @@ def main() -> None:
             print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
             if not ok:
                 failures.append(tag)
+
+    # Scalar-vs-vector DRAM access (section 15): PEELED's whole point is
+    # that every kernel after the first gets a real vector read instead
+    # of a forced scalar one -- check the plan's own mappings directly
+    # (mode is scalar iff elem_stride != 1, the same test
+    # AddressMappingKind.STRIDED's docstring and _make_load/_make_store
+    # already use), not just assert an aggregate count.
+    print()
+    print("  Scalar vs. vector DRAM read/write per kernel (N=960, "
+          "chunks=((4,4,4),(3,),(5,))):")
+    demo_plan = make_multi_kernel_plan(((4, 4, 4), (3,), (5,)))
+    vector_reads = 0
+    for kernel in demo_plan.kernels:
+        read_mode = "vector" if kernel.input_mapping.elem_stride == 1 else "scalar"
+        write_mode = "vector" if kernel.output_mapping.elem_stride == 1 else "scalar"
+        if read_mode == "vector":
+            vector_reads += 1
+        print(f"    {kernel.kernel_name}: read={read_mode:6s} write={write_mode:6s}")
+    tag = "scalar-to-vector read conversion (N=960, 3-kernel chain)"
+    # Old (SPLIT) scheme: every kernel's read is scalar, always -- 0 of 3.
+    # New (PEELED): every kernel after the first is vector -- 2 of 3.
+    if vector_reads == 2:
+        print(f"  OK   {tag}: {vector_reads}/3 kernels now read via vector "
+              f"load (was 0/3 under the old SPLIT-based scheme)")
+    else:
+        print(f"  FAIL {tag}: expected 2/3 kernels reading via vector load, "
+              f"got {vector_reads}/3")
+        failures.append(tag)
 
     if failures:
         raise AssertionError(f"{len(failures)} plan(s) failed: {failures}")

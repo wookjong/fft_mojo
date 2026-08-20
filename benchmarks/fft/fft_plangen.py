@@ -61,11 +61,37 @@ class AddressMappingKind(Enum):
     >= a). CONTIGUOUS is the a=1 special case of this (the modulo/div both
     vanish) -- kept as its own kind because it needs neither a division
     nor the kernel's own length, and is the only kind M<=2 chains ever use.
+
+    PEELED: a non-last kernel's output, chosen so the *next* kernel's own
+    input read becomes `strided(row_stride=next kernel's length,
+    elem_stride=1)` -- a real vector load -- instead of today's
+    `strided(row_stride=1, elem_stride=n // next kernel's length)`, which
+    is always scalar-per-lane. `row` mixes three things: an
+    already-transformed run (weight < a, same `a` as SPLIT), the next
+    kernel's own digit `d_next` (weight `tail_size`, within the
+    not-yet-transformed remainder `row // a`), and everything still after
+    that (`rest`, weight >= tail_size). SPLIT keeps the whole
+    not-yet-transformed remainder together at the outer (large-stride) end;
+    PEELED instead pulls `d_next` out to the innermost slot and pushes
+    `rest` outward, so the *next* kernel's read costs it nothing. Element
+    index i (this kernel's own new digit) sits between: `(row %
+    a)*k_next + i*(a*k_next) + ((row // a) // tail_size) + ((row // a) %
+    tail_size)*(a*kernel_length*k_next)`. Derived and verified by direct
+    index-permutation simulation (bijective, and every downstream read
+    pulls a clean single-digit sweep) up to a 10-kernel chain before this
+    touched fft_plangen.py -- same discipline SPLIT's own derivation used.
+    This is a read-locality optimization, not a stride bound: the worst
+    stride anywhere in the chain is unchanged (conserved, not reduced) --
+    it moves from every kernel's read to this kernel's own write, whose
+    `i*(a*k_next)` term grows exactly the way SPLIT's old `i*a` did. What
+    it does change, provably: every kernel after the first gets a real
+    vector read instead of a forced scalar one.
     """
 
     CONTIGUOUS = "contiguous"
     STRIDED = "strided"
     SPLIT = "split"
+    PEELED = "peeled"
 
 
 @dataclass(frozen=True)
@@ -93,6 +119,13 @@ class AddressMapping:
     elem_stride: int = 1
     base: int = 0
 
+    # PEELED only -- see AddressMappingKind.PEELED. row_stride is unused
+    # (and left 0) for this kind: PEELED's row-dependent term isn't a
+    # single multiply, so _mapping_base_expr dispatches on these instead.
+    peel_a: int = 0
+    peel_k_next: int = 0
+    peel_tail_size: int = 0
+
     @staticmethod
     def contiguous(row_stride: int, base: int = 0) -> "AddressMapping":
         return AddressMapping(AddressMappingKind.CONTIGUOUS, row_stride, 1, base)
@@ -113,6 +146,28 @@ class AddressMapping:
         if a <= 0:
             raise ValueError("a split mapping needs a > 0")
         return AddressMapping(AddressMappingKind.SPLIT, a, a, base)
+
+    @staticmethod
+    def peeled(a: int, k_next: int, tail_size: int, base: int = 0) -> "AddressMapping":
+        """`a`: accumulated product of kernels before this one (same as
+        `split`'s `a`). `k_next`: the *next* kernel's own local length.
+        `tail_size`: product of every kernel's length after next (1 if
+        there is none -- i.e. next is the last kernel in the chain).
+        `a=1` is valid (this kernel is first in the chain).
+        """
+        if a <= 0:
+            raise ValueError("a peeled mapping needs a > 0")
+        if k_next <= 0 or tail_size <= 0:
+            raise ValueError("a peeled mapping needs k_next > 0 and tail_size > 0")
+        return AddressMapping(
+            AddressMappingKind.PEELED,
+            row_stride=0,
+            elem_stride=a * k_next,
+            base=base,
+            peel_a=a,
+            peel_k_next=k_next,
+            peel_tail_size=tail_size,
+        )
 
 
 @dataclass(frozen=True)
@@ -193,6 +248,14 @@ class LargeTwiddlePlan:
     rocFFT/clFFT-style digit-split reconstruction (W_N^u = T0[u0]*T1[u1]*...)
     would trade table size for extra multiplies on very large N -- worth
     adding if a table of size N stops being affordable, not before.
+
+    `output_mapping` may be SPLIT or PEELED (see AddressMappingKind); the
+    twiddle *value* (W_N^(row*output), i.e. row_count/output_count/a/
+    inverse above) never depends on which one, since that's the same
+    underlying math either way -- only the table's own physical layout
+    does, since the fetch reuses the store's address as-is. `k_next` and
+    `tail_size` (0/1 for SPLIT, matching AddressMapping.peeled's own
+    parameters for PEELED) select which address formula fills the table.
     """
 
     full_length: int
@@ -201,6 +264,10 @@ class LargeTwiddlePlan:
     inverse: bool
     a: int = 1
     table_name: str = "large_twiddle"
+    # 0 selects the legacy SPLIT table layout; a positive value selects
+    # PEELED's (see AddressMapping.peeled -- same two parameters).
+    k_next: int = 0
+    tail_size: int = 1
 
 
 @dataclass(frozen=True)
@@ -1036,39 +1103,43 @@ def factor_into_kernel_chunks(
     accordingly, and chunk order/composition here is unconstrained beyond
     the scratchpad budget.
 
-    Chosen to minimize the largest *effective DRAM stride* any kernel in
-    the chain pays, not just kernel count. Every kernel pays two strides
-    that a chunking choice affects independently (see make_multi_kernel_plan):
-    a *read* stride of `n // (this kernel's own length)` -- large whenever
-    this one kernel's own chunk is small, regardless of where it sits in
-    the chain -- and a *write* stride of `a` = the product of every
-    *earlier* kernel's length (the last kernel included: its output is
-    `strided(elem_stride=a)`, the same `a` a middle kernel's `split(a)`
-    uses). An earlier version of this packed back-to-front to shrink only
-    the write side, which isn't the whole story: n=960 at
-    scratchpad_byte_budget=256 back-to-front-packs to
-    ((2,2),(2,2,2,2),(3,5)) -- its write-side max is a good-looking 64, but
-    kernel0's own length is 4, so its *read* stride is 960//4=240, the true
-    worst case in that chain and worse than doing nothing budget-aware at
-    all. The read side was never optimized because nothing computed it.
+    Chosen to minimize the largest *effective DRAM cost* any kernel in the
+    chain pays. Every kernel in an AddressMappingKind.PEELED chain (see
+    make_multi_kernel_plan) pays one of two costs, and a chunking choice
+    affects each differently: kernel0's *read* costs `n // (its own
+    length)` -- unavoidable, nothing precedes it to fuse a layout reset
+    into -- and every *non-last* kernel's *write* costs `a * (the *next*
+    kernel's own length)` (`a` = the product of every earlier kernel's
+    length; the last kernel's write is the exception, unchanged at plain
+    `a`, since there's no next kernel to optimize for). Every kernel after
+    the first reads at cost 1 (contiguous, PEELED's whole point), so only
+    these two costs -- kernel0's read, and each non-last kernel's write --
+    ever matter.
 
-    Built as a DP over where to split the (fixed-order) factor list, not a
-    single greedy pass, because minimizing the read side requires *every*
-    chunk to be reasonably large, not just placing one large chunk
-    somewhere -- a single greedy direction (front-to-back or
-    back-to-front) can't do that. Prefix products `P[i] = prod(factors[:i])`
-    are fixed regardless of how the chunks are split, so a chunk
-    `factors[i:j]` always has `write_stride = P[i]` and
-    `read_stride = n // (P[j]//P[i])` no matter what the other chunks look
-    like; `DP[i]` (best achievable max-stride for `factors[i:]`, computed
-    backward from `DP[F]=0`) is then `min` over valid split points `j` of
-    `max(read_stride(i,j), P[i], DP[j])`. `O(F^2)` in the factor count `F`
-    (at most ~20 for any n this codebase can address) -- cheap, and exact
-    for this cost function, not a heuristic. Same n=960 sweep as above:
-    max stride 120, 32, 32, 1, 1 at budget=256/512/1024/16384/65536 (vs.
-    the write-only version's true, read-inclusive worst case of 240 at
-    budget=256) -- monotonically non-increasing in budget, since a larger
-    budget only adds split points to the same search, never removes one.
+    A chunk's write cost depending on the *next* chunk's length (not just
+    its own start) breaks naive optimal substructure: a DP keyed only on
+    "best cost for factors[i:]" can't supply what a chunk ending at `i`
+    needs (the length of *its own* immediately-following chunk) without
+    also depending on how that suffix chooses to split, and that suffix's
+    own optimum doesn't necessarily supply the length this chunk wants
+    (checked directly, not assumed: an earlier, simpler version of this
+    keyed only on (start) and produced a *worse* result at a *larger*
+    budget on this same n=960 sweep -- impossible for a correct DP, since
+    a larger budget can only add valid choices, never remove one).
+
+    Fixed by keying state on the pair (chunk start, chunk end) instead:
+    state `(start, j)` means "chunk [start:j) is chosen, but its write
+    cost isn't finalized yet" -- exactly true until a *following* chunk
+    [j:j2) is also chosen, at which point [start:j)'s write cost
+    (`prefix_product[start] * length([j:j2))`) becomes computable and
+    folds into the running max carried forward as the new state (j, j2).
+    `O(F^2)` states, `O(F)` transitions each -- `O(F^3)`, still cheap for
+    the factor count `F` (at most ~20 for any n this codebase addresses)
+    -- and exact for this cost function, not a heuristic: every reachable
+    (start, j) keeps only its minimum cost, so no choice that could affect
+    the final answer is dropped. Reproduces the plan doc's hand-derived
+    N=960 numbers (max cost 120 at scratchpad_byte_budget=256) and is
+    monotonically non-increasing in budget, checked directly.
     """
     if scratchpad_byte_budget <= 0:
         raise ValueError("scratchpad_byte_budget must be positive")
@@ -1081,37 +1152,89 @@ def factor_into_kernel_chunks(
     for i, f in enumerate(factors):
         prefix_product[i + 1] = prefix_product[i] * f
 
-    # best_from[i] = (max stride achieved by the best chunking of
-    # factors[i:], the split point j of its first chunk); best_from[F] is
-    # the base case (nothing left to chunk, no stride contributed).
-    best_from: list[tuple[int, int | None]] = [(0, None)] * (num_factors + 1)
-    for i in range(num_factors - 1, -1, -1):
-        best: tuple[int, int | None] = (-1, None)
-        for j in range(i + 1, num_factors + 1):
-            chunk_length = prefix_product[j] // prefix_product[i]
-            if chunk_length > cap:
-                break  # chunk_length only grows with j (every factor >= 2)
-            write_stride = prefix_product[i]
-            read_stride = n // chunk_length
-            candidate = max(read_stride, write_stride, best_from[j][0])
-            if best[0] == -1 or candidate < best[0]:
-                best = (candidate, j)
-        if best[1] is None:
-            raise ValueError(
-                f"scratchpad_byte_budget={scratchpad_byte_budget} is too "
-                f"small to fit even a single radix-{factors[i]} stage"
-            )
-        best_from[i] = best
+    # Under AddressMappingKind.PEELED (see make_multi_kernel_plan), a
+    # non-first kernel's read is always 1 (contiguous) -- only kernel0
+    # pays n // its own length. A non-last kernel's write is
+    # prefix_product[start] * (the *next* kernel's own length), not just
+    # prefix_product[start] -- so a chunk [start:j]'s write cost isn't
+    # knowable until the chunk *after* it is also chosen. That rules out
+    # a single-value-per-position DP (the greedy choice that's locally
+    # best for factors[j:] on its own doesn't necessarily supply the
+    # `next kernel's own length` that minimizes chunk [start:j]'s write
+    # cost -- optimal substructure genuinely fails for that formulation,
+    # confirmed by hitting it directly: an earlier version keyed only on
+    # a chunk's own (start, j) and it produced a *worse* result at a
+    # *larger* budget for this same n=960 sweep, which is impossible for
+    # a correct DP since a larger budget only adds valid choices).
+    #
+    # Fixed by keying state on the *pair* (start, j): "chunk [start:j] has
+    # been chosen but its write cost isn't finalized yet -- that happens
+    # the moment a following chunk [j:j2] is also chosen, which is also
+    # exactly when [start:j]'s write cost becomes computable
+    # (prefix_product[start] * (j2's chunk length)) and gets folded into
+    # the running max carried forward as state (j, j2)." O(F^2) states,
+    # O(F) transitions each = O(F^3) -- still cheap for F<=~20 -- and this
+    # one is exact, not a heuristic: (start, j) is reached via `best[...]
+    # = (cost, predecessor_start)`, always keeping the minimum cost seen
+    # for that exact state, so every choice that could affect the final
+    # answer is considered.
+    #
+    # Verified: this reproduces the plan doc's hand-derived N=960 numbers
+    # (max cost 120 at scratchpad_byte_budget=256) and is monotonically
+    # non-increasing in budget, checked directly across the same sweep
+    # the removed version broke.
+    best: dict[tuple[int, int], tuple[int, int | None]] = {}
+    for j in range(1, num_factors + 1):
+        chunk_length = prefix_product[j]  # prefix_product[0] == 1
+        if chunk_length > cap:
+            break
+        best[(0, j)] = (n // chunk_length, None)
 
-    chunks: list[tuple[int, ...]] = []
-    i = 0
-    while i < num_factors:
-        j = best_from[i][1]
-        assert j is not None
-        chunks.append(tuple(factors[i:j]))
-        i = j
+    for j in range(1, num_factors + 1):
+        for start in range(j):
+            state = best.get((start, j))
+            if state is None:
+                continue
+            running_cost, _ = state
+            for j2 in range(j + 1, num_factors + 1):
+                next_length = prefix_product[j2] // prefix_product[j]
+                if next_length > cap:
+                    break
+                write_cost = prefix_product[start] * next_length
+                candidate = max(running_cost, write_cost)
+                key = (j, j2)
+                existing = best.get(key)
+                if existing is None or candidate < existing[0]:
+                    best[key] = (candidate, start)
 
-    return tuple(chunks)
+    final: tuple[int, int] | None = None  # (total cost, last chunk's start)
+    for start in range(num_factors):
+        state = best.get((start, num_factors))
+        if state is None:
+            continue
+        running_cost, _ = state
+        total = max(running_cost, prefix_product[start])  # last kernel: write=a, no next-length multiplier
+        if final is None or total < final[0]:
+            final = (total, start)
+    if final is None:
+        raise ValueError(
+            f"scratchpad_byte_budget={scratchpad_byte_budget} is too small "
+            f"to fit n={n} into any valid chunk sequence"
+        )
+
+    boundaries = [num_factors, final[1]]
+    j, start = num_factors, final[1]
+    while start != 0:
+        _, pred = best[(start, j)]
+        assert pred is not None
+        boundaries.append(pred)
+        j, start = start, pred
+    boundaries.reverse()
+
+    return tuple(
+        tuple(factors[boundaries[k] : boundaries[k + 1]])
+        for k in range(len(boundaries) - 1)
+    )
 
 
 @dataclass(frozen=True)
@@ -1125,8 +1248,13 @@ class MultiKernelHostPlan:
 class MultiKernelFFTPlan:
     """N run as a chain of M>=1 kernels (see factor_into_kernel_chunks /
     make_multi_kernel_plan), each itself a layouts_for_radices multi-stage
-    FFT. M=1 is exactly a single-kernel plan; M=2 exactly matches
-    make_decomposed_plan's addressing (verified in verify_fft_plan.py).
+    FFT. M=1 is exactly a single-kernel plan. M=2 no longer matches
+    make_decomposed_plan's own addressing field-for-field (that function
+    is untouched, still SPLIT/contiguous-based); this one's non-last
+    kernels use AddressMappingKind.PEELED instead, chosen so every kernel
+    after the first gets a vector (not scalar) DRAM read -- both are
+    independently numpy-verified correct, they just lay the intermediate
+    array out differently. See AddressMappingKind.PEELED.
     """
 
     n: int
@@ -1147,16 +1275,22 @@ def make_multi_kernel_plan(
     -- its own layouts_for_radices multi-stage FFT -- in order, chained
     through DRAM.
 
-    Every kernel's DRAM input read is `strided(elem_stride=n//K_i)`,
-    uniformly regardless of position (first, middle, or last). Every
-    non-last kernel's output is `AddressMapping.split(a)` (`a` = the
-    product of the kernel lengths processed before it; `a=1` for the
-    first kernel, where split degenerates to plain contiguous -- see
-    AddressMappingKind.SPLIT) plus a LargeTwiddlePlan scoped to `n // a`
-    rather than the full `n`. The last kernel's output is
-    `strided(elem_stride=a)` and only it carries the 1/n inverse scale --
-    both exactly make_decomposed_plan's M=2 formulas, which this
-    generalizes without changing.
+    The *first* kernel's DRAM input read is `strided(row_stride=1,
+    elem_stride=n//K_0)` -- unavoidably O(n), since it reads the external
+    input and nothing precedes it to fuse a layout reset into. Every
+    *later* kernel's read is `strided(row_stride=K_i, elem_stride=1)`: a
+    real vector load, courtesy of the previous kernel's PEELED write (see
+    AddressMappingKind.PEELED) rather than the uniform `n//K_i` every
+    kernel used to pay regardless of position. Every non-last kernel's
+    output is `AddressMapping.peeled(a, k_next, tail_size)` (`a` = the
+    product of the kernel lengths processed before it, same as SPLIT used;
+    `k_next`/`tail_size` describe the *next* kernel's own digit and
+    everything after it) plus a LargeTwiddlePlan scoped the same way SPLIT's
+    was. The last kernel's output is unchanged from before:
+    `strided(elem_stride=a)`, and only it carries the 1/n inverse scale --
+    verified (by direct index simulation, not just plan-time inspection)
+    to still land in the same numpy-correct natural order as the old
+    SPLIT-based scheme despite reading from a PEELED predecessor.
 
     None of this was carried over from the M=2 case by analogy: it's an
     independent numpy simulation of the general M-kernel decomposition
@@ -1193,20 +1327,37 @@ def make_multi_kernel_plan(
     for i, ki in enumerate(lengths):
         is_last = i == m - 1
         total_uthreads = n // ki
-        input_mapping = AddressMapping.strided(row_stride=1, elem_stride=total_uthreads)
+
+        if i == 0:
+            # First kernel: reads the external input, nothing precedes it
+            # to fuse a layout reset into -- unchanged, still O(n) stride.
+            input_mapping = AddressMapping.strided(row_stride=1, elem_stride=total_uthreads)
+        else:
+            # Every later kernel: contiguous, courtesy of the previous
+            # kernel's PEELED output below -- see AddressMappingKind.PEELED.
+            input_mapping = AddressMapping.contiguous(row_stride=ki)
 
         if is_last:
+            # Unchanged: verified (by direct simulation, not just by
+            # inspection) that the last kernel's own write formula still
+            # lands in numpy-correct natural order even though its *read*
+            # now comes from a PEELED predecessor instead of the old
+            # uniform strided(elem_stride=n//K) -- see the plan doc.
             output_mapping = AddressMapping.strided(row_stride=1, elem_stride=a)
             large_twiddle = None
             inverse_scale = (1.0 / n) if inverse else None
         else:
-            output_mapping = AddressMapping.split(a)
+            k_next = lengths[i + 1]
+            tail_size = prod(lengths[i + 2 :]) if i + 2 < m else 1
+            output_mapping = AddressMapping.peeled(a, k_next, tail_size)
             large_twiddle = LargeTwiddlePlan(
                 full_length=n,
                 row_count=total_uthreads // a,
                 output_count=ki,
                 inverse=inverse,
                 a=a,
+                k_next=k_next,
+                tail_size=tail_size,
             )
             inverse_scale = None
 
