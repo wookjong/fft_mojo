@@ -1036,46 +1036,82 @@ def factor_into_kernel_chunks(
     accordingly, and chunk order/composition here is unconstrained beyond
     the scratchpad budget.
 
-    Packs from the *last* factor backward, not the first forward. Every
-    non-last kernel's DRAM output stride is `a` = the product of every
-    *earlier* kernel's length (see make_multi_kernel_plan), so it's set
-    entirely by the last chunk: `a_final = n // len(chunks[-1])`, the
-    largest stride anywhere in the chain since `a` only grows kernel to
-    kernel. Packing front-to-back leaves whatever factors happen to run
-    out last as the final chunk -- unrelated to the budget, and not even
-    monotonic in it (checked directly: n=960 at scratchpad_byte_budget=4096
-    forward-packs to chunks=((2,2,2,2,2,2,3),(5,)), a_final=192, worse than
-    budget=1024's ((2,2,2,2,2,2),(3,5)), a_final=64, despite the larger
-    budget). Packing back-to-front instead guarantees the last chunk is
-    itself budget-maximal, which minimizes a_final for the given budget
-    and makes it monotonically non-increasing as the budget grows (same
-    n=960 sweep: a_final=64, 16, 4, 1, 1 at budget=256/1024/4096/16384/65536).
+    Chosen to minimize the largest *effective DRAM stride* any kernel in
+    the chain pays, not just kernel count. Every kernel pays two strides
+    that a chunking choice affects independently (see make_multi_kernel_plan):
+    a *read* stride of `n // (this kernel's own length)` -- large whenever
+    this one kernel's own chunk is small, regardless of where it sits in
+    the chain -- and a *write* stride of `a` = the product of every
+    *earlier* kernel's length (the last kernel included: its output is
+    `strided(elem_stride=a)`, the same `a` a middle kernel's `split(a)`
+    uses). An earlier version of this packed back-to-front to shrink only
+    the write side, which isn't the whole story: n=960 at
+    scratchpad_byte_budget=256 back-to-front-packs to
+    ((2,2),(2,2,2,2),(3,5)) -- its write-side max is a good-looking 64, but
+    kernel0's own length is 4, so its *read* stride is 960//4=240, the true
+    worst case in that chain and worse than doing nothing budget-aware at
+    all. The read side was never optimized because nothing computed it.
+
+    Built as a DP over where to split the (fixed-order) factor list, not a
+    single greedy pass, because minimizing the read side requires *every*
+    chunk to be reasonably large, not just placing one large chunk
+    somewhere -- a single greedy direction (front-to-back or
+    back-to-front) can't do that. Prefix products `P[i] = prod(factors[:i])`
+    are fixed regardless of how the chunks are split, so a chunk
+    `factors[i:j]` always has `write_stride = P[i]` and
+    `read_stride = n // (P[j]//P[i])` no matter what the other chunks look
+    like; `DP[i]` (best achievable max-stride for `factors[i:]`, computed
+    backward from `DP[F]=0`) is then `min` over valid split points `j` of
+    `max(read_stride(i,j), P[i], DP[j])`. `O(F^2)` in the factor count `F`
+    (at most ~20 for any n this codebase can address) -- cheap, and exact
+    for this cost function, not a heuristic. Same n=960 sweep as above:
+    max stride 120, 32, 32, 1, 1 at budget=256/512/1024/16384/65536 (vs.
+    the write-only version's true, read-inclusive worst case of 240 at
+    budget=256) -- monotonically non-increasing in budget, since a larger
+    budget only adds split points to the same search, never removes one.
     """
     if scratchpad_byte_budget <= 0:
         raise ValueError("scratchpad_byte_budget must be positive")
 
     factors = _prime_factors_supported(n)
     cap = scratchpad_byte_budget // 16
+    num_factors = len(factors)
+
+    prefix_product = [1] * (num_factors + 1)
+    for i, f in enumerate(factors):
+        prefix_product[i + 1] = prefix_product[i] * f
+
+    # best_from[i] = (max stride achieved by the best chunking of
+    # factors[i:], the split point j of its first chunk); best_from[F] is
+    # the base case (nothing left to chunk, no stride contributed).
+    best_from: list[tuple[int, int | None]] = [(0, None)] * (num_factors + 1)
+    for i in range(num_factors - 1, -1, -1):
+        best: tuple[int, int | None] = (-1, None)
+        for j in range(i + 1, num_factors + 1):
+            chunk_length = prefix_product[j] // prefix_product[i]
+            if chunk_length > cap:
+                break  # chunk_length only grows with j (every factor >= 2)
+            write_stride = prefix_product[i]
+            read_stride = n // chunk_length
+            candidate = max(read_stride, write_stride, best_from[j][0])
+            if best[0] == -1 or candidate < best[0]:
+                best = (candidate, j)
+        if best[1] is None:
+            raise ValueError(
+                f"scratchpad_byte_budget={scratchpad_byte_budget} is too "
+                f"small to fit even a single radix-{factors[i]} stage"
+            )
+        best_from[i] = best
 
     chunks: list[tuple[int, ...]] = []
-    current: list[int] = []
-    product = 1
-    for f in reversed(factors):
-        if current and product * f > cap:
-            chunks.append(tuple(reversed(current)))
-            current = []
-            product = 1
-        if f > cap:
-            raise ValueError(
-                f"scratchpad_byte_budget={scratchpad_byte_budget} is "
-                f"too small to fit even a single radix-{f} stage"
-            )
-        current.append(f)
-        product *= f
-    if current:
-        chunks.append(tuple(reversed(current)))
+    i = 0
+    while i < num_factors:
+        j = best_from[i][1]
+        assert j is not None
+        chunks.append(tuple(factors[i:j]))
+        i = j
 
-    return tuple(reversed(chunks))
+    return tuple(chunks)
 
 
 @dataclass(frozen=True)
@@ -1193,3 +1229,52 @@ def make_multi_kernel_plan(
         a *= ki
 
     return MultiKernelFFTPlan(n=n, inverse=inverse, kernels=tuple(kernels), host=host)
+
+
+@dataclass(frozen=True)
+class KernelStrideSummary:
+    """Everything about one kernel's DRAM-facing layout that a plan summary
+    or a stride-bound check needs -- derived entirely from fields
+    FFTCodegenPlan already carries (input_mapping/output_mapping.elem_stride,
+    length, each stage's radix), not new decisions. See
+    summarize_multi_kernel_plan.
+    """
+
+    kernel_name: str
+    local_length: int
+    radices: tuple[int, ...]
+    read_stride: int
+    write_stride: int
+    fused_transition: str  # "NONE" (this kernel's DRAM side is contiguous)
+    #                         or "STORE" (a layout transition is folded into
+    #                         this kernel's own output mapping -- see
+    #                         AddressMappingKind.SPLIT / make_multi_kernel_plan;
+    #                         this codebase never uses a LOAD-side fusion or a
+    #                         standalone transpose kernel, so those aren't
+    #                         separate enum values here, only documented cases
+    #                         that don't occur -- see the plan's design notes).
+
+
+def summarize_multi_kernel_plan(
+    plan: MultiKernelFFTPlan,
+) -> tuple[KernelStrideSummary, ...]:
+    summaries = []
+    for kernel in plan.kernels:
+        transition = "NONE" if kernel.output_mapping.elem_stride == 1 else "STORE"
+        summaries.append(
+            KernelStrideSummary(
+                kernel_name=kernel.kernel_name,
+                local_length=kernel.length,
+                radices=tuple(stage.radix for stage in kernel.stages),
+                read_stride=kernel.input_mapping.elem_stride,
+                write_stride=kernel.output_mapping.elem_stride,
+                fused_transition=transition,
+            )
+        )
+    return tuple(summaries)
+
+
+def max_effective_stride(summaries: tuple[KernelStrideSummary, ...]) -> int:
+    return max(
+        max(s.read_stride, s.write_stride) for s in summaries
+    )

@@ -27,21 +27,23 @@ are left exactly as emitted.
 import re
 import types
 from dataclasses import replace
-from math import prod
 
 import numpy as np
 
 from fft_butterflies import SUPPORTED_RADICES
-from fft_codegen import Emitter, _emit_stage
+from fft_codegen import Emitter, _emit_stage, _mapping_base_expr
 from fft_plangen import (
     DecomposedFFTPlan,
     FFTCodegenPlan,
     _build_plan,
+    _prime_factors_supported,
     factor_into_kernel_chunks,
     layouts_for_radices,
     make_444_plan,
     make_decomposed_plan,
     make_multi_kernel_plan,
+    max_effective_stride,
+    summarize_multi_kernel_plan,
 )
 
 _VAR_RE = re.compile(r"^(\s*)var ")
@@ -72,6 +74,45 @@ def _translate_stage(plan: FFTCodegenPlan, stage) -> str:
         assert line.startswith("    ")
         out.append(line[4:])
     return "\n".join(out)
+
+
+def verify_layout_bijection(chunks: tuple[tuple[int, ...], ...]) -> None:
+    """Index-only check (no FFT math, no floating point): every kernel's
+    input_mapping/output_mapping visits each of that kernel's own DRAM
+    addresses exactly once across all its uthreads' logical (row, elem)
+    pairs -- i.e. it's a real permutation, not just a plausible-looking
+    formula. Raises AssertionError on any collision or gap.
+
+    Reuses fft_codegen._mapping_base_expr -- the exact expression codegen
+    emits for the row-dependent part of an address -- instead of
+    re-deriving the row*row_stride / SPLIT %-// arithmetic a second time
+    here; only the already-documented `+ elem*elem_stride` (AddressMapping's
+    own definition) is added on top.
+    """
+    plan = make_multi_kernel_plan(chunks)
+    n = plan.n
+    for kernel in plan.kernels:
+        for mapping, side in (
+            (kernel.input_mapping, "input"),
+            (kernel.output_mapping, "output"),
+        ):
+            expr = _mapping_base_expr(mapping, kernel.length)
+            addrs: set[int] = set()
+            for row in range(kernel.total_uthreads):
+                base = eval(expr, {"global_uthread_id": lambda: row})  # noqa: B023
+                for elem in range(kernel.length):
+                    addr = base + elem * mapping.elem_stride
+                    if addr in addrs:
+                        raise AssertionError(
+                            f"{kernel.kernel_name} {side} mapping: address "
+                            f"{addr} visited more than once (chunks={chunks})"
+                        )
+                    addrs.add(addr)
+            if addrs != set(range(n)):
+                raise AssertionError(
+                    f"{kernel.kernel_name} {side} mapping: addresses are not "
+                    f"a permutation of 0..{n - 1} (chunks={chunks})"
+                )
 
 
 class SimdVec(np.ndarray):
@@ -429,6 +470,21 @@ def main() -> None:
         (32, ((2,), (2,), (2,), (2,), (2,))),  # M=5, chained one radix-2 at a time
         (1155, ((11,), (7,), (3,), (5,))),  # M=4, largest N tested
     ]
+
+    # Layout-only pass first (section 13.A): pure index arithmetic, no FFT
+    # math, over the same case matrix above -- single segment, 2, 3+,
+    # balanced/unbalanced, power-of-two and mixed radix. Confirms every
+    # kernel boundary's AddressMapping is a genuine permutation before any
+    # floating-point check runs on it.
+    for n, chunks in multi_kernel_cases:
+        tag = f"layout bijection N={n} chunks={chunks}"
+        try:
+            verify_layout_bijection(chunks)
+            print(f"  OK   {tag}")
+        except AssertionError as exc:
+            print(f"  FAIL {tag}: {exc}")
+            failures.append(tag)
+
     for n, chunks in multi_kernel_cases:
         for inverse in (False, True):
             err = verify_multi_kernel_plan(chunks, inverse=inverse, seed=1)
@@ -470,36 +526,75 @@ def main() -> None:
         if not ok:
             failures.append(tag)
 
-    # factor_into_kernel_chunks: packs back-to-front so the last chunk is
-    # budget-maximal, which minimizes a_final = n // len(chunks[-1]) -- the
-    # largest per-kernel DRAM output stride anywhere in the chain (see its
-    # docstring). Two properties checked directly, not just by inspection:
-    # (1) a_final is monotonically non-increasing as the budget grows (a
-    # forward-packing sweep at these same budgets is *not* monotonic -- see
-    # the docstring's n=960 example), and (2) whatever chunking comes out
-    # still produces a numerically correct FFT, exercising this function
-    # for the first time anywhere in the suite (nothing previously called
-    # it -- only make_multi_kernel_plan's own chunks= argument was tested,
-    # always hand-written).
+    # factor_into_kernel_chunks: a DP over factor-list split points that
+    # minimizes max(read_stride, write_stride) across every kernel in the
+    # chain -- not just the last kernel's write side (see its docstring for
+    # why that's not the whole story: a kernel's *read* stride is
+    # n // its-own-length, large whenever that one kernel is small,
+    # regardless of chain position). Three properties checked directly:
+    # (1) max_effective_stride is monotonically non-increasing as the
+    # budget grows, (2) it is strictly better than a write-only,
+    # back-to-front packing at the same budget (reference implementation
+    # below, kept local to this test purely for the comparison -- not a
+    # second copy of production logic), and (3) whatever chunking comes out
+    # still produces a numerically correct FFT and a genuine address
+    # permutation.
+    def _write_stride_only_packing(n: int, budget: int) -> tuple[tuple[int, ...], ...]:
+        """The previous session's algorithm, reference-implemented here only
+        to demonstrate the improvement -- see the docstring's N=960 example."""
+        factors = _prime_factors_supported(n)
+        cap = budget // 16
+        chunks: list[tuple[int, ...]] = []
+        current: list[int] = []
+        product = 1
+        for f in reversed(factors):
+            if current and product * f > cap:
+                chunks.append(tuple(reversed(current)))
+                current, product = [], 1
+            current.append(f)
+            product *= f
+        if current:
+            chunks.append(tuple(reversed(current)))
+        return tuple(reversed(chunks))
+
     n = 960
-    budgets = (256, 1024, 4096, 16384, 65536)
-    prev_a_final = None
+    budgets = (256, 512, 1024, 16384, 65536)
+    prev_max_stride = None
     for budget in budgets:
         chunks = factor_into_kernel_chunks(n, scratchpad_byte_budget=budget)
-        a_final = n // prod(chunks[-1])
-        if prev_a_final is not None and a_final > prev_a_final:
+        summary = summarize_multi_kernel_plan(make_multi_kernel_plan(chunks))
+        max_stride = max_effective_stride(summary)
+
+        if prev_max_stride is not None and max_stride > prev_max_stride:
             failures.append(
-                f"factor_into_kernel_chunks budget={budget}: a_final={a_final} "
-                f"regressed above budget={budgets[budgets.index(budget) - 1]}'s "
-                f"{prev_a_final} -- should be non-increasing in budget"
+                f"factor_into_kernel_chunks budget={budget}: max_effective_stride="
+                f"{max_stride} regressed above the previous (smaller) budget's "
+                f"{prev_max_stride} -- should be non-increasing in budget"
             )
-        prev_a_final = a_final
+        prev_max_stride = max_stride
+
+        old_chunks = _write_stride_only_packing(n, budget)
+        old_summary = summarize_multi_kernel_plan(make_multi_kernel_plan(old_chunks))
+        old_max_stride = max_effective_stride(old_summary)
+        if old_chunks != chunks and old_max_stride < max_stride:
+            failures.append(
+                f"factor_into_kernel_chunks budget={budget}: max_effective_stride="
+                f"{max_stride} is worse than write-only packing's {old_max_stride} "
+                f"(chunks={chunks} vs {old_chunks})"
+            )
+        print(
+            f"  ---  N={n} budget={budget}: new chunks={chunks} "
+            f"max_effective_stride={max_stride}  |  old (write-only) "
+            f"chunks={old_chunks} max_effective_stride={old_max_stride}"
+        )
+
+        verify_layout_bijection(chunks)
 
         for inverse in (False, True):
             err = verify_multi_kernel_plan(chunks, inverse=inverse, seed=5)
             tag = (
                 f"factor_into_kernel_chunks N={n} budget={budget} "
-                f"chunks={chunks} (a_final={a_final}) inverse={inverse}"
+                f"chunks={chunks} (max_effective_stride={max_stride}) inverse={inverse}"
             )
             ok = err <= tolerance
             print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")

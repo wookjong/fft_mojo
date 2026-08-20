@@ -5,7 +5,7 @@ import numpy as np
 
 from fft_butterflies import SUPPORTED_RADICES, emit_butterfly
 from fft_codegen import generate_fft_kernel, generate_multi_kernel_fft_kernels
-from fft_plangen import make_444_plan, make_multi_kernel_plan
+from fft_plangen import factor_into_kernel_chunks, make_444_plan, make_multi_kernel_plan
 
 _VAR_RE = re.compile(r"^(\s*)var ")
 
@@ -137,16 +137,28 @@ def main() -> None:
     decomposed_output.write_text(decomposed_source, encoding="utf-8")
     print(f"generated: {decomposed_output}")
 
-    # Test case C: N=960 = (4*4*4)*3*5, three kernels chained through DRAM
-    # -- kernel0 absorbs a full 4x4x4 multi-stage FFT via scratchpad
-    # ping-pong (the same structure as test case A), then a bare radix-3
-    # and a bare radix-5 kernel each add one more DRAM handoff. Exercises
+    # Test case C: N=960, three kernels chained through DRAM. Exercises
     # AddressMappingKind.SPLIT (the runtime %/// a middle kernel's output
     # needs) end to end. See fft_plangen.make_multi_kernel_plan.
     #
-    # simd_lanes=4: kernel0's fused 4x4x4 stages spill at simd_lanes=8 for
+    # Chunks come from factor_into_kernel_chunks rather than a hand-picked
+    # radix split: every kernel in the chain pays both a *read* stride
+    # (n // its own length -- large whenever that one kernel is small,
+    # regardless of chain position) and a *write* stride (`a`, the product
+    # of every earlier kernel's length, which only grows kernel to kernel
+    # -- the last kernel included). factor_into_kernel_chunks picks split
+    # points to minimize the largest of the two across the whole chain --
+    # see its docstring. A hand-picked ((4, 4, 4), (3,), (5,)) has a
+    # write-side max of 192; scratchpad_byte_budget=256 is the smallest
+    # budget that still yields three kernels (preserving the SPLIT exercise
+    # this test case exists for -- larger budgets collapse it to M=2 or
+    # M=1) and gets max_effective_stride=120, including the read side the
+    # hand-picked split never accounted for.
+    #
+    # simd_lanes=4: a fused multi-stage kernel spills at simd_lanes=8 for
     # the same reason as test case A -- see its comment above.
-    multi = make_multi_kernel_plan(((4, 4, 4), (3,), (5,)), simd_lanes=4)
+    chunks = factor_into_kernel_chunks(960, scratchpad_byte_budget=256)
+    multi = make_multi_kernel_plan(chunks, simd_lanes=4)
     multi_source = generate_multi_kernel_fft_kernels(multi)
     multi_output = here / "fft_fp32_multikernel_generated.mojo"
     multi_output.write_text(multi_source, encoding="utf-8")
