@@ -27,6 +27,7 @@ are left exactly as emitted.
 import re
 import types
 from dataclasses import replace
+from math import prod
 
 import numpy as np
 
@@ -468,6 +469,42 @@ def main() -> None:
         print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
         if not ok:
             failures.append(tag)
+
+    # factor_into_kernel_chunks: packs back-to-front so the last chunk is
+    # budget-maximal, which minimizes a_final = n // len(chunks[-1]) -- the
+    # largest per-kernel DRAM output stride anywhere in the chain (see its
+    # docstring). Two properties checked directly, not just by inspection:
+    # (1) a_final is monotonically non-increasing as the budget grows (a
+    # forward-packing sweep at these same budgets is *not* monotonic -- see
+    # the docstring's n=960 example), and (2) whatever chunking comes out
+    # still produces a numerically correct FFT, exercising this function
+    # for the first time anywhere in the suite (nothing previously called
+    # it -- only make_multi_kernel_plan's own chunks= argument was tested,
+    # always hand-written).
+    n = 960
+    budgets = (256, 1024, 4096, 16384, 65536)
+    prev_a_final = None
+    for budget in budgets:
+        chunks = factor_into_kernel_chunks(n, scratchpad_byte_budget=budget)
+        a_final = n // prod(chunks[-1])
+        if prev_a_final is not None and a_final > prev_a_final:
+            failures.append(
+                f"factor_into_kernel_chunks budget={budget}: a_final={a_final} "
+                f"regressed above budget={budgets[budgets.index(budget) - 1]}'s "
+                f"{prev_a_final} -- should be non-increasing in budget"
+            )
+        prev_a_final = a_final
+
+        for inverse in (False, True):
+            err = verify_multi_kernel_plan(chunks, inverse=inverse, seed=5)
+            tag = (
+                f"factor_into_kernel_chunks N={n} budget={budget} "
+                f"chunks={chunks} (a_final={a_final}) inverse={inverse}"
+            )
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
 
     if failures:
         raise AssertionError(f"{len(failures)} plan(s) failed: {failures}")

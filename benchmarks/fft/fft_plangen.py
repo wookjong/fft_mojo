@@ -1035,6 +1035,21 @@ def factor_into_kernel_chunks(
     passes cleanly. The constraint was removed from `_check_layouts`
     accordingly, and chunk order/composition here is unconstrained beyond
     the scratchpad budget.
+
+    Packs from the *last* factor backward, not the first forward. Every
+    non-last kernel's DRAM output stride is `a` = the product of every
+    *earlier* kernel's length (see make_multi_kernel_plan), so it's set
+    entirely by the last chunk: `a_final = n // len(chunks[-1])`, the
+    largest stride anywhere in the chain since `a` only grows kernel to
+    kernel. Packing front-to-back leaves whatever factors happen to run
+    out last as the final chunk -- unrelated to the budget, and not even
+    monotonic in it (checked directly: n=960 at scratchpad_byte_budget=4096
+    forward-packs to chunks=((2,2,2,2,2,2,3),(5,)), a_final=192, worse than
+    budget=1024's ((2,2,2,2,2,2),(3,5)), a_final=64, despite the larger
+    budget). Packing back-to-front instead guarantees the last chunk is
+    itself budget-maximal, which minimizes a_final for the given budget
+    and makes it monotonically non-increasing as the budget grows (same
+    n=960 sweep: a_final=64, 16, 4, 1, 1 at budget=256/1024/4096/16384/65536).
     """
     if scratchpad_byte_budget <= 0:
         raise ValueError("scratchpad_byte_budget must be positive")
@@ -1045,9 +1060,9 @@ def factor_into_kernel_chunks(
     chunks: list[tuple[int, ...]] = []
     current: list[int] = []
     product = 1
-    for f in factors:
+    for f in reversed(factors):
         if current and product * f > cap:
-            chunks.append(tuple(current))
+            chunks.append(tuple(reversed(current)))
             current = []
             product = 1
         if f > cap:
@@ -1058,9 +1073,9 @@ def factor_into_kernel_chunks(
         current.append(f)
         product *= f
     if current:
-        chunks.append(tuple(current))
+        chunks.append(tuple(reversed(current)))
 
-    return tuple(chunks)
+    return tuple(reversed(chunks))
 
 
 @dataclass(frozen=True)
