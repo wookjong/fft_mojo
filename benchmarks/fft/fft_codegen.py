@@ -102,22 +102,22 @@ def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan) -> None:
         assert load.base_offset is not None
         if load.source == "input":
             e.add(
-                f"        var rr{j} = p.input_real_base.load[width=W]("
+                f"        var rr{j} = p.input_real_base.load[width={plan.simd_lanes}]("
                 f"in_batch_base + {load.base_offset})"
             )
             e.add(
-                f"        var ii{j} = p.input_imag_base.load[width=W]("
+                f"        var ii{j} = p.input_imag_base.load[width={plan.simd_lanes}]("
                 f"in_batch_base + {load.base_offset})"
             )
         else:
             assert load.buffer_name is not None
             buf = _spad(plan.kernel_name, load.buffer_name)
             e.add(
-                f"        var rr{j} = {buf}.load[DType.float32, W]("
+                f"        var rr{j} = {buf}.load[DType.float32, {plan.simd_lanes}]("
                 f"spad_base + {load.base_offset})"
             )
             e.add(
-                f"        var ii{j} = {buf}.load[DType.float32, W]("
+                f"        var ii{j} = {buf}.load[DType.float32, {plan.simd_lanes}]("
                 f"spad_base + N + {load.base_offset})"
             )
         return
@@ -155,21 +155,23 @@ def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan) -> None:
         rr_lanes.append(f"{rr_scalar}[0]")
         ii_lanes.append(f"{ii_scalar}[0]")
     e.add(
-        f"        var rr{j} = SIMD[DType.float32, W](" + ", ".join(rr_lanes) + ")"
+        f"        var rr{j} = SIMD[DType.float32, {plan.simd_lanes}](" + ", ".join(rr_lanes) + ")"
     )
     e.add(
-        f"        var ii{j} = SIMD[DType.float32, W](" + ", ".join(ii_lanes) + ")"
+        f"        var ii{j} = SIMD[DType.float32, {plan.simd_lanes}](" + ", ".join(ii_lanes) + ")"
     )
 
 
-def _emit_twiddle(e: Emitter, *, output: int, twiddle: TwiddlePlan) -> None:
+def _emit_twiddle(
+    e: Emitter, *, output: int, twiddle: TwiddlePlan, simd_lanes: int
+) -> None:
     e.add(
-        f"        var twr{output} = SIMD[DType.float32, W]("
+        f"        var twr{output} = SIMD[DType.float32, {simd_lanes}]("
         + ", ".join(_f32(v) for v in twiddle.real)
         + ")"
     )
     e.add(
-        f"        var twi{output} = SIMD[DType.float32, W]("
+        f"        var twi{output} = SIMD[DType.float32, {simd_lanes}]("
         + ", ".join(_f32(v) for v in twiddle.imag)
         + ")"
     )
@@ -200,11 +202,11 @@ def _emit_large_twiddle(
     if store.mode == "vector":
         assert store.base_offset is not None
         e.add(
-            f"        var ltwr{k} = p.large_twiddle_real_base.load[width=W]("
+            f"        var ltwr{k} = p.large_twiddle_real_base.load[width={simd_lanes}]("
             f"out_batch_base + {store.base_offset})"
         )
         e.add(
-            f"        var ltwi{k} = p.large_twiddle_imag_base.load[width=W]("
+            f"        var ltwi{k} = p.large_twiddle_imag_base.load[width={simd_lanes}]("
             f"out_batch_base + {store.base_offset})"
         )
     else:
@@ -231,10 +233,10 @@ def _emit_large_twiddle(
         rr_lanes += ["Float32(1)"] * pad
         ii_lanes += ["Float32(0)"] * pad
         e.add(
-            f"        var ltwr{k} = SIMD[DType.float32, W](" + ", ".join(rr_lanes) + ")"
+            f"        var ltwr{k} = SIMD[DType.float32, {simd_lanes}](" + ", ".join(rr_lanes) + ")"
         )
         e.add(
-            f"        var ltwi{k} = SIMD[DType.float32, W](" + ", ".join(ii_lanes) + ")"
+            f"        var ltwi{k} = SIMD[DType.float32, {simd_lanes}](" + ", ".join(ii_lanes) + ")"
         )
 
     e.add(f"        var ltr{k} = or{k} * ltwr{k} - oi{k} * ltwi{k}")
@@ -294,7 +296,9 @@ def _emit_output(
 ) -> None:
     k = output_plan.output
     if output_plan.twiddle is not None:
-        _emit_twiddle(e, output=k, twiddle=output_plan.twiddle)
+        _emit_twiddle(
+            e, output=k, twiddle=output_plan.twiddle, simd_lanes=plan.simd_lanes
+        )
 
     if output_plan.scale is not None:
         scale = _f32(output_plan.scale)
@@ -326,16 +330,19 @@ def _emit_batch(
         _emit_load(e, plan=plan, load=load)
     e.add()
 
+    outputs_by_k = {output_plan.output: output_plan for output_plan in batch.outputs}
+
+    def on_output(k: int) -> None:
+        _emit_output(e, plan=plan, output_plan=outputs_by_k[k])
+
     emit_butterfly(
         e,
         indent="        ",
         radix=stage.radix,
         inverse=stage.inverse,
+        on_output=on_output,
     )
     e.add()
-
-    for output_plan in batch.outputs:
-        _emit_output(e, plan=plan, output_plan=output_plan)
 
 
 def _emit_stage(e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan) -> None:

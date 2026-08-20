@@ -829,16 +829,18 @@ def layouts_for_radices(
     return tuple(layouts)
 
 
-def make_444_plan(*, inverse: bool = False, total_uthreads: int = 1) -> FFTCodegenPlan:
+def make_444_plan(
+    *, inverse: bool = False, total_uthreads: int = 1, simd_lanes: int = 8
+) -> FFTCodegenPlan:
     """Create the fully lowered N=64, radix-4 x radix-4 x radix-4 plan."""
 
     return _build_plan(
         length=64,
         inverse=inverse,
         total_uthreads=total_uthreads,
-        simd_lanes=8,
+        simd_lanes=simd_lanes,
         use_pingpong=True,
-        layouts=layouts_for_radices(64, (4, 4, 4), simd_lanes=8),
+        layouts=layouts_for_radices(64, (4, 4, 4), simd_lanes=simd_lanes),
     )
 
 

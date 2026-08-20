@@ -4,12 +4,8 @@ from pathlib import Path
 import numpy as np
 
 from fft_butterflies import SUPPORTED_RADICES, emit_butterfly
-from fft_codegen import (
-    generate_decomposed_fft_kernels,
-    generate_fft_kernel,
-    generate_multi_kernel_fft_kernels,
-)
-from fft_plangen import make_444_plan, make_decomposed_plan, make_multi_kernel_plan
+from fft_codegen import generate_fft_kernel, generate_multi_kernel_fft_kernels
+from fft_plangen import make_444_plan, make_multi_kernel_plan
 
 _VAR_RE = re.compile(r"^(\s*)var ")
 
@@ -105,19 +101,38 @@ def main() -> None:
     verify_butterflies()
 
     # Test case A: single-kernel N=64, radix 4x4x4 -- whole FFT in one
-    # uthread's own scratchpad, no decomposition.
-    plan = make_444_plan()
+    # uthread's own scratchpad, no decomposition. simd_lanes=4 (half the
+    # hardware's 8-lane width): at simd_lanes=8 this kernel's stages spill
+    # to DRAM (LLVM runs out of vector registers -- three radix-4 stages
+    # fused via scratchpad ping-pong need more live SIMD values than fit at
+    # LMUL=2); simd_lanes=4 halves LMUL to 1 and clears it, confirmed by
+    # rebuilding through the real toolchain and checking llc's spill
+    # warning, not by inspection.
+    plan = make_444_plan(simd_lanes=4)
     source = generate_fft_kernel(plan)
     output = here / "fft_fp32_generated.mojo"
     output.write_text(source, encoding="utf-8")
     print(f"generated: {output}")
 
     # Test case B: N=256 = 16*16, too large for one uthread's scratchpad --
-    # kernel0 (16 uthreads, one 16-point sub-FFT + large twiddle + permuted
-    # store each) then kernel1 (16 uthreads, one 16-point sub-FFT each),
-    # chained through DRAM. See fft_plangen.make_decomposed_plan.
-    decomposed = make_decomposed_plan(16, 16)
-    decomposed_source = generate_decomposed_fft_kernels(decomposed)
+    # kernel0 (16 uthreads, a 4x4 multi-stage sub-FFT via scratchpad
+    # ping-pong + large twiddle + permuted store each) then kernel1 (16
+    # uthreads, another 4x4 multi-stage sub-FFT each), chained through DRAM.
+    #
+    # Built via make_multi_kernel_plan(((4, 4), (4, 4))) rather than
+    # make_decomposed_plan(16, 16) -- both produce the identical M=2,
+    # N0=N1=16 DRAM-transpose decomposition (make_multi_kernel_plan's M=2
+    # case is checkpointed field-for-field against make_decomposed_plan's),
+    # but an atomic radix-16 butterfly spills to DRAM regardless of
+    # simd_lanes (confirmed down to simd_lanes=1): _emit_factorized's
+    # first-stage "groups" for a=4,b=4 needs 16 pairs live simultaneously
+    # before any final output exists, independent of store timing or SIMD
+    # width. Two chained radix-4 *stages* need only one stage's 4 pairs
+    # live at a time -- the same structure that already clears kernel0 of
+    # test case C. See fft_plangen.make_multi_kernel_plan /
+    # factor_into_kernel_chunks.
+    decomposed = make_multi_kernel_plan(((4, 4), (4, 4)), simd_lanes=4)
+    decomposed_source = generate_multi_kernel_fft_kernels(decomposed)
     decomposed_output = here / "fft_fp32_decomposed_generated.mojo"
     decomposed_output.write_text(decomposed_source, encoding="utf-8")
     print(f"generated: {decomposed_output}")
@@ -128,7 +143,10 @@ def main() -> None:
     # and a bare radix-5 kernel each add one more DRAM handoff. Exercises
     # AddressMappingKind.SPLIT (the runtime %/// a middle kernel's output
     # needs) end to end. See fft_plangen.make_multi_kernel_plan.
-    multi = make_multi_kernel_plan(((4, 4, 4), (3,), (5,)))
+    #
+    # simd_lanes=4: kernel0's fused 4x4x4 stages spill at simd_lanes=8 for
+    # the same reason as test case A -- see its comment above.
+    multi = make_multi_kernel_plan(((4, 4, 4), (3,), (5,)), simd_lanes=4)
     multi_source = generate_multi_kernel_fft_kernels(multi)
     multi_output = here / "fft_fp32_multikernel_generated.mojo"
     multi_output.write_text(multi_source, encoding="utf-8")

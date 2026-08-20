@@ -19,11 +19,21 @@ stage scheduler.
 """
 
 from math import cos, pi, sin
-from typing import Protocol
+from typing import Callable, Protocol
 
 
 class LineEmitter(Protocol):
     def add(self, line: str = "") -> None: ...
+
+
+# Called with an output index k as soon as or{k}/oi{k} are fully computed --
+# lets the caller (fft_codegen._emit_batch) interleave that output's
+# twiddle+store right there, instead of holding every output of a
+# many-output radix (6/8/9/10/16 factorized; 7/11/13/17 symmetric) live
+# until the whole butterfly returns. Radix 2/3/4/5 compute all their
+# outputs together regardless (see _emit_small_named), so calling it in a
+# plain loop after the fact is unchanged behavior for those.
+OutputCallback = Callable[[int], None]
 
 
 def _f32(value: float) -> str:
@@ -286,6 +296,7 @@ def _emit_factorized(
     a: int,
     b: int,
     inverse: bool,
+    on_output: OutputCallback | None = None,
 ) -> None:
     """Emit Cooley-Tukey N=a*b using fixed small butterflies.
 
@@ -344,6 +355,8 @@ def _emit_factorized(
             k = k2 + b * k1
             e.add(f"{indent}var or{k} = {fr}")
             e.add(f"{indent}var oi{k} = {fi}")
+            if on_output is not None:
+                on_output(k)
 
 
 def _emit_symmetric_odd_radix(
@@ -352,6 +365,7 @@ def _emit_symmetric_odd_radix(
     indent: str,
     radix: int,
     inverse: bool,
+    on_output: OutputCallback | None = None,
 ) -> None:
     """Symmetry-reduced fixed DFT for odd prime/small odd radices.
 
@@ -375,6 +389,8 @@ def _emit_symmetric_odd_radix(
     for j in range(1, half + 1):
         e.add(f"{indent}or0 += p{j}r")
         e.add(f"{indent}oi0 += p{j}i")
+    if on_output is not None:
+        on_output(0)
 
     for k in range(1, half + 1):
         nk = radix - k
@@ -397,6 +413,9 @@ def _emit_symmetric_odd_radix(
                 e.add(f"{indent}oi{k} += p{j}i * {c} + m{j}r * {s}")
                 e.add(f"{indent}or{nk} += p{j}r * {c} + m{j}i * {s}")
                 e.add(f"{indent}oi{nk} += p{j}i * {c} - m{j}r * {s}")
+        if on_output is not None:
+            on_output(k)
+            on_output(nk)
 
 
 def emit_butterfly(
@@ -405,10 +424,14 @@ def emit_butterfly(
     indent: str,
     radix: int,
     inverse: bool,
+    on_output: OutputCallback | None = None,
 ) -> None:
     """Emit one supported fixed-radix butterfly.
 
     Unsupported radices are rejected. There is intentionally no fallback path.
+
+    `on_output`, if given, is called with each output index k as soon as
+    or{k}/oi{k} are fully computed -- see the OutputCallback docstring.
     """
     if radix not in SUPPORTED_RADICES:
         supported = ", ".join(str(r) for r in sorted(SUPPORTED_RADICES))
@@ -429,22 +452,35 @@ def emit_butterfly(
             inverse=inverse,
         )
         assert outs == [(f"or{k}", f"oi{k}") for k in range(radix)]
+        if on_output is not None:
+            for k in range(radix):
+                on_output(k)
         return
 
     if radix == 6:
-        _emit_factorized(e, indent=indent, radix=6, a=2, b=3, inverse=inverse)
+        _emit_factorized(
+            e, indent=indent, radix=6, a=2, b=3, inverse=inverse, on_output=on_output
+        )
         return
     if radix == 8:
-        _emit_factorized(e, indent=indent, radix=8, a=2, b=4, inverse=inverse)
+        _emit_factorized(
+            e, indent=indent, radix=8, a=2, b=4, inverse=inverse, on_output=on_output
+        )
         return
     if radix == 9:
-        _emit_factorized(e, indent=indent, radix=9, a=3, b=3, inverse=inverse)
+        _emit_factorized(
+            e, indent=indent, radix=9, a=3, b=3, inverse=inverse, on_output=on_output
+        )
         return
     if radix == 10:
-        _emit_factorized(e, indent=indent, radix=10, a=2, b=5, inverse=inverse)
+        _emit_factorized(
+            e, indent=indent, radix=10, a=2, b=5, inverse=inverse, on_output=on_output
+        )
         return
     if radix == 16:
-        _emit_factorized(e, indent=indent, radix=16, a=4, b=4, inverse=inverse)
+        _emit_factorized(
+            e, indent=indent, radix=16, a=4, b=4, inverse=inverse, on_output=on_output
+        )
         return
 
     if radix in (7, 11, 13, 17):
@@ -453,6 +489,7 @@ def emit_butterfly(
             indent=indent,
             radix=radix,
             inverse=inverse,
+            on_output=on_output,
         )
         return
 
