@@ -27,24 +27,31 @@ are left exactly as emitted.
 import re
 import types
 from dataclasses import replace
+from math import prod
 
 import numpy as np
 
 from fft_butterflies import SUPPORTED_RADICES
 from fft_codegen import Emitter, _emit_stage, _mapping_base_expr
 from fft_plangen import (
+    BalancedTransposeFFTPlan,
     DecomposedFFTPlan,
     FFTCodegenPlan,
+    _build_batched_side,
     _build_plan,
+    _choose_side_chunks,
     _prime_factors_supported,
     factor_into_kernel_chunks,
     layouts_for_radices,
     make_444_plan,
+    make_balanced_plan,
+    make_balanced_transpose_plan,
     make_decomposed_plan,
     make_multi_kernel_plan,
     max_effective_stride,
     summarize_multi_kernel_plan,
 )
+from fft_transpose_codegen import _emit_transpose_stage
 
 _VAR_RE = re.compile(r"^(\s*)var ")
 _COMPTIME_RE = re.compile(r"^(\s*)comptime ")
@@ -425,6 +432,17 @@ def verify_multi_kernel_plan(
     plan = make_multi_kernel_plan(
         chunks, inverse=inverse, spad_capacity_bytes=spad_capacity_bytes
     )
+    return _run_multi_kernel_plan(plan, inverse=inverse, seed=seed)
+
+
+def _run_multi_kernel_plan(plan, *, inverse: bool, seed: int) -> float:
+    """Chains every kernel in `plan.kernels` through DRAM (one large-twiddle
+    table per non-last kernel, exactly the M-kernel PEELED-chain contract
+    make_multi_kernel_plan documents) and compares the result to numpy.
+    Generic over how the plan was built -- shared by verify_multi_kernel_plan
+    and verify_balanced_plan, which differ only in which planner function
+    produces `plan`.
+    """
     n = plan.n
     rng = np.random.default_rng(seed)
     x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
@@ -459,6 +477,236 @@ def verify_multi_kernel_plan(
     got = out_r.arr + 1j * out_i.arr
     expected = np.fft.ifft(x) if inverse else np.fft.fft(x)
     return float(np.max(np.abs(got - expected)))
+
+
+def verify_balanced_plan(
+    chunks_A: tuple[tuple[int, ...], ...],
+    chunks_B: tuple[tuple[int, ...], ...],
+    *,
+    inverse: bool,
+    seed: int,
+) -> float:
+    """Same shape as verify_multi_kernel_plan, but for make_balanced_plan
+    (N = N_A*N_B, each side its own PEELED chain, joined by one
+    AddressMappingKind.CROSSED transpose fused into side A's last kernel --
+    see make_balanced_plan)."""
+    plan = make_balanced_plan(chunks_A, chunks_B, inverse=inverse)
+    return _run_multi_kernel_plan(plan, inverse=inverse, seed=seed)
+
+
+def _translate_transpose_stage(plan) -> str:
+    """Same discipline as _translate_stage: re-execute the actual text
+    fft_transpose_codegen.py emits, not a second implementation."""
+    e = Emitter()
+    _emit_transpose_stage(e, plan=plan)
+    out: list[str] = []
+    for line in e.lines:
+        s = line.strip()
+        if s == "" or s.startswith("#") or s == "@staticmethod":
+            continue
+        if s.startswith("ref p ="):
+            continue
+        line = _VAR_RE.sub(r"\1", line)
+        line = _COMPTIME_RE.sub(r"\1", line)
+        line = _LOAD_W_RE.sub(r".load(\2, \1)", line)
+        line = _LOAD_DT_RE.sub(r".load(\2, \1)", line)
+        line = _SIMD_RE.sub("SIMD(", line)
+        assert line.startswith("    "), line
+        out.append(line[4:])
+    return "\n".join(out)
+
+
+def run_transpose_kernel(
+    plan, *, near_real: Ptr, near_imag: Ptr, far_real: Ptr, far_imag: Ptr,
+    tw_real: Ptr, tw_imag: Ptr,
+) -> None:
+    """Runs the transpose kernel's actual emitted stage text (same
+    discipline as run_kernel), for every tile uthread."""
+    num_groups = -(-plan.total_uthreads // plan.max_uthread)
+    group_namespaces = []
+    for _ in range(num_groups):
+        group_namespaces.append(
+            types.SimpleNamespace(
+                tile_buf=Ptr(plan.scratchpad_elements * plan.max_uthread)
+            )
+        )
+    p_ns = types.SimpleNamespace(
+        near_real_base=near_real, near_imag_base=near_imag,
+        far_real_base=far_real, far_imag_base=far_imag,
+        twiddle_real_base=tw_real, twiddle_imag_base=tw_imag,
+    )
+    current = {"global_id": 0, "local_id": 0}
+    src = _translate_transpose_stage(plan)
+    namespace = {
+        "Float32": float,
+        "SIMD": _simd,
+        "local_uthread_id": lambda: current["local_id"],
+        "global_uthread_id": lambda: current["global_id"],
+        f"MAX_UTHREAD_{plan.kernel_name}": plan.max_uthread,
+        "p": p_ns,
+    }
+    code = compile(src, f"<{plan.kernel_name} stage 0>", "exec")
+    exec(code, namespace)
+    stage_fn = namespace["stage_0"]
+    for global_id in range(plan.total_uthreads):
+        current["global_id"] = global_id
+        current["local_id"] = global_id % plan.max_uthread
+        namespace[plan.kernel_name] = group_namespaces[global_id // plan.max_uthread]
+        stage_fn()
+
+
+def _make_transpose_twiddle_table(plan) -> tuple[np.ndarray, np.ndarray]:
+    """Independent (re-derives (row,elem) -> (batch,combined) itself,
+    rather than reusing fft_transpose_codegen's own address formula)
+    host-side fill for the transpose's own twiddle table -- addressed
+    identically to the near side's plain output layout, see
+    FFTTransposePlan / fft_transpose_codegen._emit_transpose_twiddle_
+    table_precompute."""
+    n = plan.n
+    real = np.zeros(n)
+    imag = np.zeros(n)
+    sign = 1.0 if plan.inverse else -1.0
+    near_total_uthreads = n // plan.ki_near
+    for row in range(near_total_uthreads):
+        batch = row % plan.n_b
+        prefix_so_far = row // plan.n_b
+        for elem in range(plan.ki_near):
+            combined = prefix_so_far + plan.digit_multiplier_near * elem
+            angle = sign * 2.0 * np.pi * batch * combined / n
+            addr = row * plan.ki_near + elem
+            real[addr] = np.cos(angle)
+            imag[addr] = np.sin(angle)
+    return real, imag
+
+
+def verify_transpose_bijection(transpose) -> None:
+    """Index-only (no floats): every (row_near, elem_near) source position
+    lands at exactly one (row_far, elem_far) target position and every
+    target is covered exactly once -- across every tile."""
+    n = transpose.n
+    seen: set[int] = set()
+    for tile_id in range(transpose.total_uthreads):
+        prefix = tile_id % transpose.digit_multiplier_near
+        rest = tile_id // transpose.digit_multiplier_near
+        for ef in range(transpose.ki_far):
+            row_near = transpose.n_b * prefix + ef * transpose.divisor_far + rest
+            for en in range(transpose.ki_near):
+                row_far = prefix + transpose.digit_multiplier_near * en + transpose.n_a * rest
+                target = row_far * transpose.ki_far + ef
+                if target in seen:
+                    raise AssertionError(f"transpose target {target} hit twice")
+                seen.add(target)
+    if seen != set(range(n)):
+        raise AssertionError("transpose targets are not a permutation of 0..n-1")
+
+
+def verify_transpose_access_shape(transpose) -> dict[str, int]:
+    """Every DRAM vector load/store the transpose kernel emits must have
+    elem_stride == 1 (see fft_transpose_codegen.py's own docstring) --
+    checked directly against the address formulas, not assumed. Returns a
+    small summary (max row-to-row jump on each side) for reporting."""
+    max_near_row_jump = 0
+    max_far_row_jump = 0
+    for tile_id in range(transpose.total_uthreads):
+        prefix = tile_id % transpose.digit_multiplier_near
+        rest = tile_id // transpose.digit_multiplier_near
+        near_rows = [
+            transpose.n_b * prefix + ef * transpose.divisor_far + rest
+            for ef in range(transpose.ki_far)
+        ]
+        if len(near_rows) > 1:
+            jumps = [abs(near_rows[i + 1] - near_rows[i]) * transpose.ki_near for i in range(len(near_rows) - 1)]
+            max_near_row_jump = max(max_near_row_jump, max(jumps))
+        far_rows = [
+            prefix + transpose.digit_multiplier_near * en + transpose.n_a * rest
+            for en in range(transpose.ki_near)
+        ]
+        if len(far_rows) > 1:
+            jumps = [abs(far_rows[i + 1] - far_rows[i]) * transpose.ki_far for i in range(len(far_rows) - 1)]
+            max_far_row_jump = max(max_far_row_jump, max(jumps))
+    return {
+        "load_elem_stride": 1,
+        "store_elem_stride": 1,
+        "max_near_row_jump": max_near_row_jump,
+        "max_far_row_jump": max_far_row_jump,
+    }
+
+
+def verify_balanced_transpose_plan(
+    n: int, *, scratchpad_byte_budget: int, inverse: bool, seed: int
+) -> tuple[float, BalancedTransposeFFTPlan]:
+    """Full numeric chain: near side's own PEELED kernels, the standalone
+    transpose kernel, far side's own PEELED kernels -- each re-executing
+    its own actual emitted stage text (run_kernel / run_transpose_kernel),
+    compared to numpy.fft/ifft."""
+    plan = make_balanced_transpose_plan(
+        n, scratchpad_byte_budget=scratchpad_byte_budget, inverse=inverse
+    )
+    rng = np.random.default_rng(seed)
+    x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
+
+    in_r, in_i = Ptr(n), Ptr(n)
+    in_r.arr[:] = x.real
+    in_i.arr[:] = x.imag
+
+    cur_r, cur_i = in_r, in_i
+    for kernel in plan.kernels_near[:-1]:
+        next_r, next_i = Ptr(n), Ptr(n)
+        lt = kernel.large_twiddle
+        assert lt is not None
+        lt_real_vals, lt_imag_vals = _make_large_twiddle_table(lt)
+        lt_r, lt_i = Ptr(n), Ptr(n)
+        lt_r.arr[:] = lt_real_vals
+        lt_i.arr[:] = lt_imag_vals
+        run_kernel(kernel, input_real=cur_r, input_imag=cur_i, output_real=next_r, output_imag=next_i, large_twiddle_real=lt_r, large_twiddle_imag=lt_i)
+        cur_r, cur_i = next_r, next_i
+
+    near_out_r, near_out_i = Ptr(n), Ptr(n)
+    run_kernel(plan.kernels_near[-1], input_real=cur_r, input_imag=cur_i, output_real=near_out_r, output_imag=near_out_i)
+
+    tw_real, tw_imag = _make_transpose_twiddle_table(plan.transpose)
+    tw_r, tw_i = Ptr(n), Ptr(n)
+    tw_r.arr[:] = tw_real
+    tw_i.arr[:] = tw_imag
+    far_in_r, far_in_i = Ptr(n), Ptr(n)
+    run_transpose_kernel(
+        plan.transpose, near_real=near_out_r, near_imag=near_out_i,
+        far_real=far_in_r, far_imag=far_in_i, tw_real=tw_r, tw_imag=tw_i,
+    )
+
+    cur_r, cur_i = far_in_r, far_in_i
+    for kernel in plan.kernels_far[:-1]:
+        next_r, next_i = Ptr(n), Ptr(n)
+        lt = kernel.large_twiddle
+        assert lt is not None
+        lt_real_vals, lt_imag_vals = _make_large_twiddle_table(lt)
+        lt_r, lt_i = Ptr(n), Ptr(n)
+        lt_r.arr[:] = lt_real_vals
+        lt_i.arr[:] = lt_imag_vals
+        run_kernel(kernel, input_real=cur_r, input_imag=cur_i, output_real=next_r, output_imag=next_i, large_twiddle_real=lt_r, large_twiddle_imag=lt_i)
+        cur_r, cur_i = next_r, next_i
+
+    out_r, out_i = Ptr(n), Ptr(n)
+    run_kernel(plan.kernels_far[-1], input_real=cur_r, input_imag=cur_i, output_real=out_r, output_imag=out_i)
+
+    got = out_r.arr + 1j * out_i.arr
+    expected = np.fft.ifft(x) if inverse else np.fft.fft(x)
+    return float(np.max(np.abs(got - expected))), plan
+
+
+def summarize_balanced_transpose_plan(plan: BalancedTransposeFFTPlan) -> None:
+    """Prints the side-A / transpose / side-B stride table the design
+    writeup asks for."""
+    print(f"  Near side FFT (N_A={plan.transpose.n_a}, batched N_B={plan.transpose.n_b} times):")
+    for k in plan.kernels_near:
+        print(f"    {k.kernel_name}: read elem_stride={k.input_mapping.elem_stride} write elem_stride={k.output_mapping.elem_stride}")
+    shape = verify_transpose_access_shape(plan.transpose)
+    print(f"  Transpose (ki_near={plan.transpose.ki_near}, ki_far={plan.transpose.ki_far}, tiles={plan.transpose.total_uthreads}):")
+    print(f"    load elem_stride={shape['load_elem_stride']} store elem_stride={shape['store_elem_stride']}")
+    print(f"    max near-side row jump={shape['max_near_row_jump']} max far-side row jump={shape['max_far_row_jump']}")
+    print(f"  Far side FFT (N_B={plan.transpose.n_b}, batched N_A={plan.transpose.n_a} times):")
+    for k in plan.kernels_far:
+        print(f"    {k.kernel_name}: read elem_stride={k.input_mapping.elem_stride} write elem_stride={k.output_mapping.elem_stride}")
 
 
 def main() -> None:
@@ -698,6 +946,211 @@ def main() -> None:
         print(f"  FAIL {tag}: expected 2/3 kernels reading via vector load, "
               f"got {vector_reads}/3")
         failures.append(tag)
+
+    # make_balanced_plan: N = N_A*N_B, each side its own PEELED chain,
+    # joined by one AddressMappingKind.CROSSED transpose. Two things to
+    # check: (1) numeric correctness, single-kernel-per-side through to
+    # both-sides-multi-kernel, forward and inverse; (2) that
+    # _choose_side_chunks (the batch-aware chunk selection) actually beats
+    # naively feeding factor_into_kernel_chunks's own, batch-*unaware*
+    # chunking into the same side -- checked directly, not assumed: an
+    # interim version of this used plain factor_into_kernel_chunks per
+    # side and got nowhere near sqrt(N) whenever a side needed more than
+    # one internal kernel (N=960*960 gave max_effective_stride=30720, no
+    # better than one flat chain over the same N).
+    balanced_cases: list[
+        tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...]]
+    ] = [
+        (((16,),), ((16,),)),  # single kernel per side -- checkpoint vs. make_decomposed_plan
+        (((17,),), ((13,),)),  # single kernel per side, unequal, both odd primes
+        (((4, 4, 4),), ((3,), (5,))),  # side A one fused kernel, side B a 2-kernel chain
+        (((2,), (2,), (2,)), ((3,), (5,))),  # both sides multi-kernel chains
+    ]
+    for chunks_A, chunks_B in balanced_cases:
+        n_a = prod(prod(c) for c in chunks_A)
+        n_b = prod(prod(c) for c in chunks_B)
+        for inverse in (False, True):
+            err = verify_balanced_plan(chunks_A, chunks_B, inverse=inverse, seed=13)
+            tag = f"balanced plan N_A={n_a}({chunks_A}) N_B={n_b}({chunks_B}) inverse={inverse}"
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    # Checkpoint: single kernel per side must compute the *same physical
+    # addresses* as make_decomposed_plan's own (untouched, SPLIT/
+    # contiguous-based) formulas -- AddressMappingKind.CROSSED's docstring
+    # claims it degenerates to CONTIGUOUS there. Compare the actual
+    # address expressions (what codegen emits), not raw dataclass equality:
+    # CROSSED's degenerate case computes the identical row*16+elem formula
+    # but keeps the CROSSED *kind* tag (with an unused peel_a=batch_count
+    # left set) rather than relabeling itself CONTIGUOUS, so a field-for-
+    # field dataclass comparison flags a difference that isn't there --
+    # caught by trying that first and getting a false failure here.
+    decomposed = make_decomposed_plan(16, 16)
+    balanced = make_balanced_plan(((16,),), ((16,),))
+    pairs = [
+        (decomposed.kernel0.input_mapping, balanced.kernels[0].input_mapping, 16),
+        (decomposed.kernel0.output_mapping, balanced.kernels[0].output_mapping, 16),
+        (decomposed.kernel1.input_mapping, balanced.kernels[1].input_mapping, 16),
+        (decomposed.kernel1.output_mapping, balanced.kernels[1].output_mapping, 16),
+    ]
+    tag = "make_balanced_plan((16,),(16,)) computes the same addresses as make_decomposed_plan(16,16)"
+    same = True
+    for d_map, b_map, length in pairs:
+        for row in range(4):
+            d_base = eval(_mapping_base_expr(d_map, length), {"global_uthread_id": lambda r=row: r})
+            b_base = eval(_mapping_base_expr(b_map, length), {"global_uthread_id": lambda r=row: r})
+            if d_base != b_base or d_map.elem_stride != b_map.elem_stride:
+                same = False
+    print(f"  {'OK  ' if same else 'FAIL'} {tag}")
+    if not same:
+        failures.append(tag)
+
+    # Batch-aware vs. batch-unaware chunk selection, measured directly.
+    factors_960 = _prime_factors_supported(960)
+    aware = _choose_side_chunks(factors_960, batch_count=960, scratchpad_byte_budget=256)
+    unaware = factor_into_kernel_chunks(960, scratchpad_byte_budget=256)
+
+    def kernel0_batched_read(chunks: tuple[tuple[int, ...], ...], batch_count: int) -> int:
+        k0 = prod(chunks[0])
+        return (960 // k0) * batch_count
+
+    aware_read = kernel0_batched_read(aware, 960)
+    unaware_read = kernel0_batched_read(unaware, 960)
+    print(
+        f"  ---  side length 960, batch_count 960: batch-aware chunks={aware} "
+        f"kernel0 batched read={aware_read}  |  batch-unaware chunks={unaware} "
+        f"kernel0 batched read={unaware_read}"
+    )
+    tag = "batch-aware chunk selection beats batch-unaware at the same budget"
+    if aware_read <= unaware_read:
+        print(f"  OK   {tag}")
+    else:
+        print(f"  FAIL {tag}: aware={aware_read} unaware={unaware_read}")
+        failures.append(tag)
+
+    # make_balanced_transpose_plan: N=N_A*N_B, each side its own PEELED
+    # chain, joined by a standalone tiled transpose+twiddle kernel instead
+    # of make_balanced_plan's scalar CROSSED-fused write -- see
+    # fft_plangen.FFTTransposePlan and fft_transpose_codegen.py.
+    #
+    # Baseline checkpoints (17x17, 8x8, 4x8 -- what make_decomposed_plan
+    # already covers directly), one-side-bare/other-multi-kernel and the
+    # reverse, both-sides-multi-kernel, and a representative large-N case
+    # forcing multi-kernel on both sides.
+    transpose_cases: list[tuple[int, int]] = [
+        (17, 17), (8, 8), (4, 8), (16, 16), (13, 17), (64, 15), (8, 15), (32, 30),
+    ]
+    for n_a, n_b in transpose_cases:
+        n = n_a * n_b
+        # small enough budget to sometimes force multi-kernel sides, large
+        # enough to always be plannable for these n's own factor sizes.
+        budget = 256 if n >= 512 else 4096
+        for inverse in (False, True):
+            err, plan = verify_balanced_transpose_plan(
+                n, scratchpad_byte_budget=budget, inverse=inverse, seed=17
+            )
+            tag = (
+                f"balanced-transpose plan n={n} N_A={plan.transpose.n_a} "
+                f"N_B={plan.transpose.n_b} inverse={inverse}"
+            )
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    # Index-only bijection + DRAM access-shape checks (no floats) for the
+    # transpose boundary itself, across the same case list.
+    for n_a, n_b in transpose_cases:
+        n = n_a * n_b
+        budget = 256 if n >= 512 else 4096
+        plan = make_balanced_transpose_plan(n, scratchpad_byte_budget=budget)
+        tag = f"transpose bijection n={n} N_A={n_a} N_B={n_b}"
+        try:
+            verify_transpose_bijection(plan.transpose)
+            print(f"  OK   {tag}")
+        except AssertionError as exc:
+            print(f"  FAIL {tag}: {exc}")
+            failures.append(tag)
+
+    # Stride-isolation proof (the invariant that actually matters -- see
+    # the design writeup): a side's own boundary-touching kernel (the one
+    # whose length -- ki_near/ki_far -- the transpose needs to know) is
+    # the ONLY thing that ever crosses the boundary. Changing how the
+    # *rest* of the other side splits into further internal kernels (same
+    # boundary-chunk length, different kernel count/structure beyond it)
+    # must not change this side's own kernels, nor the transpose's own
+    # near-facing or far-facing shape, at all.
+    n_a_test, n_b_test = 32, 60
+    n_test = n_a_test * n_b_test
+    chunks_a_fixed = ((4, 4, 2),)
+    far_2kernel = ((6,), (10,))   # Far1: 1 kernel, radix 10
+    far_3kernel = ((6,), (2,), (5,))  # same boundary chunk (6,), rest split differently
+
+    def build(chunks_a, chunks_b):
+        near = _build_batched_side(
+            chunks_a, batch_count=n_b_test, full_length=n_test, inverse=False,
+            simd_lanes=8, kernel_name_prefix="SI_Near", is_far_side=False,
+            spad_capacity_bytes=None, plain_boundary=True,
+        )
+        far = _build_batched_side(
+            chunks_b, batch_count=n_a_test, full_length=n_test, inverse=False,
+            simd_lanes=8, kernel_name_prefix="SI_Far", is_far_side=True,
+            spad_capacity_bytes=None, plain_boundary=True,
+        )
+        return near, far
+
+    near_2, far_2 = build(chunks_a_fixed, far_2kernel)
+    near_3, far_3 = build(chunks_a_fixed, far_3kernel)
+
+    near_unaffected = (
+        len(near_2) == len(near_3)
+        and all(
+            k2.input_mapping == k3.input_mapping and k2.output_mapping == k3.output_mapping
+            and k2.length == k3.length
+            for k2, k3 in zip(near_2, near_3)
+        )
+    )
+    tag = "near side's own kernels byte-identical when far's non-boundary kernel count/structure changes"
+    print(f"  {'OK  ' if near_unaffected else 'FAIL'} {tag}")
+    if not near_unaffected:
+        failures.append(tag)
+
+    boundary_kernel_same = (
+        far_2[0].length == far_3[0].length
+        and far_2[0].input_mapping == far_3[0].input_mapping
+    )
+    far_genuinely_differs = len(far_2) != len(far_3)
+    tag = "far side's own boundary-touching kernel unaffected (while far itself genuinely differs elsewhere)"
+    ok = boundary_kernel_same and far_genuinely_differs
+    print(f"  {'OK  ' if ok else 'FAIL'} {tag}")
+    if not ok:
+        failures.append(tag)
+
+    # Old flat PEELED chain vs. new balanced-transpose plan, same N and
+    # budget -- stride/cost comparison (printed, not claimed as measured
+    # performance -- see the design writeup).
+    print()
+    print("  Old flat chain vs. new balanced-transpose plan (N=960, budget=256):")
+    flat_chunks = factor_into_kernel_chunks(960, scratchpad_byte_budget=256)
+    flat_plan = make_multi_kernel_plan(flat_chunks)
+    flat_summary = summarize_multi_kernel_plan(flat_plan)
+    print(
+        f"    flat:      {len(flat_plan.kernels)} FFT kernels, 0 transpose kernels, "
+        f"max effective stride={max_effective_stride(flat_summary)}"
+    )
+    bt_plan = make_balanced_transpose_plan(960, scratchpad_byte_budget=256)
+    near_max = max(max(k.input_mapping.elem_stride, k.output_mapping.elem_stride) for k in bt_plan.kernels_near)
+    far_max = max(max(k.input_mapping.elem_stride, k.output_mapping.elem_stride) for k in bt_plan.kernels_far)
+    print(
+        f"    balanced:  {len(bt_plan.kernels_near) + len(bt_plan.kernels_far)} FFT kernels, "
+        f"1 transpose kernel, max FFT-side effective stride={max(near_max, far_max)} "
+        f"(near max={near_max}, far max={far_max}), transpose load/store elem_stride=1"
+    )
+    print()
+    summarize_balanced_transpose_plan(bt_plan)
+    print()
 
     if failures:
         raise AssertionError(f"{len(failures)} plan(s) failed: {failures}")

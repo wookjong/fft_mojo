@@ -83,10 +83,17 @@ def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
     kernel's own new digit needs to land *between* them, so recovering
     each part costs one `%` and one `//` here.
 
-    PEELED is the other (see AddressMappingKind.PEELED): the
+    PEELED is another (see AddressMappingKind.PEELED): the
     not-yet-transformed remainder itself splits further, into the *next*
     kernel's own digit (pulled to the innermost slot) and everything after
     it -- two `%`/`//` pairs instead of SPLIT's one.
+
+    CROSSED (see AddressMappingKind.CROSSED, make_balanced_plan) splits
+    `global_uthread_id()` into a batch index (`% batch_count`) and this
+    side's own already-transformed digits (`// batch_count`), placing the
+    batch index outermost instead of innermost -- the opposite of SPLIT/
+    PEELED, since this is a transpose to the *other* side's benefit, not
+    a within-side digit rotation.
     """
     if mapping.kind == AddressMappingKind.SPLIT:
         a = mapping.row_stride  # == elem_stride too, by AddressMapping.split
@@ -102,6 +109,13 @@ def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
             f"(((global_uthread_id() // {a}) % {tail}) * {a * kernel_length * k_next}) + "
             f"((global_uthread_id() % {a}) * {k_next}) + "
             f"((global_uthread_id() // {a}) // {tail})"
+        )
+    if mapping.kind == AddressMappingKind.CROSSED:
+        batch_count = mapping.peel_a
+        side_length = mapping.row_stride
+        return (
+            f"(global_uthread_id() % {batch_count}) * {side_length} + "
+            f"(global_uthread_id() // {batch_count})"
         )
     expr = f"global_uthread_id() * {mapping.row_stride}"
     if mapping.base:
