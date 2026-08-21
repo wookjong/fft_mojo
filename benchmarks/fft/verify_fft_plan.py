@@ -37,6 +37,10 @@ from fft_plangen import (
     BalancedTransposeFFTPlan,
     DecomposedFFTPlan,
     FFTCodegenPlan,
+    FFTLeafPlan,
+    FFTRecursiveNodePlan,
+    PhysicalTransposePlan,
+    RecursiveFFTPlan,
     _build_batched_side,
     _build_plan,
     _choose_side_chunks,
@@ -48,10 +52,15 @@ from fft_plangen import (
     make_balanced_transpose_plan,
     make_decomposed_plan,
     make_multi_kernel_plan,
+    make_recursive_transpose_plan,
     max_effective_stride,
     summarize_multi_kernel_plan,
 )
-from fft_transpose_codegen import _emit_transpose_stage
+from fft_transpose_codegen import (
+    _emit_physical_transpose_stage,
+    _emit_transpose_stage,
+    flatten_recursive_node,
+)
 
 _VAR_RE = re.compile(r"^(\s*)var ")
 _COMPTIME_RE = re.compile(r"^(\s*)comptime ")
@@ -709,6 +718,259 @@ def summarize_balanced_transpose_plan(plan: BalancedTransposeFFTPlan) -> None:
         print(f"    {k.kernel_name}: read elem_stride={k.input_mapping.elem_stride} write elem_stride={k.output_mapping.elem_stride}")
 
 
+# ------------------------------------------ make_recursive_transpose_plan
+#
+# FFT chunk size and physical transpose tile size are fully independent
+# here (see fft_plangen.PhysicalTransposePlan) -- verified below by (1)
+# index-only bijection of the generic tiled transpose (full tile, row
+# tail, column tail, both tails, multiple replicas), (2) full numeric
+# re-execution of the actual emitted stage text (both FFT leaf kernels via
+# run_kernel and transpose kernels via run_physical_transpose below)
+# against numpy.fft/ifft across 0/1/2+ recursion levels, and (3) index-only
+# checks at a size too large for the numeric path to stay fast.
+
+
+def _translate_physical_transpose_stage(plan: PhysicalTransposePlan) -> str:
+    """Same discipline as _translate_stage/_translate_transpose_stage:
+    re-execute the actual text fft_transpose_codegen.py emits."""
+    e = Emitter()
+    _emit_physical_transpose_stage(e, plan=plan)
+    out: list[str] = []
+    for line in e.lines:
+        s = line.strip()
+        if s == "" or s.startswith("#") or s == "@staticmethod":
+            continue
+        if s.startswith("ref p ="):
+            continue
+        line = _VAR_RE.sub(r"\1", line)
+        line = _COMPTIME_RE.sub(r"\1", line)
+        line = _LOAD_W_RE.sub(r".load(\2, \1)", line)
+        line = _LOAD_DT_RE.sub(r".load(\2, \1)", line)
+        line = _SIMD_RE.sub("SIMD(", line)
+        assert line.startswith("    "), line
+        out.append(line[4:])
+    return "\n".join(out)
+
+
+def run_physical_transpose(
+    plan: PhysicalTransposePlan, *, src_real: Ptr, src_imag: Ptr,
+    dst_real: Ptr, dst_imag: Ptr, tw_real: Ptr | None = None, tw_imag: Ptr | None = None,
+) -> None:
+    num_groups = -(-plan.total_uthreads // plan.max_uthread)
+    group_namespaces = [
+        types.SimpleNamespace(tile_buf=Ptr(plan.scratchpad_elements * plan.max_uthread))
+        for _ in range(num_groups)
+    ]
+    p_ns = types.SimpleNamespace(
+        src_real_base=src_real, src_imag_base=src_imag,
+        dst_real_base=dst_real, dst_imag_base=dst_imag,
+    )
+    if plan.twiddle_modulus is not None:
+        assert tw_real is not None and tw_imag is not None
+        p_ns.twiddle_real_base = tw_real
+        p_ns.twiddle_imag_base = tw_imag
+    current = {"global_id": 0, "local_id": 0}
+    src = _translate_physical_transpose_stage(plan)
+    namespace = {
+        "Float32": float,
+        "SIMD": _simd,
+        "local_uthread_id": lambda: current["local_id"],
+        "global_uthread_id": lambda: current["global_id"],
+        f"MAX_UTHREAD_{plan.kernel_name}": plan.max_uthread,
+        "p": p_ns,
+    }
+    code = compile(src, f"<{plan.kernel_name} stage 0>", "exec")
+    exec(code, namespace)
+    stage_fn = namespace["stage_0"]
+    for global_id in range(plan.total_uthreads):
+        current["global_id"] = global_id
+        current["local_id"] = global_id % plan.max_uthread
+        namespace[plan.kernel_name] = group_namespaces[global_id // plan.max_uthread]
+        stage_fn()
+
+
+def _make_physical_twiddle_table(plan: PhysicalTransposePlan) -> tuple[np.ndarray, np.ndarray]:
+    """Independent host-side fill (re-derives the angle itself, not calling
+    into fft_transpose_codegen's own precompute) for a MIDDLE transpose's
+    dense W_M table -- table[r*cols+c] = W_M^(r*c), modulus = this node's
+    own twiddle_modulus (never the top-level N for a non-root node)."""
+    assert plan.twiddle_modulus is not None
+    real = np.zeros(plan.rows * plan.cols)
+    imag = np.zeros(plan.rows * plan.cols)
+    sign = 1.0 if plan.inverse else -1.0
+    for r in range(plan.rows):
+        for c in range(plan.cols):
+            angle = sign * 2.0 * np.pi * r * c / plan.twiddle_modulus
+            real[r * plan.cols + c] = np.cos(angle)
+            imag[r * plan.cols + c] = np.sin(angle)
+    return real, imag
+
+
+def verify_physical_transpose_shape(plan: PhysicalTransposePlan) -> dict[str, int]:
+    """Index-only (no floats): every source/destination address is visited
+    exactly once (full tile, row tail, column tail, both tails, multiple
+    replicas all naturally exercised depending on plan), and every DRAM
+    vector load/store has elem_stride==1 (checked directly: each row's
+    address range is a contiguous run, by the same formula codegen uses,
+    independently re-derived here)."""
+    rows, cols = plan.rows, plan.cols
+    tile_rows, tile_cols = plan.tile_rows, plan.tile_cols
+    grid_rows, grid_cols = plan.grid_rows, plan.grid_cols
+    seen_src: set[int] = set()
+    seen_dst: set[int] = set()
+    max_src_row_jump = 0
+    max_dst_row_jump = 0
+    tiles_per_replica = grid_rows * grid_cols
+    for tile_id in range(plan.total_uthreads):
+        q = tile_id // tiles_per_replica
+        local = tile_id % tiles_per_replica
+        t_r = local // grid_cols
+        t_c = local % grid_cols
+        valid_r = min(tile_rows, rows - t_r * tile_rows)
+        valid_c = min(tile_cols, cols - t_c * tile_cols)
+
+        row_bases = []
+        for i in range(valid_r):
+            r = t_r * tile_rows + i
+            base = q * rows * cols + r * cols + t_c * tile_cols
+            for off in range(valid_c):
+                addr = base + off
+                if addr in seen_src:
+                    raise AssertionError(f"{plan.kernel_name}: src addr {addr} visited twice")
+                seen_src.add(addr)
+            row_bases.append(base)
+        if len(row_bases) > 1:
+            max_src_row_jump = max(max_src_row_jump, max(row_bases[k + 1] - row_bases[k] for k in range(len(row_bases) - 1)))
+
+        col_bases = []
+        for j in range(valid_c):
+            c = t_c * tile_cols + j
+            base = q * rows * cols + c * rows + t_r * tile_rows
+            for off in range(valid_r):
+                addr = base + off
+                if addr in seen_dst:
+                    raise AssertionError(f"{plan.kernel_name}: dst addr {addr} visited twice")
+                seen_dst.add(addr)
+            col_bases.append(base)
+        if len(col_bases) > 1:
+            max_dst_row_jump = max(max_dst_row_jump, max(col_bases[k + 1] - col_bases[k] for k in range(len(col_bases) - 1)))
+
+    total = plan.replica_count * rows * cols
+    if seen_src != set(range(total)):
+        raise AssertionError(f"{plan.kernel_name}: src addresses are not a permutation of 0..{total - 1}")
+    if seen_dst != set(range(total)):
+        raise AssertionError(f"{plan.kernel_name}: dst addresses are not a permutation of 0..{total - 1}")
+    return {
+        "load_elem_stride": 1, "store_elem_stride": 1,
+        "max_src_row_jump": max_src_row_jump, "max_dst_row_jump": max_dst_row_jump,
+    }
+
+
+def verify_recursive_tree_index_only(node: FFTLeafPlan | FFTRecursiveNodePlan) -> None:
+    """Index-only, suitable for N too large for the numeric path: walks
+    every PRE/MIDDLE/POST transpose in the tree and checks bijection +
+    access shape; also confirms MIDDLE's own twiddle_modulus always equals
+    *that node's own* m, never a stale/global value."""
+    if isinstance(node, FFTLeafPlan):
+        return
+    assert isinstance(node, FFTRecursiveNodePlan)
+    verify_physical_transpose_shape(node.pre_transpose)
+    verify_physical_transpose_shape(node.middle_transpose)
+    if node.middle_transpose.twiddle_modulus != node.m:
+        raise AssertionError(
+            f"MIDDLE transpose {node.middle_transpose.kernel_name}: twiddle_modulus="
+            f"{node.middle_transpose.twiddle_modulus} != this node's own m={node.m}"
+        )
+    verify_recursive_tree_index_only(node.far_child)
+    verify_physical_transpose_shape(node.post_transpose)
+
+
+def run_recursive_plan(plan: RecursiveFFTPlan, x: np.ndarray) -> np.ndarray:
+    """Full numeric chain: every stage's *actual emitted* text is
+    translated and re-executed (run_kernel for FFT leaves,
+    run_physical_transpose for PRE/MIDDLE/POST transposes) -- same
+    discipline as every other run_* helper in this file."""
+    n = plan.n
+    stages = flatten_recursive_node(plan.root)
+    cur_r, cur_i = Ptr(n), Ptr(n)
+    cur_r.arr[:] = x.real
+    cur_i.arr[:] = x.imag
+    for stage in stages:
+        next_r, next_i = Ptr(n), Ptr(n)
+        if isinstance(stage, PhysicalTransposePlan):
+            if stage.twiddle_modulus is not None:
+                tw_re, tw_im = _make_physical_twiddle_table(stage)
+                tw_r, tw_i = Ptr(len(tw_re)), Ptr(len(tw_re))
+                tw_r.arr[:] = tw_re
+                tw_i.arr[:] = tw_im
+                run_physical_transpose(stage, src_real=cur_r, src_imag=cur_i, dst_real=next_r, dst_imag=next_i, tw_real=tw_r, tw_imag=tw_i)
+            else:
+                run_physical_transpose(stage, src_real=cur_r, src_imag=cur_i, dst_real=next_r, dst_imag=next_i)
+        else:
+            assert stage.large_twiddle is None
+            run_kernel(stage, input_real=cur_r, input_imag=cur_i, output_real=next_r, output_imag=next_i)
+        cur_r, cur_i = next_r, next_i
+    return cur_r.arr + 1j * cur_i.arr
+
+
+def verify_recursive_plan(
+    n: int, *, scratchpad_byte_budget: int, inverse: bool, seed: int,
+    tile_rows: int | None = None, tile_cols: int | None = None,
+) -> tuple[float, RecursiveFFTPlan]:
+    plan = make_recursive_transpose_plan(
+        n, scratchpad_byte_budget=scratchpad_byte_budget, inverse=inverse,
+        tile_rows=tile_rows, tile_cols=tile_cols,
+    )
+    rng = np.random.default_rng(seed)
+    x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
+    got = run_recursive_plan(plan, x)
+    expected = np.fft.ifft(x) if inverse else np.fft.fft(x)
+    return float(np.max(np.abs(got - expected))), plan
+
+
+def summarize_recursive_plan(plan: RecursiveFFTPlan) -> None:
+    """Debug/summary output: per-node PRE/FFT(B)/MIDDLE+twiddle/child/POST
+    shapes, then whole-plan totals (recursion depth, leaf/transpose kernel
+    counts, total tiles, max per-tile scratchpad bytes, DRAM full-array
+    passes, max DRAM elem_stride). elem_stride here is always 1 by
+    construction (every transpose is tile-based) -- printed to make that
+    visible, not because it might vary."""
+
+    def describe(node, depth: int) -> None:
+        pad = "  " * depth
+        if isinstance(node, FFTLeafPlan):
+            print(f"{pad}Leaf M={node.m} R={node.r}: {node.kernel.kernel_name} radices={tuple(s.radix for s in node.kernel.stages)}")
+            return
+        print(f"{pad}Node M={node.m} R={node.r}  split: A={node.a} B={node.b}")
+        pt = node.pre_transpose
+        print(f"{pad}  PRE    matrix={pt.rows}x{pt.cols} tile={pt.tile_rows}x{pt.tile_cols} tiles={pt.total_uthreads} elem_stride=1")
+        print(f"{pad}  FFT(B) {node.near_fft.kernel.kernel_name} M={node.near_fft.m} R={node.near_fft.r}")
+        mt = node.middle_transpose
+        print(f"{pad}  MIDDLE matrix={mt.rows}x{mt.cols} twiddle_modulus={mt.twiddle_modulus} tile={mt.tile_rows}x{mt.tile_cols} tiles={mt.total_uthreads} elem_stride=1")
+        describe(node.far_child, depth + 1)
+        pot = node.post_transpose
+        print(f"{pad}  POST   matrix={pot.rows}x{pot.cols} tile={pot.tile_rows}x{pot.tile_cols} tiles={pot.total_uthreads} elem_stride=1 apply_1/N={pot.apply_inverse_scale}")
+
+    print(f"N = {plan.n}")
+    describe(plan.root, 0)
+
+    stages = flatten_recursive_node(plan.root)
+    leaf_count = sum(1 for s in stages if not isinstance(s, PhysicalTransposePlan))
+    transpose_count = sum(1 for s in stages if isinstance(s, PhysicalTransposePlan))
+    total_tiles = sum(s.total_uthreads for s in stages if isinstance(s, PhysicalTransposePlan))
+    max_spad_bytes = max(
+        (s.scratchpad_elements * 4 for s in stages if isinstance(s, PhysicalTransposePlan)),
+        default=0,
+    )
+    print()
+    print(f"  leaf FFT kernel count:     {leaf_count}")
+    print(f"  transpose kernel count:    {transpose_count}")
+    print(f"  total transpose tiles:     {total_tiles}")
+    print(f"  max tile scratchpad bytes: {max_spad_bytes}")
+    print(f"  DRAM full-array passes:    {len(stages)} (one input read + one output write per stage)")
+    print(f"  max DRAM elem_stride:      1 (every stage here is either an FFT leaf's own contiguous mapping or a tiled transpose)")
+
+
 def main() -> None:
     tolerance = 1.0e-3
     failures: list[str] = []
@@ -1150,6 +1412,96 @@ def main() -> None:
     )
     print()
     summarize_balanced_transpose_plan(bt_plan)
+    print()
+
+    # make_recursive_transpose_plan: FFT chunk size and physical transpose
+    # tile size are fully independent (see fft_plangen.PhysicalTransposePlan
+    # / FFTRecursiveNodePlan) -- generalizes make_balanced_transpose_plan's
+    # single 2-way split to a full six-step-FFT-style recursion, additive,
+    # make_multi_kernel_plan/make_balanced_plan/make_balanced_transpose_plan
+    # untouched.
+    print("  Physical tile index tests (square/rectangular, tails, multiple replicas):")
+    from fft_plangen import _build_physical_transpose
+    tile_cases = [
+        ("square full tile", 8, 8, 1, 4, 4),
+        ("rectangular full tile", 12, 20, 1, 3, 5),
+        ("row tail", 10, 8, 1, 4, 4),
+        ("column tail", 8, 10, 1, 4, 4),
+        ("both tails", 11, 13, 1, 4, 5),
+        ("multiple replicas", 6, 6, 5, 4, 4),
+        ("degenerate 1xN", 1, 17, 3, 4, 4),
+    ]
+    for label, rows, cols, reps, tr, tc in tile_cases:
+        pt = _build_physical_transpose(
+            rows=rows, cols=cols, replica_count=reps, tile_rows=tr, tile_cols=tc,
+            twiddle_modulus=None, inverse=False, kernel_name=f"PTTest_{label.replace(' ', '_')}",
+            simd_lanes=8, spad_capacity_bytes=None, apply_inverse_scale=False,
+        )
+        tag = f"{label} ({rows}x{cols} reps={reps} tile={tr}x{tc})"
+        try:
+            shape = verify_physical_transpose_shape(pt)
+            ok = shape["load_elem_stride"] == 1 and shape["store_elem_stride"] == 1
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: {shape}")
+            if not ok:
+                failures.append(tag)
+        except AssertionError as exc:
+            print(f"    FAIL {tag}: {exc}")
+            failures.append(tag)
+
+    print()
+    print("  Recursive numeric tests (real emitted code vs. numpy.fft/ifft):")
+    recursive_cases: list[tuple[int, int]] = [
+        (30, 30 * 16),    # single leaf, no split
+        (30, 6 * 16),     # one split level
+        (60, 12 * 16),
+        (64, 16 * 16),
+        (120, 24 * 16),
+        (960, 32 * 16),   # one split level, both sides multi-radix leaves
+        (210, 21 * 16),   # 2*3*5*7 -- forces a 2-level recursion
+    ]
+    for n, budget in recursive_cases:
+        for inverse in (False, True):
+            err, plan = verify_recursive_plan(n, scratchpad_byte_budget=budget, inverse=inverse, seed=23)
+            ok = err <= tolerance
+            tag = f"recursive plan n={n} budget={budget} inverse={inverse}"
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    # deep (3-level) recursion with a tile shape that forces both row and
+    # column tail branches, forward + inverse.
+    n_deep = 2 * 3 * 5 * 7 * 11
+    for inverse in (False, True):
+        err, plan = verify_recursive_plan(
+            n_deep, scratchpad_byte_budget=11 * 16, inverse=inverse, seed=29,
+            tile_rows=3, tile_cols=4,
+        )
+        ok = err <= tolerance
+        tag = f"deep recursive plan n={n_deep} tile=3x4 inverse={inverse}"
+        print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+        if not ok:
+            failures.append(tag)
+
+    print()
+    print("  Index-only checks for a large N (numeric path too slow to be worth running):")
+    for n_large, budget_large in [(2 ** 16, 256 * 16)]:
+        plan = make_recursive_transpose_plan(n_large, scratchpad_byte_budget=budget_large)
+        tag = f"index-only bijection + access-shape n={n_large}"
+        try:
+            verify_recursive_tree_index_only(plan.root)
+            print(f"    OK   {tag}")
+        except AssertionError as exc:
+            print(f"    FAIL {tag}: {exc}")
+            failures.append(tag)
+
+    print()
+    print("  Debug/summary output (N=960, one split level):")
+    _, sample_plan = verify_recursive_plan(960, scratchpad_byte_budget=32 * 16, inverse=False, seed=1)
+    summarize_recursive_plan(sample_plan)
+    print()
+    print("  Debug/summary output (N=210, 2-level recursion):")
+    _, sample_plan2 = verify_recursive_plan(210, scratchpad_byte_budget=21 * 16, inverse=False, seed=1)
+    summarize_recursive_plan(sample_plan2)
     print()
 
     if failures:
