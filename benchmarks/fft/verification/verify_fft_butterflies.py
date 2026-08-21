@@ -1,11 +1,19 @@
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
 
-from fft_butterflies import SUPPORTED_RADICES, emit_butterfly
-from fft_codegen import generate_fft_kernel, generate_multi_kernel_fft_kernels
-from fft_plangen import factor_into_kernel_chunks, make_444_plan, make_multi_kernel_plan
+# benchmarks/fft/ (this file's grandparent) holds the role directories
+# (planning/, codegen/, verification/) as importable packages -- see
+# verify_fft_plan.py's own bootstrap comment for why only entry-point
+# scripts need this.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from codegen.fft_butterflies import SUPPORTED_RADICES, emit_butterfly
+from codegen.fft_codegen import generate_fft_kernel, generate_multi_kernel_fft_kernels
+from planning.fft_plan_simple import make_444_plan
+from planning.fft_plan_multikernel import factor_into_kernel_chunks, make_multi_kernel_plan
 
 _VAR_RE = re.compile(r"^(\s*)var ")
 

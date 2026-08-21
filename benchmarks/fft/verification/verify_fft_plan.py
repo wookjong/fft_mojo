@@ -1,0 +1,588 @@
+"""End-to-end numeric verification of every FFT planning strategy in this
+package -- the top-level test runner. Each strategy's own verify/summarize
+functions live in its own verify_fft_*.py module (mirroring fft_plan_*.py's
+own split); this file just imports all of them and runs the full sweep.
+
+verify_fft_butterflies.py checks each radix's butterfly in isolation. This
+checks the rest of what fft_codegen.py/fft_transpose_codegen.py emit around
+it -- load/store addressing, per-stage twiddle, scratchpad ping-pong, large-
+twiddle tables, and every transpose boundary -- by actually re-executing the
+emitted stage text (see verify_fft_harness.py), not by reimplementing the
+algorithm a second time.
+"""
+
+import sys
+from math import prod
+from pathlib import Path
+
+# benchmarks/fft/ (this file's grandparent) holds the role directories
+# (planning/, codegen/, verification/) as importable packages, plus
+# fft_butterflies.py itself at the top level -- add it to sys.path so this
+# script runs directly (`python3 verification/verify_fft_plan.py`) without
+# needing `python3 -m`. Everything this file imports afterward inherits
+# the same sys.path (it's process-global), so only entry-point scripts
+# (this one and verify_fft_butterflies.py) need this.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from codegen.fft_butterflies import SUPPORTED_RADICES
+from codegen.fft_codegen import _mapping_base_expr
+from planning.fft_plan_core import _prime_factors_supported, max_effective_stride, summarize_multi_kernel_plan
+from planning.fft_plan_simple import make_decomposed_plan
+from planning.fft_plan_multikernel import _choose_side_chunks, factor_into_kernel_chunks, make_multi_kernel_plan
+from planning.fft_plan_balanced import _build_batched_side, make_balanced_plan, make_balanced_transpose_plan
+from planning.fft_plan_recursive import _build_physical_transpose, make_recursive_transpose_plan
+from verification.verify_fft_simple import verify_decomposed_plan, verify_radix_sequence_plan
+from verification.verify_fft_multikernel import verify_boundary_consistency, verify_layout_bijection, verify_multi_kernel_plan
+from verification.verify_fft_balanced import (
+    summarize_balanced_transpose_plan,
+    verify_balanced_plan,
+    verify_balanced_transpose_plan,
+    verify_transpose_bijection,
+)
+from verification.verify_fft_recursive import (
+    summarize_recursive_plan,
+    verify_physical_transpose_shape,
+    verify_recursive_plan,
+    verify_recursive_tree_index_only,
+)
+
+
+def main() -> None:
+    tolerance = 1.0e-3
+    failures: list[str] = []
+
+    # Stage 2: layouts_for_radices generalizes beyond one hardcoded radix
+    # sequence -- single-stage sweep over every supported radix, same-radix
+    # towers of depth 2 and up, and several mixed-radix orderings, forward
+    # and inverse. Depth-4/5 same-radix and (3,4,2)/(5,2,3) were rejected by
+    # an earlier _check_layouts constraint (simd_lanes % twiddle_lane_divisor
+    # == 0); that constraint's own "confirmed real" check was standing on a
+    # bug in this harness (numpy aliasing on `var or0 = rr0`-style copies,
+    # fixed below as SimdVec) and didn't survive re-verification, so it was
+    # removed -- these are ordinary passing cases now, not a special
+    # "expected rejection" list. `(4, 4, 4)` covers what a dedicated
+    # verify_single_kernel_plan(make_444_plan(...)) used to check on its
+    # own (removed as redundant -- see verify_fft_simple.py's own docstring).
+    radix_sequence_cases: list[tuple[int, ...]] = (
+        [(r,) for r in sorted(SUPPORTED_RADICES)]
+        + [(2, 2), (3, 3), (4, 4), (4, 4, 4), (2, 2, 2, 2, 2), (2,) * 8, (3,) * 5]
+        + [
+            (2, 3, 4), (4, 3, 2), (7, 3), (9, 2), (13, 2), (11, 3),
+            (4, 4, 4, 4), (3, 4, 2), (5, 2, 3),
+        ]
+    )
+    for radices in radix_sequence_cases:
+        for inverse in (False, True):
+            err = verify_radix_sequence_plan(radices, inverse=inverse, seed=1)
+            tag = f"radix sequence {radices} inverse={inverse}"
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    for inverse in (False, True):
+        err = verify_decomposed_plan(n0=16, n1=16, inverse=inverse, seed=3 if inverse else 2)
+        tag = f"decomposed N=256 (16x16, large twiddle + transpose) inverse={inverse}"
+        ok = err <= tolerance
+        print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+        if not ok:
+            failures.append(tag)
+
+    # Stage 3: multi-kernel chaining where each kernel is itself multi-stage
+    # (not just one bare radix, like make_decomposed_plan) -- the actual new
+    # capability. M=1 chunking sanity, then M=2 with a multi-stage kernel on
+    # each side, chained through DRAM + the large-twiddle table.
+    #
+    # Stage 4: M>=3 -- every non-last kernel's output uses AddressMappingKind
+    # .PEELED (a middle kernel's uthread id mixes an already-transformed
+    # digit run with a not-yet-transformed remainder) and a LargeTwiddlePlan scoped to
+    # a smaller angle modulus but the *same* full_length-sized, a-fold
+    # redundant table (see LargeTwiddlePlan/make_multi_kernel_plan). Up to
+    # N=1155 (11x7x3x5) and depth-5 all-radix-2 chains.
+    multi_kernel_cases: list[tuple[int, tuple[tuple[int, ...], ...]]] = [
+        (64, ((4, 4, 4),)),  # M=1, matches make_444_plan's shape
+        (192, ((4, 4, 4), (3,))),  # M=2, multi-stage kernel0, bare kernel1
+        (40, ((2, 2, 2), (5,))),  # M=2, multi-stage kernel0, small N
+        (48, ((4, 4), (3,))),  # M=2, both sides different depths
+        (24, ((2,), (3,), (4,))),  # M=3, bare radices
+        (105, ((7,), (3,), (5,))),  # M=3, all odd primes
+        (960, ((4, 4, 4), (3,), (5,))),  # M=3, multi-stage first kernel
+        (768, ((2, 2, 2, 2, 2), (3,), (2, 2, 2))),  # M=3, multi-stage on both ends
+        (32, ((2,), (2,), (2,), (2,), (2,))),  # M=5, chained one radix-2 at a time
+        (1155, ((11,), (7,), (3,), (5,))),  # M=4, largest N tested
+    ]
+
+    # Layout-only pass first (section 13.A): pure index arithmetic, no FFT
+    # math, over the same case matrix above -- single segment, 2, 3+,
+    # balanced/unbalanced, power-of-two and mixed radix. Confirms every
+    # kernel boundary's AddressMapping is a genuine permutation before any
+    # floating-point check runs on it.
+    for n, chunks in multi_kernel_cases:
+        # Both checks below only read this plan (never mutate it), so one
+        # make_multi_kernel_plan build serves both instead of each check
+        # rebuilding its own copy.
+        shared_plan = make_multi_kernel_plan(chunks)
+
+        tag = f"layout bijection N={n} chunks={chunks}"
+        try:
+            verify_layout_bijection(chunks, plan=shared_plan)
+            print(f"  OK   {tag}")
+        except AssertionError as exc:
+            print(f"  FAIL {tag}: {exc}")
+            failures.append(tag)
+
+        tag = f"boundary consistency N={n} chunks={chunks}"
+        try:
+            verify_boundary_consistency(chunks, plan=shared_plan)
+            print(f"  OK   {tag}")
+        except AssertionError as exc:
+            print(f"  FAIL {tag}: {exc}")
+            failures.append(tag)
+
+    for n, chunks in multi_kernel_cases:
+        for inverse in (False, True):
+            err = verify_multi_kernel_plan(chunks, inverse=inverse, seed=1)
+            tag = f"multi-kernel N={n} chunks={chunks} inverse={inverse}"
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    # max_uthread/total_uthreads split: force kernel0 of ((4,4,4),(3,))
+    # (N=192, kernel0 length=64, total_uthreads=3, 1024 bytes/uthread) into
+    # more than one NDP-unit group -- 1024 packs exactly one uthread per
+    # group (3 groups, each with its own scratchpad instance), 2048 packs
+    # two (an uneven 2+1 split, exercising a partial last group). Both
+    # must match the single-group (no cap) result from multi_kernel_cases
+    # above, proving run_kernel's per-group scratchpad isolation is real
+    # (see FFTCodegenPlan's docstring / run_kernel).
+    for cap in (1024, 2048):
+        for inverse in (False, True):
+            err = verify_multi_kernel_plan(
+                ((4, 4, 4), (3,)), inverse=inverse, seed=1, spad_capacity_bytes=cap
+            )
+            tag = f"multi-kernel N=192 spad_capacity_bytes={cap} inverse={inverse}"
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    # Same, but more than two per group and more than two groups: N=960's
+    # kernel0 (length=64, total_uthreads=15) at 4096 bytes -> 4 uthreads/
+    # group -> 4 groups sized 4,4,4,3 (three full, one partial).
+    for inverse in (False, True):
+        err = verify_multi_kernel_plan(
+            ((4, 4, 4), (3,), (5,)), inverse=inverse, seed=9, spad_capacity_bytes=4096
+        )
+        tag = f"multi-kernel N=960 spad_capacity_bytes=4096 (4 uthreads/group, 4 groups) inverse={inverse}"
+        ok = err <= tolerance
+        print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+        if not ok:
+            failures.append(tag)
+
+    # factor_into_kernel_chunks: a DP over factor-list split points that
+    # minimizes max(read_stride, write_stride) across every kernel in the
+    # chain -- not just the last kernel's write side (see its docstring for
+    # why that's not the whole story: a kernel's *read* stride is
+    # n // its-own-length, large whenever that one kernel is small,
+    # regardless of chain position). Three properties checked directly:
+    # (1) max_effective_stride is monotonically non-increasing as the
+    # budget grows, (2) it is strictly better than a write-only,
+    # back-to-front packing at the same budget (reference implementation
+    # below, kept local to this test purely for the comparison -- not a
+    # second copy of production logic), and (3) whatever chunking comes out
+    # still produces a numerically correct FFT and a genuine address
+    # permutation.
+    def _write_stride_only_packing(n: int, budget: int) -> tuple[tuple[int, ...], ...]:
+        """The previous session's algorithm, reference-implemented here only
+        to demonstrate the improvement -- see the docstring's N=960 example."""
+        factors = _prime_factors_supported(n)
+        cap = budget // 16
+        chunks: list[tuple[int, ...]] = []
+        current: list[int] = []
+        product = 1
+        for f in reversed(factors):
+            if current and product * f > cap:
+                chunks.append(tuple(reversed(current)))
+                current, product = [], 1
+            current.append(f)
+            product *= f
+        if current:
+            chunks.append(tuple(reversed(current)))
+        return tuple(reversed(chunks))
+
+    n = 960
+    budgets = (256, 512, 1024, 16384, 65536)
+    prev_max_stride = None
+    for budget in budgets:
+        chunks = factor_into_kernel_chunks(n, scratchpad_byte_budget=budget)
+        summary = summarize_multi_kernel_plan(make_multi_kernel_plan(chunks))
+        max_stride = max_effective_stride(summary)
+
+        if prev_max_stride is not None and max_stride > prev_max_stride:
+            failures.append(
+                f"factor_into_kernel_chunks budget={budget}: max_effective_stride="
+                f"{max_stride} regressed above the previous (smaller) budget's "
+                f"{prev_max_stride} -- should be non-increasing in budget"
+            )
+        prev_max_stride = max_stride
+
+        old_chunks = _write_stride_only_packing(n, budget)
+        old_summary = summarize_multi_kernel_plan(make_multi_kernel_plan(old_chunks))
+        old_max_stride = max_effective_stride(old_summary)
+        if old_chunks != chunks and old_max_stride < max_stride:
+            failures.append(
+                f"factor_into_kernel_chunks budget={budget}: max_effective_stride="
+                f"{max_stride} is worse than write-only packing's {old_max_stride} "
+                f"(chunks={chunks} vs {old_chunks})"
+            )
+        print(
+            f"  ---  N={n} budget={budget}: new chunks={chunks} "
+            f"max_effective_stride={max_stride}  |  old (write-only) "
+            f"chunks={old_chunks} max_effective_stride={old_max_stride}"
+        )
+
+        verify_layout_bijection(chunks)
+
+        for inverse in (False, True):
+            err = verify_multi_kernel_plan(chunks, inverse=inverse, seed=5)
+            tag = (
+                f"factor_into_kernel_chunks N={n} budget={budget} "
+                f"chunks={chunks} (max_effective_stride={max_stride}) inverse={inverse}"
+            )
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    # Scalar-vs-vector DRAM access (section 15): PEELED's whole point is
+    # that every kernel after the first gets a real vector read instead
+    # of a forced scalar one -- check the plan's own mappings directly
+    # (mode is scalar iff elem_stride != 1, the same test
+    # AddressMappingKind.STRIDED's docstring and _make_load/_make_store
+    # already use), not just assert an aggregate count.
+    print()
+    print("  Scalar vs. vector DRAM read/write per kernel (N=960, "
+          "chunks=((4,4,4),(3,),(5,))):")
+    demo_plan = make_multi_kernel_plan(((4, 4, 4), (3,), (5,)))
+    vector_reads = 0
+    for kernel in demo_plan.kernels:
+        read_mode = "vector" if kernel.input_mapping.elem_stride == 1 else "scalar"
+        write_mode = "vector" if kernel.output_mapping.elem_stride == 1 else "scalar"
+        if read_mode == "vector":
+            vector_reads += 1
+        print(f"    {kernel.kernel_name}: read={read_mode:6s} write={write_mode:6s}")
+    tag = "scalar-to-vector read conversion (N=960, 3-kernel chain)"
+    # Old (SPLIT) scheme: every kernel's read is scalar, always -- 0 of 3.
+    # New (PEELED): every kernel after the first is vector -- 2 of 3.
+    if vector_reads == 2:
+        print(f"  OK   {tag}: {vector_reads}/3 kernels now read via vector "
+              f"load (was 0/3 under the old SPLIT-based scheme)")
+    else:
+        print(f"  FAIL {tag}: expected 2/3 kernels reading via vector load, "
+              f"got {vector_reads}/3")
+        failures.append(tag)
+
+    # make_balanced_plan: N = N_A*N_B, each side its own PEELED chain,
+    # joined by one AddressMappingKind.CROSSED transpose. Two things to
+    # check: (1) numeric correctness, single-kernel-per-side through to
+    # both-sides-multi-kernel, forward and inverse; (2) that
+    # _choose_side_chunks (the batch-aware chunk selection) actually beats
+    # naively feeding factor_into_kernel_chunks's own, batch-*unaware*
+    # chunking into the same side -- checked directly, not assumed: an
+    # interim version of this used plain factor_into_kernel_chunks per
+    # side and got nowhere near sqrt(N) whenever a side needed more than
+    # one internal kernel (N=960*960 gave max_effective_stride=30720, no
+    # better than one flat chain over the same N).
+    balanced_cases: list[
+        tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...]]
+    ] = [
+        (((16,),), ((16,),)),  # single kernel per side -- checkpoint vs. make_decomposed_plan
+        (((17,),), ((13,),)),  # single kernel per side, unequal, both odd primes
+        (((4, 4, 4),), ((3,), (5,))),  # side A one fused kernel, side B a 2-kernel chain
+        (((2,), (2,), (2,)), ((3,), (5,))),  # both sides multi-kernel chains
+    ]
+    for chunks_A, chunks_B in balanced_cases:
+        n_a = prod(prod(c) for c in chunks_A)
+        n_b = prod(prod(c) for c in chunks_B)
+        for inverse in (False, True):
+            err = verify_balanced_plan(chunks_A, chunks_B, inverse=inverse, seed=13)
+            tag = f"balanced plan N_A={n_a}({chunks_A}) N_B={n_b}({chunks_B}) inverse={inverse}"
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    # Checkpoint: single kernel per side must compute the *same physical
+    # addresses* as make_decomposed_plan's own (untouched, SPLIT/
+    # contiguous-based) formulas -- AddressMappingKind.CROSSED's docstring
+    # claims it degenerates to CONTIGUOUS there. Compare the actual
+    # address expressions (what codegen emits), not raw dataclass equality:
+    # CROSSED's degenerate case computes the identical row*16+elem formula
+    # but keeps the CROSSED *kind* tag (with an unused peel_a=batch_count
+    # left set) rather than relabeling itself CONTIGUOUS, so a field-for-
+    # field dataclass comparison flags a difference that isn't there --
+    # caught by trying that first and getting a false failure here.
+    decomposed = make_decomposed_plan(16, 16)
+    balanced = make_balanced_plan(((16,),), ((16,),))
+    pairs = [
+        (decomposed.kernel0.input_mapping, balanced.kernels[0].input_mapping, 16),
+        (decomposed.kernel0.output_mapping, balanced.kernels[0].output_mapping, 16),
+        (decomposed.kernel1.input_mapping, balanced.kernels[1].input_mapping, 16),
+        (decomposed.kernel1.output_mapping, balanced.kernels[1].output_mapping, 16),
+    ]
+    tag = "make_balanced_plan((16,),(16,)) computes the same addresses as make_decomposed_plan(16,16)"
+    same = True
+    for d_map, b_map, length in pairs:
+        for row in range(4):
+            d_base = eval(_mapping_base_expr(d_map, length), {"global_uthread_id": lambda r=row: r})
+            b_base = eval(_mapping_base_expr(b_map, length), {"global_uthread_id": lambda r=row: r})
+            if d_base != b_base or d_map.elem_stride != b_map.elem_stride:
+                same = False
+    print(f"  {'OK  ' if same else 'FAIL'} {tag}")
+    if not same:
+        failures.append(tag)
+
+    # Batch-aware vs. batch-unaware chunk selection, measured directly.
+    factors_960 = _prime_factors_supported(960)
+    aware = _choose_side_chunks(factors_960, batch_count=960, scratchpad_byte_budget=256)
+    unaware = factor_into_kernel_chunks(960, scratchpad_byte_budget=256)
+
+    def kernel0_batched_read(chunks: tuple[tuple[int, ...], ...], batch_count: int) -> int:
+        k0 = prod(chunks[0])
+        return (960 // k0) * batch_count
+
+    aware_read = kernel0_batched_read(aware, 960)
+    unaware_read = kernel0_batched_read(unaware, 960)
+    print(
+        f"  ---  side length 960, batch_count 960: batch-aware chunks={aware} "
+        f"kernel0 batched read={aware_read}  |  batch-unaware chunks={unaware} "
+        f"kernel0 batched read={unaware_read}"
+    )
+    tag = "batch-aware chunk selection beats batch-unaware at the same budget"
+    if aware_read <= unaware_read:
+        print(f"  OK   {tag}")
+    else:
+        print(f"  FAIL {tag}: aware={aware_read} unaware={unaware_read}")
+        failures.append(tag)
+
+    # make_balanced_transpose_plan: N=N_A*N_B, each side its own PEELED
+    # chain, joined by a standalone tiled transpose+twiddle kernel instead
+    # of make_balanced_plan's scalar CROSSED-fused write -- see
+    # fft_plangen.FFTTransposePlan and fft_transpose_codegen.py.
+    #
+    # Baseline checkpoints (17x17, 8x8, 4x8 -- what make_decomposed_plan
+    # already covers directly), one-side-bare/other-multi-kernel and the
+    # reverse, both-sides-multi-kernel, and a representative large-N case
+    # forcing multi-kernel on both sides.
+    transpose_cases: list[tuple[int, int]] = [
+        (17, 17), (8, 8), (4, 8), (16, 16), (13, 17), (64, 15), (8, 15), (32, 30),
+    ]
+    for n_a, n_b in transpose_cases:
+        n = n_a * n_b
+        # small enough budget to sometimes force multi-kernel sides, large
+        # enough to always be plannable for these n's own factor sizes.
+        budget = 256 if n >= 512 else 4096
+        for inverse in (False, True):
+            err, plan = verify_balanced_transpose_plan(
+                n, scratchpad_byte_budget=budget, inverse=inverse, seed=17
+            )
+            tag = (
+                f"balanced-transpose plan n={n} N_A={plan.transpose.n_a} "
+                f"N_B={plan.transpose.n_b} inverse={inverse}"
+            )
+            ok = err <= tolerance
+            print(f"  {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    # Index-only bijection + DRAM access-shape checks (no floats) for the
+    # transpose boundary itself, across the same case list.
+    for n_a, n_b in transpose_cases:
+        n = n_a * n_b
+        budget = 256 if n >= 512 else 4096
+        plan = make_balanced_transpose_plan(n, scratchpad_byte_budget=budget)
+        tag = f"transpose bijection n={n} N_A={n_a} N_B={n_b}"
+        try:
+            verify_transpose_bijection(plan.transpose)
+            print(f"  OK   {tag}")
+        except AssertionError as exc:
+            print(f"  FAIL {tag}: {exc}")
+            failures.append(tag)
+
+    # Stride-isolation proof (the invariant that actually matters -- see
+    # the design writeup): a side's own boundary-touching kernel (the one
+    # whose length -- ki_near/ki_far -- the transpose needs to know) is
+    # the ONLY thing that ever crosses the boundary. Changing how the
+    # *rest* of the other side splits into further internal kernels (same
+    # boundary-chunk length, different kernel count/structure beyond it)
+    # must not change this side's own kernels, nor the transpose's own
+    # near-facing or far-facing shape, at all.
+    n_a_test, n_b_test = 32, 60
+    n_test = n_a_test * n_b_test
+    chunks_a_fixed = ((4, 4, 2),)
+    far_2kernel = ((6,), (10,))   # Far1: 1 kernel, radix 10
+    far_3kernel = ((6,), (2,), (5,))  # same boundary chunk (6,), rest split differently
+
+    def build(chunks_a, chunks_b):
+        near = _build_batched_side(
+            chunks_a, batch_count=n_b_test, full_length=n_test, inverse=False,
+            simd_lanes=8, kernel_name_prefix="SI_Near", is_far_side=False,
+            spad_capacity_bytes=None, plain_boundary=True,
+        )
+        far = _build_batched_side(
+            chunks_b, batch_count=n_a_test, full_length=n_test, inverse=False,
+            simd_lanes=8, kernel_name_prefix="SI_Far", is_far_side=True,
+            spad_capacity_bytes=None, plain_boundary=True,
+        )
+        return near, far
+
+    near_2, far_2 = build(chunks_a_fixed, far_2kernel)
+    near_3, far_3 = build(chunks_a_fixed, far_3kernel)
+
+    near_unaffected = (
+        len(near_2) == len(near_3)
+        and all(
+            k2.input_mapping == k3.input_mapping and k2.output_mapping == k3.output_mapping
+            and k2.length == k3.length
+            for k2, k3 in zip(near_2, near_3)
+        )
+    )
+    tag = "near side's own kernels byte-identical when far's non-boundary kernel count/structure changes"
+    print(f"  {'OK  ' if near_unaffected else 'FAIL'} {tag}")
+    if not near_unaffected:
+        failures.append(tag)
+
+    boundary_kernel_same = (
+        far_2[0].length == far_3[0].length
+        and far_2[0].input_mapping == far_3[0].input_mapping
+    )
+    far_genuinely_differs = len(far_2) != len(far_3)
+    tag = "far side's own boundary-touching kernel unaffected (while far itself genuinely differs elsewhere)"
+    ok = boundary_kernel_same and far_genuinely_differs
+    print(f"  {'OK  ' if ok else 'FAIL'} {tag}")
+    if not ok:
+        failures.append(tag)
+
+    # Old flat PEELED chain vs. new balanced-transpose plan, same N and
+    # budget -- stride/cost comparison (printed, not claimed as measured
+    # performance -- see the design writeup).
+    print()
+    print("  Old flat chain vs. new balanced-transpose plan (N=960, budget=256):")
+    flat_chunks = factor_into_kernel_chunks(960, scratchpad_byte_budget=256)
+    flat_plan = make_multi_kernel_plan(flat_chunks)
+    flat_summary = summarize_multi_kernel_plan(flat_plan)
+    print(
+        f"    flat:      {len(flat_plan.kernels)} FFT kernels, 0 transpose kernels, "
+        f"max effective stride={max_effective_stride(flat_summary)}"
+    )
+    bt_plan = make_balanced_transpose_plan(960, scratchpad_byte_budget=256)
+    near_max = max(max(k.input_mapping.elem_stride, k.output_mapping.elem_stride) for k in bt_plan.kernels_near)
+    far_max = max(max(k.input_mapping.elem_stride, k.output_mapping.elem_stride) for k in bt_plan.kernels_far)
+    print(
+        f"    balanced:  {len(bt_plan.kernels_near) + len(bt_plan.kernels_far)} FFT kernels, "
+        f"1 transpose kernel, max FFT-side effective stride={max(near_max, far_max)} "
+        f"(near max={near_max}, far max={far_max}), transpose load/store elem_stride=1"
+    )
+    print()
+    summarize_balanced_transpose_plan(bt_plan)
+    print()
+
+    # make_recursive_transpose_plan: FFT chunk size and physical transpose
+    # tile size are fully independent (see fft_plangen.PhysicalTransposePlan
+    # / FFTRecursiveNodePlan) -- generalizes make_balanced_transpose_plan's
+    # single 2-way split to a full six-step-FFT-style recursion, additive,
+    # make_multi_kernel_plan/make_balanced_plan/make_balanced_transpose_plan
+    # untouched.
+    print("  Physical tile index tests (square/rectangular, tails, multiple replicas):")
+    tile_cases = [
+        ("square full tile", 8, 8, 1, 4, 4),
+        ("rectangular full tile", 12, 20, 1, 3, 5),
+        ("row tail", 10, 8, 1, 4, 4),
+        ("column tail", 8, 10, 1, 4, 4),
+        ("both tails", 11, 13, 1, 4, 5),
+        ("multiple replicas", 6, 6, 5, 4, 4),
+        ("degenerate 1xN", 1, 17, 3, 4, 4),
+    ]
+    for label, rows, cols, reps, tr, tc in tile_cases:
+        pt = _build_physical_transpose(
+            rows=rows, cols=cols, replica_count=reps, tile_rows=tr, tile_cols=tc,
+            twiddle_modulus=None, inverse=False, kernel_name=f"PTTest_{label.replace(' ', '_')}",
+            simd_lanes=8, spad_capacity_bytes=None, apply_inverse_scale=False,
+        )
+        tag = f"{label} ({rows}x{cols} reps={reps} tile={tr}x{tc})"
+        try:
+            shape = verify_physical_transpose_shape(pt)
+            ok = shape["load_elem_stride"] == 1 and shape["store_elem_stride"] == 1
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: {shape}")
+            if not ok:
+                failures.append(tag)
+        except AssertionError as exc:
+            print(f"    FAIL {tag}: {exc}")
+            failures.append(tag)
+
+    print()
+    print("  Recursive numeric tests (real emitted code vs. numpy.fft/ifft):")
+    recursive_cases: list[tuple[int, int]] = [
+        (30, 30 * 16),    # single leaf, no split
+        (30, 6 * 16),     # one split level
+        (60, 12 * 16),
+        (64, 16 * 16),
+        (120, 24 * 16),
+        (960, 32 * 16),   # one split level, both sides multi-radix leaves
+        (210, 21 * 16),   # 2*3*5*7 -- forces a 2-level recursion
+    ]
+    for n, budget in recursive_cases:
+        for inverse in (False, True):
+            err, plan = verify_recursive_plan(n, scratchpad_byte_budget=budget, inverse=inverse, seed=23)
+            ok = err <= tolerance
+            tag = f"recursive plan n={n} budget={budget} inverse={inverse}"
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    # deep (3-level) recursion with a tile shape that forces both row and
+    # column tail branches, forward + inverse.
+    n_deep = 2 * 3 * 5 * 7 * 11
+    for inverse in (False, True):
+        err, plan = verify_recursive_plan(
+            n_deep, scratchpad_byte_budget=11 * 16, inverse=inverse, seed=29,
+            tile_rows=3, tile_cols=4,
+        )
+        ok = err <= tolerance
+        tag = f"deep recursive plan n={n_deep} tile=3x4 inverse={inverse}"
+        print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+        if not ok:
+            failures.append(tag)
+
+    print()
+    print("  Index-only checks for a large N (numeric path too slow to be worth running):")
+    for n_large, budget_large in [(2 ** 16, 256 * 16)]:
+        plan = make_recursive_transpose_plan(n_large, scratchpad_byte_budget=budget_large)
+        tag = f"index-only bijection + access-shape n={n_large}"
+        try:
+            verify_recursive_tree_index_only(plan.root)
+            print(f"    OK   {tag}")
+        except AssertionError as exc:
+            print(f"    FAIL {tag}: {exc}")
+            failures.append(tag)
+
+    print()
+    print("  Debug/summary output (N=960, one split level):")
+    # Both plans below were already fully numerically verified in the
+    # recursive_cases loop above -- build them directly here rather than
+    # re-running verify_recursive_plan's own (expensive) full numeric
+    # chain a second time just to get a plan object to summarize.
+    summarize_recursive_plan(make_recursive_transpose_plan(960, scratchpad_byte_budget=32 * 16))
+    print()
+    print("  Debug/summary output (N=210, 2-level recursion):")
+    summarize_recursive_plan(make_recursive_transpose_plan(210, scratchpad_byte_budget=21 * 16))
+    print()
+
+    if failures:
+        raise AssertionError(f"{len(failures)} plan(s) failed: {failures}")
+    print("[verify] all FFT plans matched numpy's FFT")
+
+
+if __name__ == "__main__":
+    main()

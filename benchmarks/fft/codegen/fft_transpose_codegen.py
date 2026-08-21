@@ -39,27 +39,23 @@ elem_stride=1, never a scalar gather) but not necessarily hardware-vector-
 width-aligned when ki_near/ki_far don't happen to match VECTOR_WIDTH.
 """
 
-from fft_codegen import (
+from codegen.fft_codegen import (
     Emitter,
     _emit_kernel,
     _emit_large_twiddle_table_precompute,
     _emit_prelude,
     _emit_reference_check,
     _f32,
+    _spad,
 )
-from fft_plangen import (
-    BalancedTransposeFFTPlan,
+from planning.fft_plan_balanced import BalancedTransposeFFTPlan, FFTTransposePlan
+from planning.fft_plan_recursive import (
     FFTLeafPlan,
     FFTNode,
     FFTRecursiveNodePlan,
-    FFTTransposePlan,
     PhysicalTransposePlan,
     RecursiveFFTPlan,
 )
-
-
-def _spad(kernel_name: str, name: str) -> str:
-    return f"{kernel_name}.{name}"
 
 
 def _emit_transpose_params_struct(e: Emitter, *, plan: FFTTransposePlan) -> None:
@@ -146,23 +142,35 @@ def _emit_transpose_stage(e: Emitter, *, plan: FFTTransposePlan) -> None:
         e.add()
 
 
-def _emit_transpose_task_struct(e: Emitter, *, plan: FFTTransposePlan) -> None:
-    e.add(f"struct {plan.kernel_name}(NDPTask):")
-    e.add(f"    comptime Params = {plan.kernel_name}Params")
+def _emit_tiled_kernel_task_struct(
+    e: Emitter, *, kernel_name: str, scratchpad_elements: int, max_uthread: int, emit_stage
+) -> None:
+    """Shared struct shape for both transpose plan types: one scratchpad
+    tile buffer, one stage, one device_main -- the two callers
+    (_emit_transpose_task_struct / _emit_physical_transpose_task_struct)
+    differ only in which stage-emitter they pass."""
+    e.add(f"struct {kernel_name}(NDPTask):")
+    e.add(f"    comptime Params = {kernel_name}Params")
     e.add()
     e.add(
-        f'    comptime tile_buf = scratchpad[{plan.scratchpad_elements * plan.max_uthread}, '
-        f'Float32, name="{plan.kernel_name.lower()}_tile"]()'
+        f'    comptime tile_buf = scratchpad[{scratchpad_elements * max_uthread}, '
+        f'Float32, name="{kernel_name.lower()}_tile"]()'
     )
     e.add()
-
-    _emit_transpose_stage(e, plan=plan)
-
+    emit_stage(e)
     e.add("    @staticmethod")
     e.add("    def device_main():")
-    e.add(f"        launch_parallel[{plan.kernel_name}.stage_0]()")
+    e.add(f"        launch_parallel[{kernel_name}.stage_0]()")
     e.add()
     e.add()
+
+
+def _emit_transpose_task_struct(e: Emitter, *, plan: FFTTransposePlan) -> None:
+    _emit_tiled_kernel_task_struct(
+        e, kernel_name=plan.kernel_name, scratchpad_elements=plan.scratchpad_elements,
+        max_uthread=plan.max_uthread,
+        emit_stage=lambda e: _emit_transpose_stage(e, plan=plan),
+    )
 
 
 def _emit_transpose_kernel(e: Emitter, *, plan: FFTTransposePlan) -> None:
@@ -483,68 +491,40 @@ def _emit_physical_transpose_stage(e: Emitter, *, plan: PhysicalTransposePlan) -
         _emit_tile_transfer(e, plan=plan, valid_rows=tile_rows, valid_cols=tile_cols)
         return
 
+    # One branch per (row-tail?, col-tail?) combination that can actually
+    # occur for this plan, most-specific first, ending in the fast (no
+    # tail) path -- each branch is a runtime condition (None for the
+    # trailing `else`) paired with the plan-time-constant (valid_rows,
+    # valid_cols) that branch should use, per fft_transpose_codegen.py's
+    # own indented-body idiom.
     row_tail_cond = f"t_r == {grid_rows - 1}"
     col_tail_cond = f"t_c == {grid_cols - 1}"
+    branches: list[tuple[str | None, int, int]] = []
     if has_row_tail and has_col_tail:
-        e.add(f"        if {row_tail_cond} and {col_tail_cond}:")
+        branches.append((f"{row_tail_cond} and {col_tail_cond}", tail_valid_rows, tail_valid_cols))
+    if has_row_tail:
+        branches.append((row_tail_cond, tail_valid_rows, tile_cols))
+    if has_col_tail:
+        branches.append((col_tail_cond, tile_rows, tail_valid_cols))
+    branches.append((None, tile_rows, tile_cols))
+
+    for i, (cond, valid_rows, valid_cols) in enumerate(branches):
+        if cond is None:
+            e.add("        else:")
+        else:
+            e.add(f"        {'if' if i == 0 else 'elif'} {cond}:")
         sub = Emitter()
-        _emit_tile_transfer(sub, plan=plan, valid_rows=tail_valid_rows, valid_cols=tail_valid_cols)
-        for line in sub.lines:
-            e.add("    " + line if line else "")
-        e.add(f"        elif {row_tail_cond}:")
-        sub = Emitter()
-        _emit_tile_transfer(sub, plan=plan, valid_rows=tail_valid_rows, valid_cols=tile_cols)
-        for line in sub.lines:
-            e.add("    " + line if line else "")
-        e.add(f"        elif {col_tail_cond}:")
-        sub = Emitter()
-        _emit_tile_transfer(sub, plan=plan, valid_rows=tile_rows, valid_cols=tail_valid_cols)
-        for line in sub.lines:
-            e.add("    " + line if line else "")
-        e.add("        else:")
-        sub = Emitter()
-        _emit_tile_transfer(sub, plan=plan, valid_rows=tile_rows, valid_cols=tile_cols)
-        for line in sub.lines:
-            e.add("    " + line if line else "")
-    elif has_row_tail:
-        e.add(f"        if {row_tail_cond}:")
-        sub = Emitter()
-        _emit_tile_transfer(sub, plan=plan, valid_rows=tail_valid_rows, valid_cols=tile_cols)
-        for line in sub.lines:
-            e.add("    " + line if line else "")
-        e.add("        else:")
-        sub = Emitter()
-        _emit_tile_transfer(sub, plan=plan, valid_rows=tile_rows, valid_cols=tile_cols)
-        for line in sub.lines:
-            e.add("    " + line if line else "")
-    else:  # has_col_tail only
-        e.add(f"        if {col_tail_cond}:")
-        sub = Emitter()
-        _emit_tile_transfer(sub, plan=plan, valid_rows=tile_rows, valid_cols=tail_valid_cols)
-        for line in sub.lines:
-            e.add("    " + line if line else "")
-        e.add("        else:")
-        sub = Emitter()
-        _emit_tile_transfer(sub, plan=plan, valid_rows=tile_rows, valid_cols=tile_cols)
+        _emit_tile_transfer(sub, plan=plan, valid_rows=valid_rows, valid_cols=valid_cols)
         for line in sub.lines:
             e.add("    " + line if line else "")
 
 
 def _emit_physical_transpose_task_struct(e: Emitter, *, plan: PhysicalTransposePlan) -> None:
-    e.add(f"struct {plan.kernel_name}(NDPTask):")
-    e.add(f"    comptime Params = {plan.kernel_name}Params")
-    e.add()
-    e.add(
-        f'    comptime tile_buf = scratchpad[{plan.scratchpad_elements * plan.max_uthread}, '
-        f'Float32, name="{plan.kernel_name.lower()}_tile"]()'
+    _emit_tiled_kernel_task_struct(
+        e, kernel_name=plan.kernel_name, scratchpad_elements=plan.scratchpad_elements,
+        max_uthread=plan.max_uthread,
+        emit_stage=lambda e: _emit_physical_transpose_stage(e, plan=plan),
     )
-    e.add()
-    _emit_physical_transpose_stage(e, plan=plan)
-    e.add("    @staticmethod")
-    e.add("    def device_main():")
-    e.add(f"        launch_parallel[{plan.kernel_name}.stage_0]()")
-    e.add()
-    e.add()
 
 
 def _emit_physical_transpose_kernel(e: Emitter, *, plan: PhysicalTransposePlan) -> None:
@@ -613,12 +593,38 @@ def generate_recursive_fft_kernels(plan: RecursiveFFTPlan) -> str:
     e.add(f"comptime N = {plan.n}")
     e.add()
 
+    # Section banners are purely cosmetic (never parsed back by
+    # verify_fft_recursive.py -- that re-executes each stage's own
+    # _emit_physical_transpose_stage/_emit_stage text directly, never this
+    # function's overall output) -- here only so the generated file's own
+    # shape (every kernel implementation, then the one host driver that
+    # chains them) is visible at a glance. Each stage's kernel_name prefix
+    # (Pre/Near/Mid/Leaf/Post -- see fft_plan_recursive.py's own naming)
+    # already encodes its role in the PRE -> FFT(B) -> MIDDLE -> recurse ->
+    # POST sequence.
+    e.add("# " + "=" * 76)
+    e.add("# KERNEL IMPLEMENTATIONS")
+    e.add("# " + "=" * 76)
+    e.add(f"# {len(stages)} stage(s), chained through DRAM in this order:")
+    for i, stage in enumerate(stages):
+        kind = "tiled transpose" if isinstance(stage, PhysicalTransposePlan) else "FFT"
+        e.add(f"#   {i}: {stage.kernel_name} ({kind})")
+    e.add()
+
     twiddle_names: dict[int, tuple[str, str]] = {}
     for i, stage in enumerate(stages):
+        e.add(f"# ---- stage {i}: {stage.kernel_name} ----")
         if isinstance(stage, PhysicalTransposePlan):
             _emit_physical_transpose_kernel(e, plan=stage)
         else:
             _emit_kernel(e, plan=stage)
+
+    e.add("# " + "=" * 76)
+    e.add("# HOST MAIN -- allocates DRAM buffers/twiddle tables, launches every")
+    e.add("# kernel above in order, checks the result against an independent")
+    e.add("# reference DFT computed at runtime.")
+    e.add("# " + "=" * 76)
+    e.add()
 
     host = plan.host
     m = len(stages)

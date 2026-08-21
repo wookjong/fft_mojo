@@ -25,11 +25,10 @@ one combined main() -- there is no separate "transpose kernel" abstraction
 to emit.
 """
 
-from fft_butterflies import emit_butterfly
-from fft_plangen import (
+from codegen.fft_butterflies import emit_butterfly
+from planning.fft_plan_core import (
     AddressMapping,
     AddressMappingKind,
-    DecomposedFFTPlan,
     FFTCodegenPlan,
     FFTStagePlan,
     LargeTwiddlePlan,
@@ -40,6 +39,7 @@ from fft_plangen import (
     StorePlan,
     TwiddlePlan,
 )
+from planning.fft_plan_simple import DecomposedFFTPlan
 
 
 class Emitter:
@@ -76,14 +76,17 @@ def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
     codegen computes at runtime for those two kinds: no per-access division
     or modulo.
 
-    SPLIT is one exception (a middle kernel's output in an M>=3
-    multi-kernel chain -- see AddressMappingKind.SPLIT / make_multi_kernel_plan):
-    `global_uthread_id()` mixes an already-transformed digit run (weight
-    < a) with a not-yet-transformed remainder (weight >= a), and this
-    kernel's own new digit needs to land *between* them, so recovering
-    each part costs one `%` and one `//` here.
+    SPLIT was the original scheme for a middle kernel's output in an M>=3
+    multi-kernel chain (see AddressMappingKind.SPLIT): `global_uthread_id()`
+    mixes an already-transformed digit run (weight < a) with a
+    not-yet-transformed remainder (weight >= a), and the kernel's own new
+    digit needs to land *between* them -- one `%` and one `//`. No planner
+    in this module constructs a SPLIT mapping any more (make_multi_kernel_plan
+    uses PEELED instead, below, for every M>=3 chain); the kind and this
+    description are kept only because PEELED's own derivation is explained
+    by contrast to it.
 
-    PEELED is another (see AddressMappingKind.PEELED): the
+    PEELED (see AddressMappingKind.PEELED) is SPLIT's replacement: the
     not-yet-transformed remainder itself splits further, into the *next*
     kernel's own digit (pulled to the innermost slot) and everything after
     it -- two `%`/`//` pairs instead of SPLIT's one.
@@ -95,12 +98,6 @@ def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
     PEELED, since this is a transpose to the *other* side's benefit, not
     a within-side digit rotation.
     """
-    if mapping.kind == AddressMappingKind.SPLIT:
-        a = mapping.row_stride  # == elem_stride too, by AddressMapping.split
-        return (
-            f"(global_uthread_id() % {a}) + "
-            f"(global_uthread_id() // {a}) * {a * kernel_length}"
-        )
     if mapping.kind == AddressMappingKind.PEELED:
         a = mapping.peel_a
         k_next = mapping.peel_k_next
