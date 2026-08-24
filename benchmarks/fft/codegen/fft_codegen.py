@@ -120,30 +120,36 @@ def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
     return expr
 
 
-def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan) -> None:
+def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan, width: int) -> None:
+    """`width` is this (possibly chunked -- see `_chunk_batch`) load's own
+    SIMD width, not necessarily `plan.simd_lanes`: the plan's `simd_lanes`
+    is the hardware launch granule (ties to `PooledRange`/`VECTOR_WIDTH`,
+    see `_chunk_batch`'s own docstring) and must not drive how wide a
+    vector instruction the kernel body actually emits.
+    """
     j = load.operand
 
     if load.mode == "vector":
         assert load.base_offset is not None
         if load.source == "input":
             e.add(
-                f"        var rr{j} = p.input_real_base.load[width={plan.simd_lanes}]("
+                f"        var rr{j} = p.input_real_base.load[width={width}]("
                 f"in_batch_base + {load.base_offset})"
             )
             e.add(
-                f"        var ii{j} = p.input_imag_base.load[width={plan.simd_lanes}]("
+                f"        var ii{j} = p.input_imag_base.load[width={width}]("
                 f"in_batch_base + {load.base_offset})"
             )
         else:
             assert load.buffer_name is not None
             buf = _spad(plan.kernel_name, load.buffer_name)
             e.add(
-                f"        var rr{j} = {buf}.load[DType.float32, {plan.simd_lanes}]("
+                f"        var rr{j} = {buf}.load[DType.float32, {width}]("
                 f"spad_base + {load.base_offset})"
             )
             e.add(
-                f"        var ii{j} = {buf}.load[DType.float32, {plan.simd_lanes}]("
-                f"spad_base + N + {load.base_offset})"
+                f"        var ii{j} = {buf}.load[DType.float32, {width}]("
+                f"spad_base + {plan.length} + {load.base_offset})"
             )
         return
 
@@ -175,28 +181,28 @@ def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan) -> None:
             )
             e.add(
                 f"        var {ii_scalar} = {buf}.load[DType.float32, 1]("
-                f"spad_base + N + {offset})"
+                f"spad_base + {plan.length} + {offset})"
             )
         rr_lanes.append(f"{rr_scalar}[0]")
         ii_lanes.append(f"{ii_scalar}[0]")
     e.add(
-        f"        var rr{j} = SIMD[DType.float32, {plan.simd_lanes}](" + ", ".join(rr_lanes) + ")"
+        f"        var rr{j} = SIMD[DType.float32, {width}](" + ", ".join(rr_lanes) + ")"
     )
     e.add(
-        f"        var ii{j} = SIMD[DType.float32, {plan.simd_lanes}](" + ", ".join(ii_lanes) + ")"
+        f"        var ii{j} = SIMD[DType.float32, {width}](" + ", ".join(ii_lanes) + ")"
     )
 
 
 def _emit_twiddle(
-    e: Emitter, *, output: int, twiddle: TwiddlePlan, simd_lanes: int
+    e: Emitter, *, output: int, twiddle: TwiddlePlan, width: int
 ) -> None:
     e.add(
-        f"        var twr{output} = SIMD[DType.float32, {simd_lanes}]("
+        f"        var twr{output} = SIMD[DType.float32, {width}]("
         + ", ".join(_f32(v) for v in twiddle.real)
         + ")"
     )
     e.add(
-        f"        var twi{output} = SIMD[DType.float32, {simd_lanes}]("
+        f"        var twi{output} = SIMD[DType.float32, {width}]("
         + ", ".join(_f32(v) for v in twiddle.imag)
         + ")"
     )
@@ -213,7 +219,7 @@ def _emit_twiddle(
 
 
 def _emit_large_twiddle(
-    e: Emitter, *, output: int, store: StorePlan, simd_lanes: int
+    e: Emitter, *, output: int, store: StorePlan, width: int
 ) -> None:
     """Runtime cross-block twiddle, fused into this output's own store path
     (see fft_plangen.LargeTwiddlePlan): multiply by a value fetched from the
@@ -227,11 +233,11 @@ def _emit_large_twiddle(
     if store.mode == "vector":
         assert store.base_offset is not None
         e.add(
-            f"        var ltwr{k} = p.large_twiddle_real_base.load[width={simd_lanes}]("
+            f"        var ltwr{k} = p.large_twiddle_real_base.load[width={width}]("
             f"out_batch_base + {store.base_offset})"
         )
         e.add(
-            f"        var ltwi{k} = p.large_twiddle_imag_base.load[width={simd_lanes}]("
+            f"        var ltwi{k} = p.large_twiddle_imag_base.load[width={width}]("
             f"out_batch_base + {store.base_offset})"
         )
     else:
@@ -254,14 +260,14 @@ def _emit_large_twiddle(
         # they are padded with the neutral rotation (1, 0) rather than
         # fetched -- same convention fft_plangen._make_twiddle uses for a
         # partial SIMD batch's compile-time twiddle.
-        pad = simd_lanes - len(rr_lanes)
+        pad = width - len(rr_lanes)
         rr_lanes += ["Float32(1)"] * pad
         ii_lanes += ["Float32(0)"] * pad
         e.add(
-            f"        var ltwr{k} = SIMD[DType.float32, {simd_lanes}](" + ", ".join(rr_lanes) + ")"
+            f"        var ltwr{k} = SIMD[DType.float32, {width}](" + ", ".join(rr_lanes) + ")"
         )
         e.add(
-            f"        var ltwi{k} = SIMD[DType.float32, {simd_lanes}](" + ", ".join(ii_lanes) + ")"
+            f"        var ltwi{k} = SIMD[DType.float32, {width}](" + ", ".join(ii_lanes) + ")"
         )
 
     e.add(f"        var ltr{k} = or{k} * ltwr{k} - oi{k} * ltwi{k}")
@@ -291,7 +297,7 @@ def _emit_store(
                 f"        {buf}.store(spad_base + {store.base_offset}, or{output})"
             )
             e.add(
-                f"        {buf}.store(spad_base + N + {store.base_offset}, oi{output})"
+                f"        {buf}.store(spad_base + {plan.length} + {store.base_offset}, oi{output})"
             )
         return
 
@@ -312,18 +318,16 @@ def _emit_store(
                 f"        {buf}.store(spad_base + {offset}, or{output}[{lane}])"
             )
             e.add(
-                f"        {buf}.store(spad_base + N + {offset}, oi{output}[{lane}])"
+                f"        {buf}.store(spad_base + {plan.length} + {offset}, oi{output}[{lane}])"
             )
 
 
 def _emit_output(
-    e: Emitter, *, plan: FFTCodegenPlan, output_plan: OutputPlan
+    e: Emitter, *, plan: FFTCodegenPlan, output_plan: OutputPlan, width: int
 ) -> None:
     k = output_plan.output
     if output_plan.twiddle is not None:
-        _emit_twiddle(
-            e, output=k, twiddle=output_plan.twiddle, simd_lanes=plan.simd_lanes
-        )
+        _emit_twiddle(e, output=k, twiddle=output_plan.twiddle, width=width)
 
     if output_plan.scale is not None:
         scale = _f32(output_plan.scale)
@@ -331,12 +335,116 @@ def _emit_output(
         e.add(f"        oi{k} *= {scale}")
 
     if output_plan.large_twiddle:
-        _emit_large_twiddle(
-            e, output=k, store=output_plan.store, simd_lanes=plan.simd_lanes
-        )
+        _emit_large_twiddle(e, output=k, store=output_plan.store, width=width)
 
     _emit_store(e, plan=plan, output=k, store=output_plan.store)
     e.add()
+
+
+def _chunk_load(load: LoadPlan, offset: int, width: int) -> LoadPlan:
+    if load.mode == "vector":
+        assert load.base_offset is not None
+        return LoadPlan(
+            operand=load.operand,
+            source=load.source,
+            buffer_name=load.buffer_name,
+            mode="vector",
+            base_offset=load.base_offset + offset,
+        )
+    return LoadPlan(
+        operand=load.operand,
+        source=load.source,
+        buffer_name=load.buffer_name,
+        mode="scalar_pack",
+        packed_lane_offsets=load.packed_lane_offsets[offset : offset + width],
+    )
+
+
+def _chunk_twiddle(twiddle: TwiddlePlan | None, offset: int, width: int) -> TwiddlePlan | None:
+    if twiddle is None:
+        return None
+    return TwiddlePlan(
+        real=twiddle.real[offset : offset + width],
+        imag=twiddle.imag[offset : offset + width],
+    )
+
+
+def _chunk_store(store: StorePlan, offset: int, width: int) -> StorePlan:
+    if store.mode == "vector":
+        assert store.base_offset is not None
+        return StorePlan(
+            destination=store.destination,
+            buffer_name=store.buffer_name,
+            mode="vector",
+            base_offset=store.base_offset + offset,
+        )
+    # `lane_offsets` is exactly `valid_lanes` long, which may be shorter
+    # than `plan.simd_lanes` (a tail batch) -- slicing past its end (a
+    # chunk entirely beyond valid_lanes) yields the empty tuple, which is
+    # exactly right: nothing in that chunk is ever written.
+    return StorePlan(
+        destination=store.destination,
+        buffer_name=store.buffer_name,
+        mode="scalar_lanes",
+        lane_offsets=store.lane_offsets[offset : offset + width],
+    )
+
+
+def _chunk_batch(
+    batch: SIMDBatchPlan, *, simd_lanes: int, compute_lanes: int
+) -> list[tuple[int, SIMDBatchPlan]]:
+    """Split one hardware-width (`simd_lanes`) SIMDBatchPlan into one or
+    more smaller `compute_lanes`-wide sub-batches for code emission.
+
+    `simd_lanes` is the plan's launch granule -- it sizes `PooledRange`
+    (see `src/m2ndp.mojo`'s `VECTOR_WIDTH`/`PooledRange.over`) and must
+    stay exactly what the planner decided; nothing here touches offsets,
+    uthread counts, or `plan.simd_lanes` itself. `compute_lanes` only
+    controls how wide a vector *instruction* the kernel body emits to
+    process that one already-decided batch -- e.g. one 8-wide batch becomes
+    two 4-wide chunks instead of one 8-wide (LMUL=2 on this target's
+    128-bit VLEN) operation. A smaller compute width avoids the RVV
+    register-spill/insertelement patterns this target's simulator cannot
+    run (see docs/STATUS.md); it costs nothing else since `emit_butterfly`
+    itself is already width-agnostic (see fft_butterflies.py) and each
+    chunk becomes its own block scope exactly like today's multi-batch case.
+
+    Returns `[(width, chunk), ...]`; `width == simd_lanes` and a single
+    element when `compute_lanes >= simd_lanes` (today's behavior, byte
+    for byte).
+    """
+    if compute_lanes >= simd_lanes:
+        return [(simd_lanes, batch)]
+
+    chunks: list[tuple[int, SIMDBatchPlan]] = []
+    n_chunks = (simd_lanes + compute_lanes - 1) // compute_lanes
+    for c in range(n_chunks):
+        offset = c * compute_lanes
+        width = min(compute_lanes, simd_lanes - offset)
+        loads = tuple(_chunk_load(load, offset, width) for load in batch.loads)
+        outputs = tuple(
+            OutputPlan(
+                output=output_plan.output,
+                twiddle=_chunk_twiddle(output_plan.twiddle, offset, width),
+                scale=output_plan.scale,
+                large_twiddle=output_plan.large_twiddle,
+                store=_chunk_store(output_plan.store, offset, width),
+            )
+            for output_plan in batch.outputs
+        )
+        valid_lanes = max(0, min(width, batch.valid_lanes - offset))
+        chunks.append(
+            (
+                width,
+                SIMDBatchPlan(
+                    batch_id=batch.batch_id,
+                    valid_lanes=valid_lanes,
+                    loads=loads,
+                    outputs=outputs,
+                ),
+            )
+        )
+    return chunks
 
 
 def _emit_batch(
@@ -345,20 +453,21 @@ def _emit_batch(
     plan: FFTCodegenPlan,
     stage: FFTStagePlan,
     batch: SIMDBatchPlan,
+    width: int,
 ) -> None:
     e.add(
         f"        # ===== stage {stage.stage_id}, SIMD batch {batch.batch_id} "
-        f"(valid lanes: {batch.valid_lanes}/{plan.simd_lanes}) ====="
+        f"(valid lanes: {batch.valid_lanes}/{width}) ====="
     )
 
     for load in batch.loads:
-        _emit_load(e, plan=plan, load=load)
+        _emit_load(e, plan=plan, load=load, width=width)
     e.add()
 
     outputs_by_k = {output_plan.output: output_plan for output_plan in batch.outputs}
 
     def on_output(k: int) -> None:
-        _emit_output(e, plan=plan, output_plan=outputs_by_k[k])
+        _emit_output(e, plan=plan, output_plan=outputs_by_k[k], width=width)
 
     emit_butterfly(
         e,
@@ -370,7 +479,9 @@ def _emit_batch(
     e.add()
 
 
-def _emit_stage(e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan) -> None:
+def _emit_stage(
+    e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, compute_lanes: int | None = None
+) -> None:
     is_first = stage.stage_id == 0
     is_last = stage.stage_id == len(plan.stages) - 1
 
@@ -409,17 +520,29 @@ def _emit_stage(e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan) -> Non
     # Each batch's rr{k}/ii{k}/or{k}/oi{k} (and friends) are local to that
     # batch's own butterfly, not threads carried across batches -- but
     # _emit_batch always names them the same way regardless of batch_id, so
-    # a stage with more than one SIMD batch needs each batch in its own
-    # block scope or the second batch's `var rr0` redefines the first's.
+    # a stage with more than one SIMD batch (or, now, more than one
+    # compute-width chunk within a batch -- see _chunk_batch) needs each
+    # piece in its own block scope or the next one's `var rr0` redefines
+    # the previous.
+    pieces: list[tuple[int, SIMDBatchPlan]] = []
     for batch in stage.batches:
-        if len(stage.batches) > 1:
+        pieces.extend(
+            _chunk_batch(
+                batch,
+                simd_lanes=plan.simd_lanes,
+                compute_lanes=compute_lanes if compute_lanes is not None else plan.simd_lanes,
+            )
+        )
+
+    for width, piece in pieces:
+        if len(pieces) > 1:
             sub = Emitter()
-            _emit_batch(sub, plan=plan, stage=stage, batch=batch)
-            e.add(f"        if True:  # batch {batch.batch_id} scope")
+            _emit_batch(sub, plan=plan, stage=stage, batch=piece, width=width)
+            e.add(f"        if True:  # batch {piece.batch_id} scope")
             for line in sub.lines:
                 e.add("    " + line if line else "")
         else:
-            _emit_batch(e, plan=plan, stage=stage, batch=batch)
+            _emit_batch(e, plan=plan, stage=stage, batch=piece, width=width)
 
 
 def _emit_params_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
@@ -436,11 +559,18 @@ def _emit_params_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
     e.add()
 
 
-def _emit_task_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
+def _emit_task_struct(
+    e: Emitter, *, plan: FFTCodegenPlan, compute_lanes: int | None = None
+) -> None:
     """The NDPTask struct: its scratchpad buffers (each uthread's own
     region, sized by scratchpad_uthread_stride -- see module docstring),
     its per-stage kernels, and device_main. Identical in shape whether this
     plan is a whole single-kernel FFT or one half of a decomposed one.
+
+    `compute_lanes`: see `_chunk_batch` -- the SIMD width the emitted
+    arithmetic instructions use, independent of `plan.simd_lanes` (the
+    launch granule). `None` (the default) keeps every stage emitted at
+    `plan.simd_lanes`, unchanged from before this parameter existed.
     """
     e.add(f"struct {plan.kernel_name}(NDPTask):")
     e.add(f"    comptime Params = {plan.kernel_name}Params")
@@ -455,7 +585,7 @@ def _emit_task_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
         e.add()
 
     for stage in plan.stages:
-        _emit_stage(e, plan=plan, stage=stage)
+        _emit_stage(e, plan=plan, stage=stage, compute_lanes=compute_lanes)
 
     e.add("    @staticmethod")
     e.add("    def device_main():")
@@ -465,11 +595,11 @@ def _emit_task_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
     e.add()
 
 
-def _emit_kernel(e: Emitter, *, plan: FFTCodegenPlan) -> None:
+def _emit_kernel(e: Emitter, *, plan: FFTCodegenPlan, compute_lanes: int | None = None) -> None:
     e.add(f"comptime MAX_UTHREAD_{plan.kernel_name} = {plan.max_uthread}")
     e.add()
     _emit_params_struct(e, plan=plan)
-    _emit_task_struct(e, plan=plan)
+    _emit_task_struct(e, plan=plan, compute_lanes=compute_lanes)
 
 
 def _emit_prelude(e: Emitter) -> None:
@@ -555,9 +685,10 @@ def _emit_reference_check(
     e.add(f'    print("[host] {label} verification passed")')
 
 
-def generate_fft_kernel(plan: FFTCodegenPlan) -> str:
+def generate_fft_kernel(plan: FFTCodegenPlan, *, compute_lanes: int | None = None) -> str:
     """Render a single-kernel plan: the whole FFT in one NDPTask, one
-    launch. This function performs no FFT planning.
+    launch. This function performs no FFT planning. `compute_lanes`: see
+    `_chunk_batch`; `None` (the default) keeps today's output unchanged.
     """
     e = Emitter()
     _emit_prelude(e)
@@ -565,7 +696,7 @@ def generate_fft_kernel(plan: FFTCodegenPlan) -> str:
     e.add(f"comptime MAX_UTHREAD_{plan.kernel_name} = {plan.max_uthread}")
     e.add()
     _emit_params_struct(e, plan=plan)
-    _emit_task_struct(e, plan=plan)
+    _emit_task_struct(e, plan=plan, compute_lanes=compute_lanes)
 
     host = plan.host
     e.add("def main() raises:")
@@ -626,13 +757,16 @@ def generate_fft_kernel(plan: FFTCodegenPlan) -> str:
     return e.text()
 
 
-def generate_decomposed_fft_kernels(plan: DecomposedFFTPlan) -> str:
+def generate_decomposed_fft_kernels(
+    plan: DecomposedFFTPlan, *, compute_lanes: int | None = None
+) -> str:
     """Render a decomposed (N = N0*N1) plan: two NDPTask structs, chained
     through DRAM the way two_tasks.mojo chains Scale/AddB -- launched one
     after the other from one host main(), never through a shared
     scratchpad. This function performs no FFT planning: which kernel owns
     which factor, every AddressMapping, and the large-twiddle table shape
-    are already decided in `plan`.
+    are already decided in `plan`. `compute_lanes`: see `_chunk_batch`;
+    `None` (the default) keeps today's output unchanged.
     """
     e = Emitter()
     _emit_prelude(e)
@@ -641,8 +775,8 @@ def generate_decomposed_fft_kernels(plan: DecomposedFFTPlan) -> str:
     e.add(f"comptime N = {plan.n}")
     e.add()
 
-    _emit_kernel(e, plan=plan.kernel0)
-    _emit_kernel(e, plan=plan.kernel1)
+    _emit_kernel(e, plan=plan.kernel0, compute_lanes=compute_lanes)
+    _emit_kernel(e, plan=plan.kernel1, compute_lanes=compute_lanes)
 
     host = plan.host
     k0 = plan.kernel0
@@ -815,7 +949,9 @@ def _emit_large_twiddle_table_precompute(
     e.add()
 
 
-def generate_multi_kernel_fft_kernels(plan: MultiKernelFFTPlan) -> str:
+def generate_multi_kernel_fft_kernels(
+    plan: MultiKernelFFTPlan, *, compute_lanes: int | None = None
+) -> str:
     """Render an M-kernel chained plan (see fft_plangen.make_multi_kernel_plan):
     M NDPTask structs, chained through DRAM one launch after another from
     one host main(), each non-last kernel's own large-twiddle table
@@ -823,7 +959,8 @@ def generate_multi_kernel_fft_kernels(plan: MultiKernelFFTPlan) -> str:
     (exactly M=2, one bare radix per kernel) to any M>=1 and to each
     kernel's own layouts_for_radices multi-stage structure. This function
     performs no FFT planning: every AddressMapping and LargeTwiddlePlan is
-    already decided in `plan`.
+    already decided in `plan`. `compute_lanes`: see `_chunk_batch`; `None`
+    (the default) keeps today's output unchanged.
     """
     e = Emitter()
     _emit_prelude(e)
@@ -831,7 +968,7 @@ def generate_multi_kernel_fft_kernels(plan: MultiKernelFFTPlan) -> str:
     e.add()
 
     for kernel in plan.kernels:
-        _emit_kernel(e, plan=kernel)
+        _emit_kernel(e, plan=kernel, compute_lanes=compute_lanes)
 
     host = plan.host
     m = len(plan.kernels)

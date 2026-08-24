@@ -41,12 +41,22 @@ from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
 from planning.fft_plan_recursive import make_recursive_transpose_plan
 
 
+
+# This target's guaranteed vector register length (+zvl128b, see
+# scripts/build.sh's FEATURES) in Float32 elements: 128 bits / 32 bits.
+# Above this width RVV needs LMUL>1 register grouping, which is exactly
+# what makes a heavily-unrolled kernel spill (see the `compute_lanes`
+# discussion below and docs/STATUS.md).
+_LMUL1_FLOAT32_LANES = 4
+
+
 def make_fft_kernel(
     n: int,
     *,
     inverse: bool = False,
     scratchpad_byte_budget: int = 4096,
     simd_lanes: int = 8,
+    compute_lanes: int | None = None,
     tile_rows: int | None = None,
     tile_cols: int | None = None,
     output_path: str | Path | None = None,
@@ -62,6 +72,22 @@ def make_fft_kernel(
     default `min(simd_lanes, ...)` picked by the planner itself (see
     make_recursive_transpose_plan) -- pass explicitly only to compare
     tile-size choices.
+
+    `simd_lanes` is the hardware launch granule (ties to `PooledRange`/
+    `VECTOR_WIDTH` in src/m2ndp.mojo -- do not change it to tune register
+    pressure, that miscounts how many microthreads get launched and
+    silently produces an all-zero result). `compute_lanes` is the
+    separate, safe knob for that: how wide a vector *instruction* each
+    stage's arithmetic actually emits (see fft_codegen._chunk_batch).
+    Defaults to `min(simd_lanes, 4)` -- this target's LMUL=1 width -- since
+    a full `simd_lanes=8` butterfly, fully unrolled the way this generator
+    always renders one, needs more RVV registers (LMUL=2) than this
+    target's simulator can spill through: it emits `csrr t, vlenb` to size
+    the scalable-vector spill slot, an instruction the simulator's decoder
+    does not implement, and the kernel panics the moment register pressure
+    forces a spill. Pass `compute_lanes=simd_lanes` to opt back into the
+    old, unchunked (and, on any kernel large enough to spill, simulator-
+    incompatible) code shape.
     """
     if n < 2:
         # A length-1 "FFT" needs zero radix stages, which _build_plan/
@@ -70,6 +96,8 @@ def make_fft_kernel(
         # passthrough kernel for. Fail clearly instead of surfacing that
         # internal ValueError.
         raise ValueError(f"n={n} is too small: make_fft_kernel needs n >= 2")
+    if compute_lanes is None:
+        compute_lanes = min(simd_lanes, _LMUL1_FLOAT32_LANES)
     plan = make_recursive_transpose_plan(
         n,
         scratchpad_byte_budget=scratchpad_byte_budget,
@@ -78,7 +106,7 @@ def make_fft_kernel(
         tile_cols=tile_cols,
         inverse=inverse,
     )
-    source = generate_recursive_fft_kernels(plan)
+    source = generate_recursive_fft_kernels(plan, compute_lanes=compute_lanes)
 
     if output_path is None:
         suffix = "_inverse" if inverse else ""
@@ -101,6 +129,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="bytes of one NDP unit's own scratchpad one leaf kernel may use (default: 4096)",
     )
     parser.add_argument("--simd-lanes", type=int, default=8, help="SIMD lane count (default: 8)")
+    parser.add_argument(
+        "--compute-lanes", type=int, default=None,
+        help="SIMD width the emitted arithmetic actually uses, independent of "
+        "--simd-lanes (the launch granule -- do not use this to change that). "
+        f"Default: min(simd_lanes, {_LMUL1_FLOAT32_LANES}), this target's LMUL=1 "
+        "width, to avoid register-spill instructions the simulator can't run. "
+        "Pass --compute-lanes matching --simd-lanes to opt back into the old, "
+        "unchunked code shape.",
+    )
     parser.add_argument("--tile-rows", type=int, default=None, help="transpose tile rows (default: planner's own choice)")
     parser.add_argument("--tile-cols", type=int, default=None, help="transpose tile cols (default: planner's own choice)")
     parser.add_argument("-o", "--output", type=str, default=None, help="output .mojo path")
@@ -114,6 +151,7 @@ def main() -> None:
         inverse=args.inverse,
         scratchpad_byte_budget=args.scratchpad_byte_budget,
         simd_lanes=args.simd_lanes,
+        compute_lanes=args.compute_lanes,
         tile_rows=args.tile_rows,
         tile_cols=args.tile_cols,
         output_path=args.output,

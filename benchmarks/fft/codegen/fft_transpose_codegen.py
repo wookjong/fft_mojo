@@ -578,7 +578,9 @@ def flatten_recursive_node(node: FFTNode) -> list:
     )
 
 
-def generate_recursive_fft_kernels(plan: RecursiveFFTPlan) -> str:
+def generate_recursive_fft_kernels(
+    plan: RecursiveFFTPlan, *, compute_lanes: int | None = None
+) -> str:
     """Render a full make_recursive_transpose_plan tree as a flat, ordered
     Mojo-ish kernel sequence chained through DRAM from one host main().
     Uses two alternating "work" DRAM buffers (see the module design
@@ -586,6 +588,20 @@ def generate_recursive_fft_kernels(plan: RecursiveFFTPlan) -> str:
     per stage, since a deep recursion can have many stages. This function
     performs no FFT/transpose planning -- every FFTCodegenPlan/
     PhysicalTransposePlan field is already decided in `plan`.
+
+    `compute_lanes`: the SIMD width the *arithmetic* in each leaf/near-FFT
+    kernel's stages actually emits, independent of that kernel's own
+    `simd_lanes` (the launch granule tied to `PooledRange`/`VECTOR_WIDTH`
+    -- see fft_codegen._chunk_batch). `None` (the default) emits every
+    stage at its own `simd_lanes`, unchanged from before this parameter
+    existed. Pass something smaller (e.g. 4 on this target's 128-bit VLEN,
+    vs. the default simd_lanes=8) to keep RVV at LMUL=1 and avoid the
+    register-spill/insertelement instructions the M2NDP simulator's ISA
+    subset does not implement (see docs/STATUS.md). Only the ordinary FFT
+    stage kernels (_emit_kernel) take this; the standalone tiled-transpose
+    kernels (_emit_physical_transpose_kernel) have their own separate
+    width story (ki_near/ki_far, see this module's own docstring) that
+    this does not touch.
     """
     stages = flatten_recursive_node(plan.root)
     e = Emitter()
@@ -617,7 +633,7 @@ def generate_recursive_fft_kernels(plan: RecursiveFFTPlan) -> str:
         if isinstance(stage, PhysicalTransposePlan):
             _emit_physical_transpose_kernel(e, plan=stage)
         else:
-            _emit_kernel(e, plan=stage)
+            _emit_kernel(e, plan=stage, compute_lanes=compute_lanes)
 
     e.add("# " + "=" * 76)
     e.add("# HOST MAIN -- allocates DRAM buffers/twiddle tables, launches every")
@@ -632,7 +648,7 @@ def generate_recursive_fft_kernels(plan: RecursiveFFTPlan) -> str:
     def buf_name(idx: int, part: str) -> str:
         if idx == -1:
             return f"input_{part}"
-        if idx == m:
+        if idx == m - 1:
             return f"output_{part}"
         # alternate between two DRAM work buffers
         return f"work{idx % 2}_{part}"
