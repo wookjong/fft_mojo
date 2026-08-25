@@ -42,8 +42,19 @@ MEMORY {
   spad (rw)  : ORIGIN = 0,          LENGTH = 128K
   /* Placeholder: the real code/data address is an M2NDP memory-map fact.
    * It has to stay inside the default code model's +-2GB of zero, or every
-   * global reference overflows its R_RISCV_HI20. */
-  dram (rwx) : ORIGIN = 0x00010000, LENGTH = 1024M
+   * global reference overflows its R_RISCV_HI20.
+   *
+   * .spad's own addresses (above) are never real memory -- see this file's
+   * own docstring: they're offsets the launcher reinterprets against a
+   * completely different physical base at run time. But lld doesn't know
+   * that; it still checks every section's *numeric* VMA for uniqueness
+   * across the whole link, .spad included, even though .spad's segment is
+   * :NONE (not loaded) rather than :dram. ORIGIN must therefore clear
+   * spad's full LENGTH (128K = 0x20000), or a kernel using more than 64K of
+   * scratchpad makes .spad's own top-end VMA collide with dram's -- the
+   * failure only a large enough kernel's scratchpad footprint reaches, so a
+   * small kernel's clean link doesn't mean this gap is safe. */
+  dram (rwx) : ORIGIN = 0x00020000, LENGTH = 1024M
 }
 
 SECTIONS {
@@ -56,6 +67,25 @@ SECTIONS {
 
   /* What the launcher reads to place the base pointer. */
   __m2ndp_spad_size = SIZEOF(.spad);
+
+  /* -pie (scripts/link-m2ndp.sh) always synthesizes a .dynamic (plus
+   * .dynsym/.dynstr/.hash/.rela.dyn, ...) even though nothing here ever
+   * loads a real dynamic linker. None of those are named above, so lld
+   * treats them as orphans and inserts them whichever place its default
+   * heuristic picks -- observed landing right at ORIGIN(dram), the same
+   * address .text is explicitly told to start at below, which is only a
+   * silent double-booking for a small kernel (nothing yet overlaps .text's
+   * own small footprint) and an outright link error once a big enough
+   * kernel's .text actually reaches that address. Naming them here first
+   * gives them the real few hundred bytes they need before the location
+   * counter reaches .text, so .text always starts after them instead of on
+   * top of them. */
+  .dynamic  : { *(.dynamic) }                     > dram :dram
+  .dynsym   : { *(.dynsym) }                       > dram :dram
+  .dynstr   : { *(.dynstr) }                       > dram :dram
+  .hash     : { *(.hash) }                         > dram :dram
+  .gnu.hash : { *(.gnu.hash) }                     > dram :dram
+  .rela.dyn : { *(.rela.dyn) }                     > dram :dram
 
   .text   : { *(.text.init) *(.text .text.*) } > dram :dram
   .rodata : { *(.rodata .rodata.*) *(.srodata .srodata.*) } > dram :dram
