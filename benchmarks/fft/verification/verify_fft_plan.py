@@ -31,12 +31,14 @@ from planning.fft_plan_core import (
     _make_store,
     _prime_factors_supported,
     _StageLayout,
+    coalesce_radices,
     max_effective_stride,
     summarize_multi_kernel_plan,
 )
 from planning.fft_plan_simple import make_decomposed_plan
 from planning.fft_plan_multikernel import _choose_side_chunks, factor_into_kernel_chunks, make_multi_kernel_plan
 from planning.fft_plan_balanced import _build_batched_side, make_balanced_plan, make_balanced_transpose_plan
+from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
 from planning.fft_plan_recursive import _build_physical_transpose, make_recursive_transpose_plan
 from verification.verify_fft_simple import verify_decomposed_plan, verify_radix_sequence_plan
 from verification.verify_fft_multikernel import verify_boundary_consistency, verify_layout_bijection, verify_multi_kernel_plan
@@ -538,6 +540,7 @@ def main() -> None:
         (120, 24 * 16),
         (960, 32 * 16),   # one split level, both sides multi-radix leaves
         (210, 21 * 16),   # 2*3*5*7 -- forces a 2-level recursion
+        (256, 4096),      # single leaf, coalesced to (4,4,4,4) -- see store vectorization below
     ]
     for n, budget in recursive_cases:
         for inverse in (False, True):
@@ -707,6 +710,140 @@ def main() -> None:
         ok = chunked.mode == expected_mode and chunked.base_offset == expected_base
         tag = f"_chunk_store: {label}"
         print(f"    {'OK  ' if ok else 'FAIL'} {tag}: mode={chunked.mode} base_offset={chunked.base_offset}")
+        if not ok:
+            failures.append(tag)
+
+    print()
+    print("  Radix coalescing (coalesce_radices, direct):")
+    # Default policy (allowed=None -> radix-4 pairs only): confirmed via
+    # the real Mojo -> llc -> M2NDP-Detour toolchain to be the largest
+    # *always-safe* automatic choice -- 6/9/10 (the only other two-prime
+    # products from {2,3,5,7,11,13,17} that land back in SUPPORTED_RADICES;
+    # reaching 8/16 needs a triple merge this function never attempts) are
+    # NOT merged by default because they aren't safe in general: N=54=(6,9)
+    # spills its own radix-9 stage (reads 9 complex operands out of
+    # scratchpad, a non-first stage) to a `vs1r.v` the simulator doesn't
+    # implement, and N=160/320=(4,4,10) spill their radix-10 stage the same
+    # way -- both an all-zero-output mismatch on real hardware, not just a
+    # slowdown. radix-6/9 *alone* (N=6, N=9 -- trivially the kernel's only
+    # stage) are clean, which is exactly why this needed the real toolchain
+    # to catch, not just the Python-level numeric harness (see
+    # verify_recursive_plan's own docstring on what that harness can and
+    # cannot check about register-pressure/ISA-support failures).
+    default_coalesce_cases: list[tuple[int, tuple[int, ...]]] = [
+        (2, (2,)),
+        (4, (4,)),
+        (8, (4, 2)),
+        (16, (4, 4)),
+        (64, (4, 4, 4)),
+        (256, (4, 4, 4, 4)),
+        (6, (2, 3)),
+        (9, (3, 3)),
+        (10, (2, 5)),
+        (54, (2, 3, 3, 3)),
+        (160, (4, 4, 2, 5)),
+        (320, (4, 4, 4, 5)),
+    ]
+    for n, expected in default_coalesce_cases:
+        factors = _prime_factors_supported(n)
+        got = coalesce_radices(factors)
+        ok = (
+            got == expected
+            and prod(got) == n
+            and all(r in SUPPORTED_RADICES for r in got)
+        )
+        tag = f"coalesce_radices(_prime_factors_supported({n})) == {expected}"
+        print(f"    {'OK  ' if ok else 'FAIL'} {tag}: got {got}")
+        if not ok:
+            failures.append(tag)
+
+    # The wider (allowed=SUPPORTED_RADICES) policy: available, opt-in, and
+    # numerically correct on its own terms -- N=6/9/10 above already prove
+    # (2,3)->6/(3,3)->9/(2,5)->10 are each individually valid supported
+    # radices -- it's specifically the *default*'s job to stay off of it
+    # until 6/9/10 are confirmed spill-free in the general (non-sole-stage)
+    # case, not this function's.
+    wide_coalesce_cases: list[tuple[int, tuple[int, ...]]] = [
+        (6, (6,)), (9, (9,)), (10, (10,)),
+    ]
+    for n, expected in wide_coalesce_cases:
+        got = coalesce_radices(_prime_factors_supported(n), allowed=SUPPORTED_RADICES)
+        ok = got == expected and prod(got) == n
+        tag = f"coalesce_radices(..., allowed=SUPPORTED_RADICES) for n={n} == {expected}"
+        print(f"    {'OK  ' if ok else 'FAIL'} {tag}: got {got}")
+        if not ok:
+            failures.append(tag)
+
+    # General invariants across every N reachable from supported primes up
+    # to 300: product matches, every radix is supported, and -- the one
+    # that actually proves "no reordering, decomposition semantics
+    # preserved" -- expanding each output radix back into its own prime
+    # factorization and concatenating reproduces the original factor list
+    # exactly, in order.
+    invariant_failures: list[str] = []
+    for n in range(2, 301):
+        try:
+            factors = _prime_factors_supported(n)
+        except ValueError:
+            continue
+        got = coalesce_radices(factors)
+        if prod(got) != n:
+            invariant_failures.append(f"n={n}: product(coalesce_radices(...))={prod(got)} != {n}")
+            continue
+        if not all(r in SUPPORTED_RADICES for r in got):
+            invariant_failures.append(f"n={n}: {got} has a radix outside SUPPORTED_RADICES")
+            continue
+        expanded = tuple(f for r in got for f in _prime_factors_supported(r))
+        if expanded != tuple(factors):
+            invariant_failures.append(
+                f"n={n}: re-expanding {got} gives {expanded}, not the original {factors} -- reordered!"
+            )
+    tag = "coalesce_radices invariants (product/support/order) for n=2..300"
+    print(f"    {'OK  ' if not invariant_failures else 'FAIL'} {tag}")
+    if invariant_failures:
+        for msg in invariant_failures[:5]:
+            print(f"      {msg}")
+        failures.append(tag)
+
+    print()
+    print("  Store vectorization + radix coalescing together (N=256, radix-4 chain, real emitted code -- per-stage store mode):")
+    # Frozen against the actual generated Mojo (not just the planner's own
+    # mode -- fft_transpose_codegen.generate_recursive_fft_kernels defaults
+    # to loop_stages=True, whose own store-vectorization lives in
+    # fft_codegen._emit_store_loop, a separate renderer from the non-loop
+    # _chunk_store path _make_store's promotion alone would suggest -- see
+    # that function's own comment): stage 0 (p_s=1) can never be
+    # contiguous, so it stays fully scalar; stage 1 (p_s=4) is not
+    # contiguous at the full simd_lanes=8 width but *is* at compute_lanes=4
+    # (a chunk lines up exactly on one p_s block), so _emit_store_loop's
+    # own chunk-uniform-stride check promotes it; stage 2/3 (p_s=16/64,
+    # already >= simd_lanes) are vector from _make_store directly. Radix-4
+    # chain (not radix-2 x8) because coalesce_radices is now wired into
+    # _build_recursive_node -- this test only makes sense with both
+    # optimizations active together, which is exactly what it's checking.
+    # compute_lanes=4 matches make_fft_kernel.py's own default (this
+    # target's LMUL=1 width -- see its module docstring); generate_recursive
+    # _fft_kernels' own default (None, unchunked at simd_lanes=8) is a
+    # different configuration nothing in production actually uses.
+    n256_plan = make_recursive_transpose_plan(256, scratchpad_byte_budget=4096)
+    n256_source = generate_recursive_fft_kernels(n256_plan, compute_lanes=4)
+    n256_expected_stores = {0: (0, 64), 1: (16, 0), 2: (32, 0), 3: (16, 0)}  # stage -> (vector, scalar)
+    lines = n256_source.splitlines()
+    kernel_start = next(i for i, l in enumerate(lines) if l.startswith("struct FFTRecLeaf0(NDPTask):"))
+    for stage_id, (expected_vector, expected_scalar) in n256_expected_stores.items():
+        start = next(
+            i for i in range(kernel_start, len(lines)) if lines[i].strip() == f"def stage_{stage_id}():"
+        )
+        end = next(
+            (i for i in range(start + 1, len(lines)) if lines[i].strip() == "@staticmethod"), len(lines)
+        )
+        block = lines[start:end]
+        store_lines = [l for l in block if ".store(" in l]
+        scalar_count = sum(1 for l in store_lines if l.rstrip().endswith("])"))
+        vector_count = len(store_lines) - scalar_count
+        ok = vector_count == expected_vector and scalar_count == expected_scalar
+        tag = f"N=256 stage_{stage_id}: {expected_vector} vector / {expected_scalar} scalar store lines"
+        print(f"    {'OK  ' if ok else 'FAIL'} {tag}: got {vector_count} vector / {scalar_count} scalar")
         if not ok:
             failures.append(tag)
 

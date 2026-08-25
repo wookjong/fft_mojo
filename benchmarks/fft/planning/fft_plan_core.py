@@ -1050,6 +1050,76 @@ def _prime_factors_supported(n: int) -> list[int]:
     return factors
 
 
+#  Confirmed via the real Mojo -> llc -> M2NDP-Detour toolchain (not just
+# this module's own reasoning about register counts): radix-4 pairs
+# (2,2)->4 are clean at every N tried, including deep chains (N=256, 1024:
+# (4,4,4,4), zero spill warnings). radix-6 and radix-9 alone (N=6, N=9 --
+# a radix that's *also* the kernel's only stage) are also clean, but *not*
+# once that same radix has to read its operands from scratchpad instead of
+# DRAM (any non-first stage): N=54 = (6,9) spills FFTRecLeaf0.stage_1 (the
+# radix-9 stage, reading 9 complex operands out of scratchpad) to a
+# `vs1r.v` the simulator doesn't implement -- the exact all-zero-output
+# failure this project has hit before (see the loop_stages/round-split
+# commit). radix-10 fails outright: N=160/320 = (4,4,10) spills
+# FFTRecLeaf0/FFTRecNear0's own radix-10 stage the same way. So only
+# radix-4 is confirmed safe as an *automatic*, always-on default -- 6/9/10
+# stay available via `allowed` for a caller who has separately confirmed
+# their own case doesn't spill, never wired into any call site by default.
+_DEFAULT_COALESCE_ALLOWED: frozenset[int] = frozenset({4})
+
+
+def coalesce_radices(
+    factors: list[int] | tuple[int, ...], *, allowed: frozenset[int] | None = None
+) -> tuple[int, ...]:
+    """Merge adjacent pairs of `factors` (as `_prime_factors_supported`
+    returns them: ascending prime value, equal primes grouped
+    consecutively) into one larger SUPPORTED_RADICES composite wherever
+    that pair's own product is itself allowed to merge into (see
+    `_DEFAULT_COALESCE_ALLOWED` just above for why the default is
+    radix-4-only, not "whatever SUPPORTED_RADICES contains") -- undoing
+    _prime_factors_supported's own "composite-radix coalescing is
+    deferred" simplification, now that a caller wants fewer, coarser
+    stages instead of the maximal all-prime decomposition.
+
+    Deliberately conservative and simple, per this project's own history
+    with register pressure (see make_fft_kernel.py's `compute_lanes`
+    docstring, and the loop_stages/round-split commit before this one):
+    only ever merges *two* original factors at a time, greedily, left to
+    right, and never re-merges an already-coalesced result with its
+    neighbor. Every merged pair stays adjacent in the original Stockham/
+    Cooley-Tukey factor order -- nothing here reorders, so this changes
+    how many stages a decomposition renders as, never the decomposition
+    itself.
+
+    `allowed`: which composite products a pair may merge into -- `None`
+    (the default) uses `_DEFAULT_COALESCE_ALLOWED` (radix-4 only, the one
+    confirmed safe on real hardware in every configuration tried so far).
+    A wider set (up to `SUPPORTED_RADICES` itself, which is where 6/9/10
+    -- the other two-prime products that land back in SUPPORTED_RADICES,
+    since reaching radix-8/16 needs a *triple* merge this pairs-only pass
+    never attempts -- would come from) is available to a caller who has
+    separately confirmed it doesn't spill for their own case, without
+    touching this function. Exists so a future benchmark-driven cost
+    model can swap in its own set (per-radix-cost-weighted, or simply
+    wider once more of SUPPORTED_RADICES is confirmed spill-free) without
+    touching any call site -- same "candidate-generation stays swappable"
+    discipline _choose_recursive_split's own docstring already follows
+    for its split-point search.
+    """
+    allowed_set = _DEFAULT_COALESCE_ALLOWED if allowed is None else allowed
+    result: list[int] = []
+    i = 0
+    n = len(factors)
+    while i < n:
+        if i + 1 < n and factors[i] * factors[i + 1] in allowed_set:
+            result.append(factors[i] * factors[i + 1])
+            i += 2
+        else:
+            result.append(factors[i])
+            i += 1
+    return tuple(result)
+
+
 # --------------------------------------------- shared M-kernel container
 #
 # MultiKernelFFTPlan/MultiKernelHostPlan are produced by more than one

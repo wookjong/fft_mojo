@@ -31,6 +31,7 @@ from planning.fft_plan_core import (
     _build_plan,
     _cap_max_uthread,
     _prime_factors_supported,
+    coalesce_radices,
     layouts_for_radices,
 )
 
@@ -234,7 +235,7 @@ def _build_recursive_node(
 
     split_b = _choose_recursive_split(m, scratchpad_byte_budget=scratchpad_byte_budget)
     if split_b is None:
-        radices = tuple(_prime_factors_supported(m))
+        radices = coalesce_radices(_prime_factors_supported(m))
         inverse_scale = (1.0 / m) if (inverse and is_root) else None
         kernel = _build_plan(
             length=m,
@@ -267,7 +268,7 @@ def _build_recursive_node(
         apply_inverse_scale=False, max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
 
-    near_radices = tuple(_prime_factors_supported(b))
+    near_radices = coalesce_radices(_prime_factors_supported(b))
     near_kernel = _build_plan(
         length=b,
         inverse=inverse,
