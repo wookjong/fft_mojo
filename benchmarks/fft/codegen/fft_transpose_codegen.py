@@ -377,6 +377,51 @@ def generate_balanced_transpose_fft_kernels(plan: BalancedTransposeFFTPlan) -> s
 # make_balanced_transpose_plan).
 
 
+def _is_pow2(x: int) -> bool:
+    return x > 0 and (x & (x - 1)) == 0
+
+
+def _needs_q_table(plan: PhysicalTransposePlan) -> bool:
+    """`tile_id // tiles_per_replica` (see _emit_physical_transpose_stage)
+    needs a lookup table -- instead of a plain runtime `//` -- exactly when
+    that division is both non-trivial (replica_count > 1; otherwise q is
+    always 0 and there's nothing to divide) and by a non-power-of-2
+    constant. A power-of-2 divisor lowers to a shift, same as today; a
+    non-power-of-2 one is where LLVM's usual move -- multiply by the
+    divisor's reciprocal instead of a real divide -- emits `mulhsu`, an
+    opcode M2NDP-Detour's decoder does not implement (confirmed: a length
+    whose recursion produces a non-power-of-2 tiles_per_replica, e.g.
+    N=960, panics here). See the table precompute in
+    generate_recursive_fft_kernels and its use in
+    _emit_physical_transpose_stage.
+    """
+    tiles_per_replica = plan.grid_rows * plan.grid_cols
+    return plan.replica_count > 1 and not _is_pow2(tiles_per_replica)
+
+
+def _needs_tr_table(plan: PhysicalTransposePlan) -> bool:
+    """Same reasoning as `_needs_q_table`, for `local_tile // grid_cols`."""
+    return plan.grid_cols > 1 and not _is_pow2(plan.grid_cols)
+
+
+def _needs_round_split(plan: PhysicalTransposePlan) -> bool:
+    """Whether this tile's own scratchpad capacity (max_uthread) fits fewer
+    tiles than this stage needs in total -- see the round loop in
+    generate_recursive_fft_kernels. `tile_id`'s only use is as an index (a
+    lookup into q_table/t_r_table, or as the arithmetic `_build_plan`
+    derives q/t_r/t_c from), so a stage that needs several rounds just adds
+    a plan-time-unknown, round-time-known `round_offset` to it once, up
+    front (see `p.round_offset` below) -- everything downstream (q, t_r,
+    t_c, every DRAM address _emit_tile_transfer computes from them) is
+    already expressed purely in terms of `tile_id`, so nothing else needs
+    to change. Unlike an FFTCodegenPlan leaf/near_fft stage's own round
+    split, no DRAM pointer needs offsetting either: a tile's own source/
+    destination address already spans this kernel's *whole* src/dst matrix
+    (q/t_r/t_c pick out the position), never just this round's slice of it.
+    """
+    return plan.max_uthread < plan.total_uthreads
+
+
 def _emit_physical_transpose_params_struct(e: Emitter, *, plan: PhysicalTransposePlan) -> None:
     e.add("@fieldwise_init")
     e.add(f"struct {plan.kernel_name}Params(Movable):")
@@ -387,6 +432,12 @@ def _emit_physical_transpose_params_struct(e: Emitter, *, plan: PhysicalTranspos
     if plan.twiddle_modulus is not None:
         e.add("    var twiddle_real_base: UnsafePointer[Float32, MutAnyOrigin]")
         e.add("    var twiddle_imag_base: UnsafePointer[Float32, MutAnyOrigin]")
+    if _needs_q_table(plan):
+        e.add("    var q_table: UnsafePointer[Int, MutAnyOrigin]")
+    if _needs_tr_table(plan):
+        e.add("    var t_r_table: UnsafePointer[Int, MutAnyOrigin]")
+    if _needs_round_split(plan):
+        e.add("    var round_offset: Int")
     e.add()
     e.add()
 
@@ -479,12 +530,37 @@ def _emit_physical_transpose_stage(e: Emitter, *, plan: PhysicalTransposePlan) -
     e.add("            return")
     e.add(f"        var spad_base = local_id * {plan.scratchpad_elements}")
     e.add()
-    e.add("        var tile_id = global_uthread_id()")
-    e.add(f"        var tiles_per_replica = {grid_rows * grid_cols}")
-    e.add("        var q = tile_id // tiles_per_replica")
-    e.add("        var local_tile = tile_id % tiles_per_replica")
-    e.add(f"        var t_r = local_tile // {grid_cols}")
-    e.add(f"        var t_c = local_tile % {grid_cols}")
+    if _needs_round_split(plan):
+        e.add("        var tile_id = global_uthread_id() + p.round_offset")
+    else:
+        e.add("        var tile_id = global_uthread_id()")
+    tiles_per_replica = grid_rows * grid_cols
+    if plan.replica_count == 1:
+        # Nothing to divide -- tile_id is already this replica's own local
+        # tile index (see _needs_q_table).
+        e.add("        var q = 0")
+        e.add("        var local_tile = tile_id")
+    elif _is_pow2(tiles_per_replica):
+        e.add(f"        var tiles_per_replica = {tiles_per_replica}")
+        e.add("        var q = tile_id // tiles_per_replica")
+        e.add("        var local_tile = tile_id % tiles_per_replica")
+    else:
+        # A plain `//`/`%` by this non-power-of-2 constant is what used to
+        # be here; see _needs_q_table for why that's unsafe on this target.
+        # `local_tile` comes back out via one MUL + SUB (both implemented)
+        # instead of a second table lookup.
+        e.add(f"        var q = p.q_table[tile_id]")
+        e.add(f"        var local_tile = tile_id - q * {tiles_per_replica}")
+
+    if grid_cols == 1:
+        e.add("        var t_r = local_tile")
+        e.add("        var t_c = 0")
+    elif _is_pow2(grid_cols):
+        e.add(f"        var t_r = local_tile // {grid_cols}")
+        e.add(f"        var t_c = local_tile % {grid_cols}")
+    else:
+        e.add(f"        var t_r = p.t_r_table[local_tile]")
+        e.add(f"        var t_c = local_tile - t_r * {grid_cols}")
     e.add()
 
     if not has_row_tail and not has_col_tail:
@@ -579,7 +655,7 @@ def flatten_recursive_node(node: FFTNode) -> list:
 
 
 def generate_recursive_fft_kernels(
-    plan: RecursiveFFTPlan, *, compute_lanes: int | None = None
+    plan: RecursiveFFTPlan, *, compute_lanes: int | None = None, loop_stages: bool = True
 ) -> str:
     """Render a full make_recursive_transpose_plan tree as a flat, ordered
     Mojo-ish kernel sequence chained through DRAM from one host main().
@@ -628,12 +704,19 @@ def generate_recursive_fft_kernels(
     e.add()
 
     twiddle_names: dict[int, tuple[str, str]] = {}
+    # Only FFTCodegenPlan stages (leaf/near_fft) go through _emit_kernel's
+    # loop_stages path; each entry here is that stage's own pooled twiddle
+    # table (see fft_codegen._emit_task_struct), empty when loop_stages is
+    # False or nothing in that particular kernel qualified to loop.
+    loop_twiddle_tables: dict[int, list[tuple[float, float]]] = {}
     for i, stage in enumerate(stages):
         e.add(f"# ---- stage {i}: {stage.kernel_name} ----")
         if isinstance(stage, PhysicalTransposePlan):
             _emit_physical_transpose_kernel(e, plan=stage)
         else:
-            _emit_kernel(e, plan=stage, compute_lanes=compute_lanes)
+            loop_twiddle_tables[i] = _emit_kernel(
+                e, plan=stage, compute_lanes=compute_lanes, loop_stages=loop_stages
+            )
 
     e.add("# " + "=" * 76)
     e.add("# HOST MAIN -- allocates DRAM buffers/twiddle tables, launches every")
@@ -680,8 +763,62 @@ def generate_recursive_fft_kernels(
             e.add(f"    var {imn} = cxl_alloc[Float32]({table_size})")
             _emit_physical_transpose_twiddle_table_precompute(e, plan=stage, real_name=rn, imag_name=imn)
 
+    # `tile_id // {tiles_per_replica,grid_cols}` tables (see _needs_q_table/
+    # _needs_tr_table/_emit_physical_transpose_stage): plain Python integer
+    # division, at codegen time, into a small DRAM table -- avoids the
+    # runtime `mulhsu` a non-power-of-2 constant division would otherwise
+    # lower to, an opcode M2NDP-Detour's decoder does not implement.
+    tile_coord_names: dict[int, tuple[str | None, str | None]] = {}
     for i, stage in enumerate(stages):
-        e.add(f"    var pool{i}_elems = {stage.simd_lanes * stage.total_uthreads}")
+        if not isinstance(stage, PhysicalTransposePlan):
+            continue
+        q_name = tr_name = None
+        if _needs_q_table(stage):
+            tiles_per_replica = stage.grid_rows * stage.grid_cols
+            q_name = f"qtab{i}"
+            e.add(f"    var {q_name} = cxl_alloc[Int]({stage.total_uthreads})")
+            for tid in range(stage.total_uthreads):
+                e.add(f"    {q_name}[{tid}] = {tid // tiles_per_replica}")
+            e.add()
+        if _needs_tr_table(stage):
+            tiles_per_replica = stage.grid_rows * stage.grid_cols
+            tr_name = f"trtab{i}"
+            e.add(f"    var {tr_name} = cxl_alloc[Int]({tiles_per_replica})")
+            for lt in range(tiles_per_replica):
+                e.add(f"    {tr_name}[{lt}] = {lt // stage.grid_cols}")
+            e.add()
+        tile_coord_names[i] = (q_name, tr_name)
+
+    # loop_stages's own per-kernel pooled twiddle table (see
+    # _try_build_loop_stage): a flat DRAM array of exact already-plan-
+    # computed constants, filled by literal assignment (these are not a
+    # runtime formula fftcodegen deliberately doesn't re-derive -- see the
+    # runtime-loop stage rendering note in fft_codegen.py) and read back at
+    # runtime by `simd_it` inside each looped stage. `_emit_kernel` always
+    # declares the Params field whenever loop_stages was requested for that
+    # kernel (see _emit_params_struct's add_loop_twiddle), even when this
+    # table ends up empty, so the alloc below always runs alongside it --
+    # `max(1, ...)` keeps a zero-length table a valid (unused) allocation.
+    loop_twiddle_names: dict[int, tuple[str, str]] = {}
+    for i, table in loop_twiddle_tables.items():
+        rn, imn = f"looptw{i}_real", f"looptw{i}_imag"
+        loop_twiddle_names[i] = (rn, imn)
+        table_size = max(1, len(table))
+        e.add(f"    var {rn} = cxl_alloc[Float32]({table_size})")
+        e.add(f"    var {imn} = cxl_alloc[Float32]({table_size})")
+        for idx, (vr, vi) in enumerate(table):
+            e.add(f"    {rn}[{idx}] = {_f32(vr)}")
+            e.add(f"    {imn}[{idx}] = {_f32(vi)}")
+        e.add()
+
+    # A stage's pool only ever needs to be `max_uthread` microthreads wide,
+    # even when `total_uthreads` is bigger and this stage below launches in
+    # several rounds -- one round's worth of microthreads is all any single
+    # `.launch()` call ever covers, and the pool is reused across rounds
+    # (sequential launches, nothing live across them -- see the round loop
+    # below).
+    for i, stage in enumerate(stages):
+        e.add(f"    var pool{i}_elems = {stage.simd_lanes * stage.max_uthread}")
         e.add(f"    var pool{i} = cxl_alloc[Float32](pool{i}_elems)")
     e.add()
 
@@ -702,24 +839,93 @@ def generate_recursive_fft_kernels(
     for i, stage in enumerate(stages):
         in_r, in_i = buf_name(i - 1, "real"), buf_name(i - 1, "imag")
         out_r, out_i = buf_name(i, "real"), buf_name(i, "imag")
-        e.add(f"    var rc{i} = {stage.kernel_name}.launch(")
-        e.add(f"        PooledRange.over(pool{i}, pool{i}_elems),")
-        if isinstance(stage, PhysicalTransposePlan) and stage.twiddle_modulus is not None:
-            rn, imn = twiddle_names[i]
-            e.add(f"        {stage.kernel_name}Params({in_r}, {in_i}, {out_r}, {out_i}, {rn}, {imn}),")
-        elif isinstance(stage, PhysicalTransposePlan):
-            e.add(f"        {stage.kernel_name}Params({in_r}, {in_i}, {out_r}, {out_i}),")
-        else:
-            # every FFTCodegenPlan a recursive node builds (leaf or
-            # near_fft) is always large_twiddle=None -- that cross-block
-            # math lives entirely in the standalone MIDDLE transpose kernel.
-            assert stage.large_twiddle is None
-            e.add(f"        {stage.kernel_name}Params({in_r}, {in_i}, {out_r}, {out_i}),")
-        e.add("    )")
-        e.add(f"    if rc{i} != 0:")
-        e.add(f'        print("[host] recursive FFT stage {i} ({stage.kernel_name}) failed, exit", rc{i})')
-        e.add("        return")
-        e.add()
+
+        if isinstance(stage, PhysicalTransposePlan):
+            # See _needs_round_split: a tile's own address is a function of
+            # tile_id alone (via q/t_r/t_c), so splitting rounds only needs
+            # tile_id itself shifted by a per-round `round_offset` -- no
+            # DRAM pointer offsetting, unlike the FFTCodegenPlan branch
+            # below (see there for why that one's different).
+            fixed_args = [rn for rn in twiddle_names.get(i, ()) if rn is not None]
+            fixed_args += [n for n in tile_coord_names.get(i, ()) if n is not None]
+
+            rounds = -(-stage.total_uthreads // stage.max_uthread)
+            for r in range(rounds):
+                round_count = min(stage.max_uthread, stage.total_uthreads - r * stage.max_uthread)
+                suffix = f"{i}" if rounds == 1 else f"{i}_{r}"
+                args = f"{in_r}, {in_i}, {out_r}, {out_i}"
+                if fixed_args:
+                    args += ", " + ", ".join(fixed_args)
+                if _needs_round_split(stage):
+                    args += f", {r * stage.max_uthread}"
+
+                e.add(f"    var rc{suffix} = {stage.kernel_name}.launch(")
+                e.add(f"        PooledRange.over(pool{i}, {stage.simd_lanes * round_count}),")
+                e.add(f"        {stage.kernel_name}Params({args}),")
+                e.add("    )")
+                e.add(f"    if rc{suffix} != 0:")
+                round_note = "" if rounds == 1 else f" round {r}/{rounds}"
+                e.add(
+                    f'        print("[host] recursive FFT stage {i} ({stage.kernel_name}'
+                    f'{round_note}) failed, exit", rc{suffix})'
+                )
+                e.add("        return")
+                e.add()
+            continue
+
+        # every FFTCodegenPlan a recursive node builds (leaf or near_fft) is
+        # always large_twiddle=None -- that cross-block math lives entirely
+        # in the standalone MIDDLE transpose kernel -- and always
+        # AddressMapping.contiguous(row_stride=stage.length) on both sides
+        # (see _build_recursive_node), so `global_uthread_id() * stage.length`
+        # is the whole address story: round `r`'s microthreads
+        # [r*max_uthread, r*max_uthread+round_count) read/write exactly the
+        # contiguous `round_count*stage.length`-element slice starting
+        # `r*max_uthread*stage.length` into this stage's own in/out buffers.
+        # Offsetting the pointers `Params` gets by that amount and launching
+        # over a `round_count`-sized (<= max_uthread) slice of the pool
+        # covers it -- no different, in the DRAM buffers' own terms, from
+        # this stage simply having been `rounds` separate, smaller stages.
+        #
+        # This isn't an optimization: launching the *whole* total_uthreads
+        # in one go over a scratchpad sized for only max_uthread of them
+        # (local_uthread_id() cycles 0..max_uthread-1 per core, so anything
+        # that doesn't fit needs a fresh launch, not a bigger one) currently
+        # hangs the simulator rather than erroring -- confirmed by hand
+        # against this same codegen with total_uthreads=4, max_uthread=1.
+        assert stage.large_twiddle is None
+        rounds = -(-stage.total_uthreads // stage.max_uthread)
+        for r in range(rounds):
+            round_count = min(stage.max_uthread, stage.total_uthreads - r * stage.max_uthread)
+            elem_off = r * stage.max_uthread * stage.length
+            round_in_r = in_r if elem_off == 0 else f"({in_r} + {elem_off})"
+            round_in_i = in_i if elem_off == 0 else f"({in_i} + {elem_off})"
+            round_out_r = out_r if elem_off == 0 else f"({out_r} + {elem_off})"
+            round_out_i = out_i if elem_off == 0 else f"({out_i} + {elem_off})"
+            suffix = f"{i}" if rounds == 1 else f"{i}_{r}"
+
+            e.add(f"    var rc{suffix} = {stage.kernel_name}.launch(")
+            e.add(f"        PooledRange.over(pool{i}, {stage.simd_lanes * round_count}),")
+            if loop_stages:
+                ltrn, ltimn = loop_twiddle_names[i]
+                e.add(
+                    f"        {stage.kernel_name}Params({round_in_r}, {round_in_i}, "
+                    f"{round_out_r}, {round_out_i}, {ltrn}, {ltimn}),"
+                )
+            else:
+                e.add(
+                    f"        {stage.kernel_name}Params({round_in_r}, {round_in_i}, "
+                    f"{round_out_r}, {round_out_i}),"
+                )
+            e.add("    )")
+            e.add(f"    if rc{suffix} != 0:")
+            round_note = "" if rounds == 1 else f" round {r}/{rounds}"
+            e.add(
+                f'        print("[host] recursive FFT stage {i} ({stage.kernel_name}'
+                f'{round_note}) failed, exit", rc{suffix})'
+            )
+            e.add("        return")
+            e.add()
 
     _emit_reference_check(
         e, n=plan.n, batch_count=1, inverse=plan.inverse,

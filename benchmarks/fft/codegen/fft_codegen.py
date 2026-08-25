@@ -25,6 +25,8 @@ one combined main() -- there is no separate "transpose kernel" abstraction
 to emit.
 """
 
+from dataclasses import dataclass
+
 from codegen.fft_butterflies import emit_butterfly
 from planning.fft_plan_core import (
     AddressMapping,
@@ -447,6 +449,486 @@ def _chunk_batch(
     return chunks
 
 
+# ---------------------------------------------------------------------------
+# Runtime-loop stage rendering.
+#
+# `_emit_stage`'s default path (below) renders one Mojo source block per
+# SIMDBatchPlan -- the plan already lists one per `simd_lanes`-wide slice of
+# a stage's butterflies (see fft_plan_core._lower_stages), so a stage with N
+# large enough to need many such slices renders that many *copies* of the
+# same load/twiddle/butterfly/store shape in the kernel body. That is fine
+# for a handful of batches, but the compiled function eventually outgrows
+# this target's RVV register file: the LLVM backend starts spilling whole
+# vector registers with `vs1r.v`, an opcode M2NDP-Detour's decoder does not
+# implement (see docs/STATUS.md / make_fft_kernel.py's own docstring on
+# `compute_lanes`) -- the kernel then silently computes nothing for that
+# microthread instead of crashing.
+#
+# The functions below are an alternative renderer for the *same* per-batch
+# plan data: one Mojo `while` loop over the batch index, instead of one
+# unrolled block per batch, so the compiled function's size stops growing
+# with N. This works because a `SIMDBatchPlan`'s per-operand load offset and
+# (for a "vector"-mode store) its store offset are already exactly
+# `simd_it * <constant stride>` apart (see fft_plan_core._make_load/
+# _make_store) -- `_try_build_loop_stage` below doesn't re-derive that; it
+# *verifies* it directly from the plan's own already-computed offsets across
+# every consecutive pair of full-width batches, and returns `None` (falls
+# back to the unrolled path, unchanged) the moment any pair doesn't match.
+# So this can never emit a wrong runtime offset -- it either proves the
+# batch sequence is uniform and loops it, or gives up and unrolls exactly as
+# before. Twiddle constants aren't offsets; a stage's per-batch TwiddlePlan
+# values are exact already-computed floats, so those are pooled into one
+# small per-kernel DRAM table (loaded at runtime by `simd_it`) rather than
+# re-derived.
+#
+# Only whole (`valid_lanes == simd_lanes`) batches are looped; at most one
+# trailing partial batch (`butterfly_count` not a multiple of `simd_lanes`)
+# is rendered exactly as today, unrolled, after the loop.
+
+_LOOP_MIN_FULL_BATCHES = 3
+
+# Largest period _try_build_loop_stage will accept -- bounds the search below
+# and keeps a degenerate "period == every batch" (no smaller period found,
+# so nothing would actually be shared across outer-loop iterations) from
+# ever being accepted. See _try_build_loop_stage's own docstring for what
+# period *is* here.
+_LOOP_MAX_PERIOD = 64
+
+
+def _arith_stride(seq: list[int]) -> int | None:
+    """`seq[i+1] - seq[i]` if that difference is the same for every
+    consecutive pair, else `None`. `0` (not `None`) for a length-<2 `seq`:
+    there's nothing to contradict a stride of 0, and callers that need a
+    real stride pass sequences with at least two elements."""
+    if len(seq) < 2:
+        return 0
+    stride = seq[1] - seq[0]
+    for i in range(1, len(seq) - 1):
+        if seq[i + 1] - seq[i] != stride:
+            return None
+    return stride
+
+
+def _periodic_stride(seq: list[int], period: int) -> tuple[tuple[int, ...], int] | None:
+    """Split `seq` into `period` interleaved residue classes (residue `r`:
+    `seq[r], seq[r+period], seq[r+2*period], ...`) and check each one is
+    itself a plain arithmetic progression, *all* sharing one common
+    difference (only the starting point may differ by residue) -- i.e.
+    `seq[i] == bases[i % period] + (i // period) * stride`. Returns
+    `(bases, stride)` if so, else `None`. Requires `period` to divide
+    `len(seq)` evenly and every residue to have at least 2 rows (so there's
+    something to actually contradict a stride) -- callers are expected to
+    have already checked both.
+
+    `period=1` is exactly `_arith_stride` (bases is a 1-tuple) -- this is
+    the general form the loop-stage builder now needs; see the module note
+    above `_try_build_loop_stage`. A store's own per-batch destination
+    offset is uniform *within* a residue only once a stage's cumulative
+    twiddle-lane_divisor grows past `simd_lanes` (see that function's
+    docstring): before that point period=1 already covers it.
+    """
+    n = len(seq)
+    rows = n // period
+    bases: list[int] = []
+    stride: int | None = None
+    for r in range(period):
+        vals = [seq[r + row * period] for row in range(rows)]
+        st = _arith_stride(vals)
+        if st is None:
+            return None
+        if stride is None:
+            stride = st
+        elif st != stride:
+            return None
+        bases.append(vals[0])
+    assert stride is not None
+    return tuple(bases), stride
+
+
+@dataclass
+class _LoopLoad:
+    operand: int
+    source: str
+    buffer_name: str | None
+    bases: tuple[int, ...]  # one per residue, length == loop_plan.period
+    stride: int
+
+
+@dataclass
+class _LoopStoreInfo:
+    output: int
+    destination: str
+    buffer_name: str | None
+    mode: str  # "vector" or "scalar_lanes"
+    bases: tuple[int, ...] | None  # vector mode: one per residue
+    stride: int | None
+    lane_bases: tuple[tuple[int, ...], ...] | None  # scalar_lanes: [lane][residue]
+    lane_stride: tuple[int, ...] | None  # [lane]
+
+
+@dataclass
+class _LoopTwiddleInfo:
+    output: int
+    table_offset: int
+
+
+@dataclass
+class _LoopStagePlan:
+    period: int
+    outer_iters: int
+    loads: tuple[_LoopLoad, ...]
+    stores: tuple[_LoopStoreInfo, ...]
+    twiddles: dict[int, _LoopTwiddleInfo]
+    scales: dict[int, float | None]
+    tail_batch: SIMDBatchPlan | None
+
+
+def _try_build_loop_stage(
+    stage: FFTStagePlan,
+    *,
+    simd_lanes: int,
+    min_full_batches: int,
+    twiddle_table: list[tuple[float, float]],
+) -> "_LoopStagePlan | None":
+    """Try to prove `stage.batches` is a uniform, loopable sequence (see the
+    module note above) and, if so, at what period.
+
+    A Stockham-autosort intermediate store's own per-batch destination
+    offset (see fft_plan_core._make_store) is `n2*group_stride +
+    output*p_s + b_s` where `p_s` is this stage's own cumulative radix
+    product -- linear in the batch index (period=1) only while `p_s <=
+    simd_lanes`; once a stage's `p_s` grows past `simd_lanes`, consecutive
+    batches' destinations jump by a *larger* stride every `p_s/simd_lanes`
+    batches, i.e. the sequence is linear *within* each of `p_s/simd_lanes`
+    interleaved residues, not across all of them at once (confirmed against
+    the plan's own already-computed offsets: N=1024's FFTRecNear0 stage 4/5/
+    6 need period 2/4/8 respectively, doubling in step with `p_s` doubling
+    each radix-2 stage -- see docs/STATUS.md and this function's own git
+    history for the concrete offsets). Loads stay period=1 always (their
+    own base_offset is `simd_it * input_batch_width`, no such `p_s` term).
+
+    Search: try periods 1, 2, 3, ... up to `_LOOP_MAX_PERIOD` (and dividing
+    the batch count, with room for at least 2 outer-loop iterations); the
+    first period at which *every* load and store offset sequence validates
+    via `_periodic_stride` is accepted. Falls back to full unroll (`None`)
+    if none does, or the batch count is too small to bother -- exactly as
+    before this period generalization existed, just reached less often.
+
+    Appends this stage's twiddle rows to the shared per-kernel
+    `twiddle_table` (in place) only once every check has passed -- never
+    leaves orphaned rows in it on a failed/aborted attempt.
+    """
+    full = [b for b in stage.batches if b.valid_lanes == simd_lanes]
+    tail = [b for b in stage.batches if b.valid_lanes != simd_lanes]
+    n_full = len(full)
+    if n_full < min_full_batches or len(tail) > 1:
+        return None
+
+    n_operands = len(full[0].loads)
+    if any(len(b.loads) != n_operands for b in full):
+        return None
+    load_seqs: list[list[int]] = []
+    load_meta = []
+    for j in range(n_operands):
+        if any(b.loads[j].mode != "vector" for b in full):
+            return None
+        offs = [b.loads[j].base_offset for b in full]
+        if any(o is None for o in offs):
+            return None
+        load_seqs.append(offs)
+        first = full[0].loads[j]
+        load_meta.append((j, first.source, first.buffer_name))
+
+    n_outputs = len(full[0].outputs)
+    if any(len(b.outputs) != n_outputs for b in full):
+        return None
+
+    # kind: ("vector", k, None, seq) or ("lane", k, lane, seq)
+    store_seqs: list[tuple[str, int, int | None, list[int]]] = []
+    scales: dict[int, float | None] = {}
+    store_meta: dict[int, tuple[str, str, str | None]] = {}  # k -> (mode, destination, buffer_name)
+    twiddle_needed: dict[int, bool] = {}
+
+    for k in range(n_outputs):
+        outs = [b.outputs[k] for b in full]
+        if any(o.output != k for o in outs):
+            return None
+        if any(o.large_twiddle for o in outs):
+            return None
+        scale_vals = {o.scale for o in outs}
+        if len(scale_vals) != 1:
+            return None
+        scales[k] = outs[0].scale
+
+        store0 = outs[0].store
+        if any(o.store.mode != store0.mode for o in outs):
+            return None
+        if any(o.store.destination != store0.destination for o in outs):
+            return None
+        if any(o.store.buffer_name != store0.buffer_name for o in outs):
+            return None
+        store_meta[k] = (store0.mode, store0.destination, store0.buffer_name)
+
+        if store0.mode == "vector":
+            offs = [o.store.base_offset for o in outs]
+            if any(o is None for o in offs):
+                return None
+            store_seqs.append(("vector", k, None, offs))
+        else:
+            if any(len(o.store.lane_offsets) != simd_lanes for o in outs):
+                return None
+            for lane in range(simd_lanes):
+                store_seqs.append(("lane", k, lane, [o.store.lane_offsets[lane] for o in outs]))
+
+        twiddle_vals = [o.twiddle for o in outs]
+        if any((t is None) != (twiddle_vals[0] is None) for t in twiddle_vals):
+            return None
+        twiddle_needed[k] = twiddle_vals[0] is not None
+        if twiddle_vals[0] is not None:
+            for t in twiddle_vals:
+                assert t is not None
+                if len(t.real) != simd_lanes or len(t.imag) != simd_lanes:
+                    return None
+
+    all_seqs = load_seqs + [s[3] for s in store_seqs]
+    max_period = min(_LOOP_MAX_PERIOD, n_full // 2)
+    period = None
+    for p in range(1, max_period + 1):
+        if n_full % p != 0:
+            continue
+        if all(_periodic_stride(seq, p) is not None for seq in all_seqs):
+            period = p
+            break
+    if period is None:
+        return None
+    outer_iters = n_full // period
+    if outer_iters < 2:
+        return None
+
+    loop_loads = tuple(
+        _LoopLoad(
+            operand=j, source=source, buffer_name=buffer_name,
+            bases=(bp := _periodic_stride(seq, period))[0], stride=bp[1],
+        )
+        for (j, source, buffer_name), seq in zip(load_meta, load_seqs)
+    )
+
+    vector_data: dict[int, tuple[tuple[int, ...], int]] = {}
+    lane_data: dict[int, dict[int, tuple[tuple[int, ...], int]]] = {}
+    for kind, k, lane, seq in store_seqs:
+        result = _periodic_stride(seq, period)
+        assert result is not None
+        if kind == "vector":
+            vector_data[k] = result
+        else:
+            lane_data.setdefault(k, {})[lane] = result
+
+    loop_stores: list[_LoopStoreInfo] = []
+    local_twiddle_rows: list[tuple[float, float]] = []
+    twiddle_local_offset: dict[int, int] = {}
+    for k in range(n_outputs):
+        mode, destination, buffer_name = store_meta[k]
+        if mode == "vector":
+            bases, stride = vector_data[k]
+            loop_stores.append(
+                _LoopStoreInfo(
+                    output=k, destination=destination, buffer_name=buffer_name,
+                    mode="vector", bases=bases, stride=stride, lane_bases=None, lane_stride=None,
+                )
+            )
+        else:
+            lb = tuple(lane_data[k][lane][0] for lane in range(simd_lanes))
+            ls = tuple(lane_data[k][lane][1] for lane in range(simd_lanes))
+            loop_stores.append(
+                _LoopStoreInfo(
+                    output=k, destination=destination, buffer_name=buffer_name,
+                    mode="scalar_lanes", bases=None, stride=None, lane_bases=lb, lane_stride=ls,
+                )
+            )
+
+        if twiddle_needed[k]:
+            # Batch-major (not residue-major): batch b's row lands at
+            # table_offset + b*simd_lanes, so a fixed (residue, chunk, lane)
+            # steps by period*simd_lanes per outer_it -- see _emit_loop_chunk.
+            twiddle_local_offset[k] = len(local_twiddle_rows)
+            for b in full:
+                t = b.outputs[k].twiddle
+                assert t is not None
+                for lane in range(simd_lanes):
+                    local_twiddle_rows.append((t.real[lane], t.imag[lane]))
+
+    base = len(twiddle_table)
+    twiddle_table.extend(local_twiddle_rows)
+    loop_twiddles = {
+        k: _LoopTwiddleInfo(output=k, table_offset=base + off)
+        for k, off in twiddle_local_offset.items()
+    }
+
+    return _LoopStagePlan(
+        period=period,
+        outer_iters=outer_iters,
+        loads=loop_loads,
+        stores=tuple(loop_stores),
+        twiddles=loop_twiddles,
+        scales=scales,
+        tail_batch=tail[0] if tail else None,
+    )
+
+
+def _emit_load_loop(
+    e: Emitter, *, plan: FFTCodegenPlan, load: _LoopLoad, offset_expr: str, width: int
+) -> None:
+    j = load.operand
+    if load.source == "input":
+        e.add(
+            f"        var rr{j} = p.input_real_base.load[width={width}]("
+            f"in_batch_base + {offset_expr})"
+        )
+        e.add(
+            f"        var ii{j} = p.input_imag_base.load[width={width}]("
+            f"in_batch_base + {offset_expr})"
+        )
+    else:
+        assert load.buffer_name is not None
+        buf = _spad(plan.kernel_name, load.buffer_name)
+        e.add(
+            f"        var rr{j} = {buf}.load[DType.float32, {width}]("
+            f"spad_base + {offset_expr})"
+        )
+        e.add(
+            f"        var ii{j} = {buf}.load[DType.float32, {width}]("
+            f"spad_base + {plan.length} + {offset_expr})"
+        )
+
+
+def _emit_twiddle_loop(
+    e: Emitter, *, output: int, table_offset_expr: str, width: int
+) -> None:
+    k = output
+    e.add(
+        f"        var twr{k} = p.loop_twiddle_real_base.load[width={width}]("
+        f"{table_offset_expr})"
+    )
+    e.add(
+        f"        var twi{k} = p.loop_twiddle_imag_base.load[width={width}]("
+        f"{table_offset_expr})"
+    )
+    e.add(f"        var tr{k} = or{k} * twr{k} - oi{k} * twi{k}")
+    e.add(f"        var ti{k} = or{k} * twi{k} + oi{k} * twr{k}")
+    e.add(f"        or{k} = tr{k}")
+    e.add(f"        oi{k} = ti{k}")
+
+
+def _emit_store_loop(
+    e: Emitter, *, plan: FFTCodegenPlan, output: int, store: _LoopStoreInfo,
+    residue: int, chunk_offset: int, width: int,
+) -> None:
+    k = output
+    if store.mode == "vector":
+        assert store.bases is not None and store.stride is not None
+        base = store.bases[residue] + chunk_offset
+        offset_expr = f"({base} + outer_it * {store.stride})"
+        if store.destination == "output":
+            e.add(f"        p.output_real_base.store(out_batch_base + {offset_expr}, or{k})")
+            e.add(f"        p.output_imag_base.store(out_batch_base + {offset_expr}, oi{k})")
+        else:
+            assert store.buffer_name is not None
+            buf = _spad(plan.kernel_name, store.buffer_name)
+            e.add(f"        {buf}.store(spad_base + {offset_expr}, or{k})")
+            e.add(f"        {buf}.store(spad_base + {plan.length} + {offset_expr}, oi{k})")
+        return
+
+    assert store.lane_bases is not None and store.lane_stride is not None
+    for lane in range(width):
+        abs_lane = chunk_offset + lane
+        base = store.lane_bases[abs_lane][residue]
+        offset_expr = f"({base} + outer_it * {store.lane_stride[abs_lane]})"
+        if store.destination == "output":
+            e.add(f"        p.output_real_base.store(out_batch_base + {offset_expr}, or{k}[{lane}])")
+            e.add(f"        p.output_imag_base.store(out_batch_base + {offset_expr}, oi{k}[{lane}])")
+        else:
+            assert store.buffer_name is not None
+            buf = _spad(plan.kernel_name, store.buffer_name)
+            e.add(f"        {buf}.store(spad_base + {offset_expr}, or{k}[{lane}])")
+            e.add(f"        {buf}.store(spad_base + {plan.length} + {offset_expr}, oi{k}[{lane}])")
+
+
+def _emit_loop_chunk(
+    e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, loop_plan: _LoopStagePlan,
+    residue: int, chunk_offset: int, width: int,
+) -> None:
+    e.add(
+        f"        # ===== stage {stage.stage_id}, loop residue {residue} chunk offset "
+        f"{chunk_offset} (width {width}) ====="
+    )
+    for load in loop_plan.loads:
+        base = load.bases[residue] + chunk_offset
+        offset_expr = f"({base} + outer_it * {load.stride})"
+        _emit_load_loop(e, plan=plan, load=load, offset_expr=offset_expr, width=width)
+    e.add()
+
+    stores_by_k = {s.output: s for s in loop_plan.stores}
+    simd_lanes = plan.simd_lanes
+
+    def on_output(k: int) -> None:
+        tw = loop_plan.twiddles.get(k)
+        if tw is not None:
+            row_offset = tw.table_offset + residue * simd_lanes + chunk_offset
+            table_offset_expr = f"({row_offset} + outer_it * {loop_plan.period * simd_lanes})"
+            _emit_twiddle_loop(e, output=k, table_offset_expr=table_offset_expr, width=width)
+
+        scale = loop_plan.scales.get(k)
+        if scale is not None:
+            e.add(f"        or{k} *= {_f32(scale)}")
+            e.add(f"        oi{k} *= {_f32(scale)}")
+
+        _emit_store_loop(
+            e, plan=plan, output=k, store=stores_by_k[k],
+            residue=residue, chunk_offset=chunk_offset, width=width,
+        )
+        e.add()
+
+    emit_butterfly(e, indent="        ", radix=stage.radix, inverse=stage.inverse, on_output=on_output)
+    e.add()
+
+
+def _emit_loop_stage(
+    e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, loop_plan: _LoopStagePlan,
+    compute_lanes: int | None,
+) -> None:
+    simd_lanes = plan.simd_lanes
+    cl = compute_lanes if compute_lanes is not None else simd_lanes
+    n_chunks = (simd_lanes + cl - 1) // cl
+    period = loop_plan.period
+
+    body = Emitter()
+    for r in range(period):
+        for c in range(n_chunks):
+            chunk_offset = c * cl
+            width = min(cl, simd_lanes - chunk_offset)
+            if period > 1 or n_chunks > 1:
+                sub = Emitter()
+                _emit_loop_chunk(
+                    sub, plan=plan, stage=stage, loop_plan=loop_plan,
+                    residue=r, chunk_offset=chunk_offset, width=width,
+                )
+                body.add(f"        if True:  # residue {r} chunk {c}")
+                for line in sub.lines:
+                    body.add("    " + line if line else "")
+            else:
+                _emit_loop_chunk(
+                    body, plan=plan, stage=stage, loop_plan=loop_plan,
+                    residue=r, chunk_offset=chunk_offset, width=width,
+                )
+
+    e.add("        var outer_it = 0")
+    e.add(f"        while outer_it < {loop_plan.outer_iters}:")
+    for line in body.lines:
+        e.add("    " + line if line else "")
+    e.add("            outer_it += 1")
+    e.add()
+
+
 def _emit_batch(
     e: Emitter,
     *,
@@ -480,7 +962,14 @@ def _emit_batch(
 
 
 def _emit_stage(
-    e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, compute_lanes: int | None = None
+    e: Emitter,
+    *,
+    plan: FFTCodegenPlan,
+    stage: FFTStagePlan,
+    compute_lanes: int | None = None,
+    loop_stages: bool = False,
+    min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
+    twiddle_table: list[tuple[float, float]] | None = None,
 ) -> None:
     is_first = stage.stage_id == 0
     is_last = stage.stage_id == len(plan.stages) - 1
@@ -517,6 +1006,18 @@ def _emit_stage(
         )
     e.add()
 
+    if loop_stages:
+        assert twiddle_table is not None
+        loop_plan = _try_build_loop_stage(
+            stage, simd_lanes=plan.simd_lanes, min_full_batches=min_loop_batches,
+            twiddle_table=twiddle_table,
+        )
+        if loop_plan is not None:
+            _emit_loop_stage(e, plan=plan, stage=stage, loop_plan=loop_plan, compute_lanes=compute_lanes)
+            if loop_plan.tail_batch is not None:
+                _emit_stage_batches(e, plan=plan, stage=stage, batches=(loop_plan.tail_batch,), compute_lanes=compute_lanes)
+            return
+
     # Each batch's rr{k}/ii{k}/or{k}/oi{k} (and friends) are local to that
     # batch's own butterfly, not threads carried across batches -- but
     # _emit_batch always names them the same way regardless of batch_id, so
@@ -524,8 +1025,15 @@ def _emit_stage(
     # compute-width chunk within a batch -- see _chunk_batch) needs each
     # piece in its own block scope or the next one's `var rr0` redefines
     # the previous.
+    _emit_stage_batches(e, plan=plan, stage=stage, batches=stage.batches, compute_lanes=compute_lanes)
+
+
+def _emit_stage_batches(
+    e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan,
+    batches: tuple[SIMDBatchPlan, ...], compute_lanes: int | None,
+) -> None:
     pieces: list[tuple[int, SIMDBatchPlan]] = []
-    for batch in stage.batches:
+    for batch in batches:
         pieces.extend(
             _chunk_batch(
                 batch,
@@ -545,7 +1053,9 @@ def _emit_stage(
             _emit_batch(e, plan=plan, stage=stage, batch=piece, width=width)
 
 
-def _emit_params_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
+def _emit_params_struct(
+    e: Emitter, *, plan: FFTCodegenPlan, add_loop_twiddle: bool = False
+) -> None:
     e.add("@fieldwise_init")
     e.add(f"struct {plan.kernel_name}Params(Movable):")
     e.add("    var input_real_base: UnsafePointer[Float32, MutAnyOrigin]")
@@ -555,13 +1065,26 @@ def _emit_params_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
     if plan.large_twiddle is not None:
         e.add("    var large_twiddle_real_base: UnsafePointer[Float32, MutAnyOrigin]")
         e.add("    var large_twiddle_imag_base: UnsafePointer[Float32, MutAnyOrigin]")
+    if add_loop_twiddle:
+        # Shared per-kernel table pooling every looped stage's twiddle rows
+        # (see the runtime-loop stage rendering note above _try_build_loop_stage)
+        # -- always declared when the caller opts this kernel into loop_stages,
+        # even if no stage in it actually ends up looping, so the field doesn't
+        # depend on that per-stage outcome (see _emit_kernel).
+        e.add("    var loop_twiddle_real_base: UnsafePointer[Float32, MutAnyOrigin]")
+        e.add("    var loop_twiddle_imag_base: UnsafePointer[Float32, MutAnyOrigin]")
     e.add()
     e.add()
 
 
 def _emit_task_struct(
-    e: Emitter, *, plan: FFTCodegenPlan, compute_lanes: int | None = None
-) -> None:
+    e: Emitter,
+    *,
+    plan: FFTCodegenPlan,
+    compute_lanes: int | None = None,
+    loop_stages: bool = False,
+    min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
+) -> list[tuple[float, float]]:
     """The NDPTask struct: its scratchpad buffers (each uthread's own
     region, sized by scratchpad_uthread_stride -- see module docstring),
     its per-stage kernels, and device_main. Identical in shape whether this
@@ -571,6 +1094,17 @@ def _emit_task_struct(
     arithmetic instructions use, independent of `plan.simd_lanes` (the
     launch granule). `None` (the default) keeps every stage emitted at
     `plan.simd_lanes`, unchanged from before this parameter existed.
+
+    `loop_stages`: see the runtime-loop stage rendering note above
+    _try_build_loop_stage. `False` (the default) keeps every stage's
+    per-batch code fully unrolled, unchanged from before this parameter
+    existed. Returns the flat (real, imag) twiddle table every looped stage
+    of this kernel pooled its constants into -- empty when `loop_stages` is
+    `False` or no stage in this kernel qualified to loop. The caller (see
+    fft_transpose_codegen.generate_recursive_fft_kernels) owns turning this
+    into an actual DRAM buffer and passing it through this kernel's launch
+    Params, since that's a host/main()-level decision this module doesn't
+    make on its own.
     """
     e.add(f"struct {plan.kernel_name}(NDPTask):")
     e.add(f"    comptime Params = {plan.kernel_name}Params")
@@ -584,8 +1118,13 @@ def _emit_task_struct(
     if plan.scratchpad_buffers:
         e.add()
 
+    twiddle_table: list[tuple[float, float]] = []
     for stage in plan.stages:
-        _emit_stage(e, plan=plan, stage=stage, compute_lanes=compute_lanes)
+        _emit_stage(
+            e, plan=plan, stage=stage, compute_lanes=compute_lanes,
+            loop_stages=loop_stages, min_loop_batches=min_loop_batches,
+            twiddle_table=twiddle_table,
+        )
 
     e.add("    @staticmethod")
     e.add("    def device_main():")
@@ -593,13 +1132,24 @@ def _emit_task_struct(
         e.add(f"        launch_parallel[{plan.kernel_name}.stage_{stage.stage_id}]()")
     e.add()
     e.add()
+    return twiddle_table
 
 
-def _emit_kernel(e: Emitter, *, plan: FFTCodegenPlan, compute_lanes: int | None = None) -> None:
+def _emit_kernel(
+    e: Emitter,
+    *,
+    plan: FFTCodegenPlan,
+    compute_lanes: int | None = None,
+    loop_stages: bool = False,
+    min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
+) -> list[tuple[float, float]]:
     e.add(f"comptime MAX_UTHREAD_{plan.kernel_name} = {plan.max_uthread}")
     e.add()
-    _emit_params_struct(e, plan=plan)
-    _emit_task_struct(e, plan=plan, compute_lanes=compute_lanes)
+    _emit_params_struct(e, plan=plan, add_loop_twiddle=loop_stages)
+    return _emit_task_struct(
+        e, plan=plan, compute_lanes=compute_lanes,
+        loop_stages=loop_stages, min_loop_batches=min_loop_batches,
+    )
 
 
 def _emit_prelude(e: Emitter) -> None:

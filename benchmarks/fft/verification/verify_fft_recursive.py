@@ -24,7 +24,12 @@ from planning.fft_plan_recursive import (
     make_recursive_transpose_plan,
 )
 from codegen.fft_codegen import Emitter
-from codegen.fft_transpose_codegen import _emit_physical_transpose_stage, flatten_recursive_node
+from codegen.fft_transpose_codegen import (
+    _emit_physical_transpose_stage,
+    _needs_q_table,
+    _needs_tr_table,
+    flatten_recursive_node,
+)
 from verification.verify_fft_harness import Ptr, _simd, _translate_emitted_lines, run_kernel
 
 
@@ -53,6 +58,24 @@ def run_physical_transpose(
         assert tw_real is not None and tw_imag is not None
         p_ns.twiddle_real_base = tw_real
         p_ns.twiddle_imag_base = tw_imag
+    # Same tables _emit_physical_transpose_stage reads at runtime when a
+    # non-power-of-2 tiles_per_replica/grid_cols would otherwise need a
+    # `mulhsu`-lowering `//`/`%` (see _needs_q_table/_needs_tr_table) --
+    # filled the same way generate_recursive_fft_kernels's own host main()
+    # does, plain Python `//` here since this harness never touches the
+    # simulator at all.
+    if _needs_q_table(plan):
+        tiles_per_replica = plan.grid_rows * plan.grid_cols
+        q_table = Ptr(plan.total_uthreads)
+        for tid in range(plan.total_uthreads):
+            q_table[tid] = tid // tiles_per_replica
+        p_ns.q_table = q_table
+    if _needs_tr_table(plan):
+        tiles_per_replica = plan.grid_rows * plan.grid_cols
+        t_r_table = Ptr(tiles_per_replica)
+        for lt in range(tiles_per_replica):
+            t_r_table[lt] = lt // plan.grid_cols
+        p_ns.t_r_table = t_r_table
     current = {"global_id": 0, "local_id": 0}
     src = _translate_physical_transpose_stage(plan)
     namespace = {
@@ -169,11 +192,22 @@ def verify_recursive_tree_index_only(node: FFTLeafPlan | FFTRecursiveNodePlan) -
     verify_physical_transpose_shape(node.post_transpose)
 
 
-def run_recursive_plan(plan: RecursiveFFTPlan, x: np.ndarray) -> np.ndarray:
+def run_recursive_plan(
+    plan: RecursiveFFTPlan, x: np.ndarray, *, loop_stages: bool = True
+) -> np.ndarray:
     """Full numeric chain: every stage's *actual emitted* text is
     translated and re-executed (run_kernel for FFT leaves,
     run_physical_transpose for PRE/MIDDLE/POST transposes) -- same
-    discipline as every other run_* helper in this file."""
+    discipline as every other run_* helper in this file.
+
+    `loop_stages` defaults to `True` to match
+    generate_recursive_fft_kernels's own default (see
+    fft_transpose_codegen.generate_recursive_fft_kernels): the actual
+    kernels this strategy emits render looped stages unless a caller opts
+    out, so verifying with the unrolled (`False`) path by default would
+    leave the runtime-loop rendering (`_try_build_loop_stage`/
+    `_emit_loop_stage`) numerically unchecked.
+    """
     n = plan.n
     stages = flatten_recursive_node(plan.root)
     cur_r, cur_i = Ptr(n), Ptr(n)
@@ -192,7 +226,10 @@ def run_recursive_plan(plan: RecursiveFFTPlan, x: np.ndarray) -> np.ndarray:
                 run_physical_transpose(stage, src_real=cur_r, src_imag=cur_i, dst_real=next_r, dst_imag=next_i)
         else:
             assert stage.large_twiddle is None
-            run_kernel(stage, input_real=cur_r, input_imag=cur_i, output_real=next_r, output_imag=next_i)
+            run_kernel(
+                stage, input_real=cur_r, input_imag=cur_i, output_real=next_r, output_imag=next_i,
+                loop_stages=loop_stages,
+            )
         cur_r, cur_i = next_r, next_i
     return cur_r.arr + 1j * cur_i.arr
 
@@ -200,6 +237,7 @@ def run_recursive_plan(plan: RecursiveFFTPlan, x: np.ndarray) -> np.ndarray:
 def verify_recursive_plan(
     n: int, *, scratchpad_byte_budget: int, inverse: bool, seed: int,
     tile_rows: int | None = None, tile_cols: int | None = None,
+    loop_stages: bool = True,
 ) -> tuple[float, RecursiveFFTPlan]:
     plan = make_recursive_transpose_plan(
         n, scratchpad_byte_budget=scratchpad_byte_budget, inverse=inverse,
@@ -207,7 +245,7 @@ def verify_recursive_plan(
     )
     rng = np.random.default_rng(seed)
     x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
-    got = run_recursive_plan(plan, x)
+    got = run_recursive_plan(plan, x, loop_stages=loop_stages)
     expected = np.fft.ifft(x) if inverse else np.fft.fft(x)
     return float(np.max(np.abs(got - expected))), plan
 

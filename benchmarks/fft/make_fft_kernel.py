@@ -49,6 +49,40 @@ from planning.fft_plan_recursive import make_recursive_transpose_plan
 # discussion below and docs/STATUS.md).
 _LMUL1_FLOAT32_LANES = 4
 
+# One NDP unit's own scratchpad, bytes -- matches `spad_size` in
+# third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config and
+# `spad (rw) : ORIGIN = 0, LENGTH = 128K` in scripts/m2ndp.lds (both
+# 131072); duplicated here for the same reason `_LMUL1_FLOAT32_LANES` is --
+# there's no single place in this repo both the C++ simulator config and
+# this Python planner could read it from. A margin below the real 131072
+# (rather than that exact figure) leaves room for a kernel's own Params
+# struct and other scratchpad-resident globals (see scripts/m2ndp.lds's own
+# docstring: "the globals are laid out from" the scratchpad base), which
+# _cap_max_uthread has no visibility into and so cannot budget for itself.
+_SPAD_CAPACITY_BYTES = 120 * 1024
+
+# A cap on `max_uthread * bytes_per_uthread` -- how many bytes of
+# scratchpad may be concurrently active across every uthread resident on
+# one NDP unit at once, independent of how many total bytes
+# _SPAD_CAPACITY_BYTES alone would allow. Found by hand on N=8192's
+# FFTRecNear0 (4096 bytes/uthread -- length 256, ping-pong-doubled: see
+# fft_plan_core._build_plan's own `bytes_per_uthread = len(buffer_names) *
+# scratchpad_stride * 4`, not FFTCodegenPlan.scratchpad_uthread_stride
+# alone, which is only one buffer's share): 16 concurrent uthreads (65536
+# bytes) finishes in ~90,000 simulated cycles; 30 (122880 bytes) blew
+# *past* the simulator's fixed 20,000,000-cycle-per-launch budget for the
+# exact same kernel and data. 16 * 4096 = 65536 is the largest
+# *confirmed-safe* point on that line, so that's the budget here -- not a
+# fitted formula. A flat uthread-*count* cap (always 16) was tried first
+# and also fixes this, but then wrongly re-caps kernels whose own
+# footprint was never at risk (e.g. N=1024's FFTRecLeaf1 at 64 bytes/
+# uthread, fine at 256 concurrent uthreads -- 16384 bytes total), forcing
+# them into extra small launches that only add per-launch overhead.
+# Capping the byte product instead leaves those uncapped while still
+# catching Near0-shaped kernels at any N. See _cap_max_uthread's own
+# docstring.
+_MAX_CONCURRENT_SCRATCHPAD_BYTES = 16 * 4096
+
 
 def make_fft_kernel(
     n: int,
@@ -105,6 +139,8 @@ def make_fft_kernel(
         tile_rows=tile_rows,
         tile_cols=tile_cols,
         inverse=inverse,
+        spad_capacity_bytes=_SPAD_CAPACITY_BYTES,
+        max_concurrent_scratchpad_bytes=_MAX_CONCURRENT_SCRATCHPAD_BYTES,
     )
     source = generate_recursive_fft_kernels(plan, compute_lanes=compute_lanes)
 

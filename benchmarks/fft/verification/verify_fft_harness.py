@@ -23,13 +23,19 @@ import types
 
 import numpy as np
 
-from codegen.fft_codegen import Emitter, _emit_stage
+from codegen.fft_codegen import Emitter, _LOOP_MIN_FULL_BATCHES, _emit_stage
 from planning.fft_plan_core import FFTCodegenPlan
 
 _VAR_RE = re.compile(r"^(\s*)var ")
 _COMPTIME_RE = re.compile(r"^(\s*)comptime ")
-_LOAD_W_RE = re.compile(r"\.load\[width=(\w+)\]\(([^()]*)\)")
-_LOAD_DT_RE = re.compile(r"\.load\[DType\.float32,\s*(\w+)\]\(([^()]*)\)")
+# The offset argument allows one level of nested parens (e.g. loop_stages'
+# own `base + outer_it * stride` offset expressions are wrapped in an extra
+# `(...)` -- see fft_codegen._emit_load_loop/_emit_twiddle_loop) -- plain
+# `[^()]*` would stop at the first inner `(` and leave the rest of the line
+# untranslated (a SyntaxError from the still-Mojo `.load[width=...]` call).
+_PAREN_ARG = r"(?:[^()]|\([^()]*\))*"
+_LOAD_W_RE = re.compile(rf"\.load\[width=(\w+)\]\(({_PAREN_ARG})\)")
+_LOAD_DT_RE = re.compile(rf"\.load\[DType\.float32,\s*(\w+)\]\(({_PAREN_ARG})\)")
 _SIMD_RE = re.compile(r"SIMD\[DType\.float32,\s*\w+\]\(")
 
 
@@ -62,9 +68,19 @@ def _translate_emitted_lines(lines: list[str]) -> str:
 
 
 
-def _translate_stage(plan: FFTCodegenPlan, stage) -> str:
+def _translate_stage(
+    plan: FFTCodegenPlan,
+    stage,
+    *,
+    loop_stages: bool = False,
+    min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
+    twiddle_table: list[tuple[float, float]] | None = None,
+) -> str:
     e = Emitter()
-    _emit_stage(e, plan=plan, stage=stage)
+    _emit_stage(
+        e, plan=plan, stage=stage, loop_stages=loop_stages,
+        min_loop_batches=min_loop_batches, twiddle_table=twiddle_table,
+    )
     return _translate_emitted_lines(e.lines)
 
 
@@ -117,6 +133,17 @@ class Ptr:
             flat = value.reshape(-1)
             self.arr[offset : offset + flat.size] = flat
 
+    def __getitem__(self, offset: int) -> float:
+        """`ptr[i]`, Mojo's scalar `UnsafePointer.__getitem__` -- distinct
+        from `.load(offset, width)` (a vector load): the recursive-plan
+        transpose stages read q_table/t_r_table this way (see
+        _emit_physical_transpose_stage), a plain scalar dereference, never
+        a SIMD one."""
+        return float(self.arr[int(offset)])
+
+    def __setitem__(self, offset: int, value: float) -> None:
+        self.arr[int(offset)] = float(value)
+
 
 def _simd(*args: float) -> SimdVec:
     return np.array(args, dtype=np.float64).view(SimdVec)
@@ -131,6 +158,8 @@ def run_kernel(
     output_imag: Ptr,
     large_twiddle_real: Ptr | None = None,
     large_twiddle_imag: Ptr | None = None,
+    loop_stages: bool = False,
+    min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
 ) -> None:
     """Run every stage of `plan`'s device_main, for every uthread, by
     exec()ing the actual text fft_codegen.py emits for each stage -- the
@@ -144,6 +173,14 @@ def run_kernel(
     instance ("one instance per core," not one shared array for the whole
     launch -- docs/INTERFACE.md), and `local_uthread_id() = global_id %
     max_uthread` indexes within it.
+
+    `loop_stages`/`min_loop_batches`: mirrors the same-named
+    `_emit_task_struct` parameters -- every stage is translated with these
+    threaded through in plan.stages order (a single shared `twiddle_table`
+    list, exactly as `_emit_task_struct` builds it) *before* any stage
+    runs, since `loop_twiddle_real_base`/`imag_base` is one per-kernel host
+    table every looped stage's own emitted code indexes into (see
+    fft_codegen._try_build_loop_stage), not something rebuilt per stage.
     """
     num_groups = -(-plan.total_uthreads // plan.max_uthread)  # ceil div
     group_namespaces: list[types.SimpleNamespace] = []
@@ -164,10 +201,26 @@ def run_kernel(
         p_ns.large_twiddle_real_base = large_twiddle_real
         p_ns.large_twiddle_imag_base = large_twiddle_imag
 
+    twiddle_table: list[tuple[float, float]] = []
+    stage_sources = {
+        stage.stage_id: _translate_stage(
+            plan, stage, loop_stages=loop_stages, min_loop_batches=min_loop_batches,
+            twiddle_table=twiddle_table,
+        )
+        for stage in plan.stages
+    }
+    if loop_stages and twiddle_table:
+        loop_twiddle_real = Ptr(len(twiddle_table))
+        loop_twiddle_imag = Ptr(len(twiddle_table))
+        loop_twiddle_real.arr[:] = [row[0] for row in twiddle_table]
+        loop_twiddle_imag.arr[:] = [row[1] for row in twiddle_table]
+        p_ns.loop_twiddle_real_base = loop_twiddle_real
+        p_ns.loop_twiddle_imag_base = loop_twiddle_imag
+
     current = {"global_id": 0, "local_id": 0}
 
     for stage in plan.stages:
-        src = _translate_stage(plan, stage)
+        src = stage_sources[stage.stage_id]
         namespace = {
             "Float32": float,
             "SIMD": _simd,

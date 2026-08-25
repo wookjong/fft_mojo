@@ -541,6 +541,46 @@ def main() -> None:
             if not ok:
                 failures.append(tag)
 
+    print()
+    print("  loop_stages runtime-loop rendering (real emitted code vs. numpy.fft/ifft):")
+    # verify_recursive_plan defaults to loop_stages=True (matching
+    # generate_recursive_fft_kernels's own default -- see
+    # verify_fft_recursive.run_recursive_plan's docstring), so every case
+    # above already numerically exercises the looped-stage rendering
+    # (_try_build_loop_stage/_emit_loop_stage), not just the fully-unrolled
+    # one. These cases specifically straddle _LOOP_MIN_FULL_BATCHES (a
+    # stage needs >= this many full SIMD batches to loop at all -- see
+    # fft_codegen.py's module note above _LOOP_MIN_FULL_BATCHES): N=1024 is
+    # a power of 2, so a stage's full-batch count only ever lands on a
+    # power of 2 (N/radix/simd_lanes) -- it can never equal
+    # _LOOP_MIN_FULL_BATCHES==3 exactly, only step from 2 (just below, so
+    # _try_build_loop_stage must still fall back to the unrolled tail
+    # rendering under loop_stages=True) to 4 (just above, so it loops).
+    # budget=4096 is the specific N=1024 case _try_build_loop_stage's own
+    # docstring calls out by name (FFTRecNear0 stages 4/5/6 need period
+    # 2/4/8, doubling in step with the stage's own cumulative radix
+    # product) -- kept as an explicit case since it's the one this repo's
+    # own comments already reason about. The last case pins the opposite
+    # default (loop_stages=False) so the fully-unrolled path some other
+    # caller could still request from this same strategy stays covered
+    # too, not just the True default every case above already exercises.
+    loop_stage_cases: list[tuple[str, int, int, bool]] = [
+        ("N=1024 below _LOOP_MIN_FULL_BATCHES (full batches=2, falls back to unroll)", 1024, 512, True),
+        ("N=1024 above _LOOP_MIN_FULL_BATCHES (full batches=4, loops)", 1024, 1024, True),
+        ("N=1024 period-doubling (FFTRecNear0 stages 4/5/6, periods 2/4/8)", 1024, 256 * 16, True),
+        ("N=960 loop_stages explicitly disabled", 960, 32 * 16, False),
+    ]
+    for label, n, budget, loop_stages in loop_stage_cases:
+        for inverse in (False, True):
+            err, plan = verify_recursive_plan(
+                n, scratchpad_byte_budget=budget, inverse=inverse, seed=31, loop_stages=loop_stages,
+            )
+            ok = err <= tolerance
+            tag = f"{label} (n={n} budget={budget} loop_stages={loop_stages} inverse={inverse})"
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
     # deep (3-level) recursion with a tile shape that forces both row and
     # column tail branches, forward + inverse.
     n_deep = 2 * 3 * 5 * 7 * 11
