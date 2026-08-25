@@ -165,12 +165,21 @@ for LEN in "${LENGTHS[@]}"; do
         FAIL_N=$((FAIL_N + 1)); SUMMARY+=("N=$LEN: BUILD FAILED"); continue
     fi
 
-    SPILL_NOTE=""
-    grep -qi "spills to memory" "$WORK/build_${LEN}.log" && SPILL_NOTE=" ${Y}(spill warning!)${N}"
-
     RUN_LOG="$WORK/run_${LEN}.log"
     timeout "$RUN_TIMEOUT" "$WORK/bin_${LEN}" >"$RUN_LOG" 2>&1
     RC=$?
+
+    # Each generated kernel is its own task.elf, linked into the simulator
+    # lazily at launch time (not by the single `mojo build` above) -- a
+    # spill warning is a diagnostic from *that* link step, so it lands in
+    # RUN_LOG, never in build_${LEN}.log (confirmed: N=1024 baseline
+    # without loop_stages spills a 464-byte frame that lowers to `vs1r.v`,
+    # an instruction the simulator's decoder doesn't implement -- that
+    # shows up only here, as "M2NDP kernel spills to memory" followed by
+    # "[error] Unimplemented or Invalid Instruction" in RUN_LOG, while
+    # build_${LEN}.log stays clean and this note used to never fire).
+    SPILL_NOTE=""
+    grep -qi "spills to memory" "$RUN_LOG" && SPILL_NOTE=" ${Y}(spill warning!)${N}"
 
     if [ "$RC" -ne 0 ]; then
         printf "${R}[SIMULATOR CRASHED]${N} (exit %s)%b\n" "$RC" "$SPILL_NOTE"
