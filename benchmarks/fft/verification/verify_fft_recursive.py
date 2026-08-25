@@ -27,6 +27,7 @@ from codegen.fft_codegen import Emitter
 from codegen.fft_transpose_codegen import (
     _emit_physical_transpose_stage,
     _needs_q_table,
+    _needs_round_split,
     _needs_tr_table,
     flatten_recursive_node,
 )
@@ -76,6 +77,21 @@ def run_physical_transpose(
         for lt in range(tiles_per_replica):
             t_r_table[lt] = lt // plan.grid_cols
         p_ns.t_r_table = t_r_table
+    if _needs_round_split(plan):
+        # On real hardware this is generate_recursive_fft_kernels' own
+        # per-round host constant (`r * plan.max_uthread`, added once so
+        # `tile_id` stays absolute across a stage split into several
+        # `.launch()` calls -- see the round loop there). This harness
+        # runs every uthread in one Python pass over the *whole*
+        # 0..total_uthreads-1 range instead of one pass per round, so
+        # `global_uthread_id()` is already absolute on its own -- 0 leaves
+        # `tile_id = global_uthread_id() + p.round_offset` exactly the
+        # `tile_id = global_uthread_id()` every non-round-split plan
+        # computes, only present here because the emitted Params struct
+        # always declares the field once `_needs_round_split` is true (see
+        # _emit_physical_transpose_params_struct), whether or not this
+        # particular translate/exec call cares about rounds.
+        p_ns.round_offset = 0
     current = {"global_id": 0, "local_id": 0}
     src = _translate_physical_transpose_stage(plan)
     namespace = {
@@ -238,10 +254,33 @@ def verify_recursive_plan(
     n: int, *, scratchpad_byte_budget: int, inverse: bool, seed: int,
     tile_rows: int | None = None, tile_cols: int | None = None,
     loop_stages: bool = True,
+    spad_capacity_bytes: int | None = None,
+    max_concurrent_scratchpad_bytes: int | None = None,
 ) -> tuple[float, RecursiveFFTPlan]:
+    """`spad_capacity_bytes`/`max_concurrent_scratchpad_bytes`: both `None`
+    by default (unchanged from before either existed) -- pass a
+    `max_concurrent_scratchpad_bytes` small enough to force some kernel's
+    own `max_uthread < total_uthreads` to numerically exercise
+    generate_recursive_fft_kernels' round-split launches (see
+    _cap_max_uthread/_needs_round_split). This only checks the *stage
+    body*'s own address formula stays correct once max_uthread is capped
+    (global_uthread_id() * row_stride + base, same value whether summed as
+    one absolute range here or as round*max_uthread + a per-round-relative
+    id against a round-shifted base pointer on real hardware -- the two
+    are algebraically identical) -- run_kernel/run_physical_transpose only
+    ever re-execute a stage's own emitted text, never
+    generate_recursive_fft_kernels' own host-level round loop /
+    round_offset-add / pointer-offset arithmetic that decides *how many*
+    rounds a stage's launch actually splits into, so a bug confined to
+    that host-level loop is invisible here regardless of this parameter --
+    only the real Mojo -> llc -> M2NDP-Detour toolchain (run_fft_test.sh)
+    re-executes that.
+    """
     plan = make_recursive_transpose_plan(
         n, scratchpad_byte_budget=scratchpad_byte_budget, inverse=inverse,
         tile_rows=tile_rows, tile_cols=tile_cols,
+        spad_capacity_bytes=spad_capacity_bytes,
+        max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
     rng = np.random.default_rng(seed)
     x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)

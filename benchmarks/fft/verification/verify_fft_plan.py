@@ -581,6 +581,38 @@ def main() -> None:
             if not ok:
                 failures.append(tag)
 
+    print()
+    print("  round-split launches and non-power-of-2 tile-count lookup tables (real emitted code vs. numpy.fft/ifft):")
+    # Both _needs_round_split (generate_recursive_fft_kernels' own launch
+    # split once max_uthread < total_uthreads -- see
+    # verify_recursive_plan's own docstring for exactly what this harness
+    # can and cannot check about it) and _needs_q_table (the
+    # replica_count > 1 branch of the mulhsu-avoidance tables -- the
+    # sibling _needs_tr_table branch is already exercised by the n=60/210
+    # cases above, both of which have grid_cols=3/5) had zero regression
+    # coverage before this: nothing above ever passes
+    # max_concurrent_scratchpad_bytes, and no existing case's tiling
+    # happens to produce a replica_count > 1 node. n=98 tile=3x2 was found
+    # by sweeping random (n, tile_rows, tile_cols) triples for one whose
+    # PRE/POST transpose lands at replica_count=7, grid=3x1 (tiles_per_
+    # replica=3, non-power-of-2) -- not a specially-constructed N, just the
+    # first hit.
+    round_split_cases: list[tuple[str, int, int, int | None, int | None, int | None]] = [
+        ("N=960 max_concurrent_scratchpad_bytes forces every kernel to round-split", 960, 512, None, None, 3840),
+        ("N=98 tile=3x2 exercises _needs_q_table (replica_count=7, grid=3x1)", 98, 196, 3, 2, None),
+    ]
+    for label, n, budget, tile_rows, tile_cols, cap in round_split_cases:
+        for inverse in (False, True):
+            err, plan = verify_recursive_plan(
+                n, scratchpad_byte_budget=budget, inverse=inverse, seed=53,
+                tile_rows=tile_rows, tile_cols=tile_cols, max_concurrent_scratchpad_bytes=cap,
+            )
+            ok = err <= tolerance
+            tag = f"{label} (n={n} budget={budget} inverse={inverse})"
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
     # deep (3-level) recursion with a tile shape that forces both row and
     # column tail branches, forward + inverse.
     n_deep = 2 * 3 * 5 * 7 * 11
