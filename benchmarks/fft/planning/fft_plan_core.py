@@ -708,6 +708,30 @@ def _make_store(
         n2 = bfly // p_s
         b_s = bfly % p_s
         offsets.append(n2 * group_stride + output * p_s + b_s)
+
+    # Store vectorization: `offsets` is already exact (every lane's real
+    # destination, computed above) -- whether consecutive lanes land on
+    # consecutive addresses is a fact about *this* batch's own offsets,
+    # not a new layout decision, so promoting to a single vector store
+    # whenever that fact holds is still purely this function's job, same
+    # as the last-stage branch above already does for the DRAM case.
+    # `p_s >= simd_lanes` is when this is true in practice (this stage's
+    # cumulative radix product has grown past one SIMD batch, so `n2`
+    # stays constant across the whole batch and `b_s` alone walks
+    # consecutively) -- checked directly here rather than trusted, so nothing
+    # downstream has to know why. Full-width only (`valid_lanes ==
+    # simd_lanes`): a tail batch keeps the always-safe scalar_lanes path,
+    # exactly the "otherwise -> scalar_lanes" fallback fft_codegen.py's own
+    # _chunk_store leans on for compute_lanes-sized sub-slices later.
+    if valid_lanes == simd_lanes and all(
+        offsets[i] == offsets[0] + i for i in range(1, valid_lanes)
+    ):
+        return StorePlan(
+            destination="scratchpad",
+            buffer_name=write_buffer,
+            mode="vector",
+            base_offset=offsets[0],
+        )
     return StorePlan(
         destination="scratchpad",
         buffer_name=write_buffer,

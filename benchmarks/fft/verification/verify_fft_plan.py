@@ -25,8 +25,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codegen.fft_butterflies import SUPPORTED_RADICES
-from codegen.fft_codegen import _mapping_base_expr
-from planning.fft_plan_core import _prime_factors_supported, max_effective_stride, summarize_multi_kernel_plan
+from codegen.fft_codegen import _chunk_store, _mapping_base_expr
+from planning.fft_plan_core import (
+    StorePlan,
+    _make_store,
+    _prime_factors_supported,
+    _StageLayout,
+    max_effective_stride,
+    summarize_multi_kernel_plan,
+)
 from planning.fft_plan_simple import make_decomposed_plan
 from planning.fft_plan_multikernel import _choose_side_chunks, factor_into_kernel_chunks, make_multi_kernel_plan
 from planning.fft_plan_balanced import _build_batched_side, make_balanced_plan, make_balanced_transpose_plan
@@ -612,6 +619,96 @@ def main() -> None:
             print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
             if not ok:
                 failures.append(tag)
+
+    print()
+    print("  Store vectorization (_make_store, direct unit checks):")
+
+    def _layout(*, radix: int, twiddle_lane_divisor: int) -> _StageLayout:
+        return _StageLayout(
+            radix=radix,
+            butterfly_count=64,
+            input_batch_width=8,
+            input_stride=8,
+            output_batch_width=8,
+            output_stride=1,
+            twiddle_modulus=64,
+            twiddle_stride=1,
+            twiddle_lane_divisor=twiddle_lane_divisor,
+        )
+
+    store_unit_cases: list[tuple[str, StorePlan, str]] = [
+        (
+            "full-width, p_s >= simd_lanes: contiguous -> vector",
+            _make_store(
+                last_stage=False, write_buffer="buf", layout=_layout(radix=2, twiddle_lane_divisor=8),
+                simd_it=1, output=0, valid_lanes=8, simd_lanes=8,
+            ),
+            "vector",
+        ),
+        (
+            "full-width, p_s < simd_lanes: not contiguous -> scalar_lanes",
+            _make_store(
+                last_stage=False, write_buffer="buf", layout=_layout(radix=2, twiddle_lane_divisor=1),
+                simd_it=1, output=0, valid_lanes=8, simd_lanes=8,
+            ),
+            "scalar_lanes",
+        ),
+        (
+            "tail batch, p_s >= simd_lanes (would-be-contiguous): still scalar_lanes",
+            _make_store(
+                last_stage=False, write_buffer="buf", layout=_layout(radix=2, twiddle_lane_divisor=8),
+                simd_it=1, output=0, valid_lanes=5, simd_lanes=8,
+            ),
+            "scalar_lanes",
+        ),
+    ]
+    for label, store, expected_mode in store_unit_cases:
+        ok = store.mode == expected_mode and store.destination == "scratchpad" and store.buffer_name == "buf"
+        if store.mode == "vector":
+            ok = ok and store.base_offset is not None
+        else:
+            ok = ok and len(store.lane_offsets) == (5 if "tail" in label else 8)
+        tag = f"_make_store: {label}"
+        print(f"    {'OK  ' if ok else 'FAIL'} {tag}: mode={store.mode}")
+        if not ok:
+            failures.append(tag)
+
+    print()
+    print("  Store vectorization (_chunk_store, compute_lanes sub-slice promotion, direct unit checks):")
+    chunk_store_cases: list[tuple[str, StorePlan, int, int, str, int | None]] = [
+        (
+            "contiguous first chunk of a non-contiguous full batch -> vector",
+            StorePlan(destination="scratchpad", buffer_name="buf", mode="scalar_lanes", lane_offsets=(0, 1, 2, 3, 16, 17, 18, 19)),
+            0, 4, "vector", 0,
+        ),
+        (
+            "contiguous second chunk of a non-contiguous full batch -> vector",
+            StorePlan(destination="scratchpad", buffer_name="buf", mode="scalar_lanes", lane_offsets=(0, 1, 2, 3, 16, 17, 18, 19)),
+            4, 4, "vector", 16,
+        ),
+        (
+            "non-contiguous chunk -> stays scalar_lanes",
+            StorePlan(destination="scratchpad", buffer_name="buf", mode="scalar_lanes", lane_offsets=(0, 1, 4, 5, 8, 9, 12, 13)),
+            0, 4, "scalar_lanes", None,
+        ),
+        (
+            "chunk reaching past a tail batch's valid_lanes -> stays scalar_lanes (never promoted)",
+            StorePlan(destination="scratchpad", buffer_name="buf", mode="scalar_lanes", lane_offsets=(0, 1, 2, 3, 4)),
+            4, 4, "scalar_lanes", None,
+        ),
+        (
+            "already-vector store just carries its offset forward",
+            StorePlan(destination="scratchpad", buffer_name="buf", mode="vector", base_offset=8),
+            4, 4, "vector", 12,
+        ),
+    ]
+    for label, store, offset, width, expected_mode, expected_base in chunk_store_cases:
+        chunked = _chunk_store(store, offset, width)
+        ok = chunked.mode == expected_mode and chunked.base_offset == expected_base
+        tag = f"_chunk_store: {label}"
+        print(f"    {'OK  ' if ok else 'FAIL'} {tag}: mode={chunked.mode} base_offset={chunked.base_offset}")
+        if not ok:
+            failures.append(tag)
 
     # deep (3-level) recursion with a tile shape that forces both row and
     # column tail branches, forward + inverse.

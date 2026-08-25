@@ -384,11 +384,38 @@ def _chunk_store(store: StorePlan, offset: int, width: int) -> StorePlan:
     # than `plan.simd_lanes` (a tail batch) -- slicing past its end (a
     # chunk entirely beyond valid_lanes) yields the empty tuple, which is
     # exactly right: nothing in that chunk is ever written.
+    sliced = store.lane_offsets[offset : offset + width]
+    # Store vectorization, compute_lanes case: the planner already
+    # promotes a full simd_lanes-wide store to "vector" whenever its own
+    # offsets are contiguous (fft_plan_core._make_store) -- but a store
+    # that stays "scalar_lanes" at simd_lanes width can still have a
+    # contiguous compute_lanes-wide *sub*-slice (e.g. simd_lanes=8 offsets
+    # [0,1,2,3,16,17,18,19]: not contiguous as a whole, but each
+    # compute_lanes=4 chunk is). This is not a new layout decision --
+    # `sliced` is exactly the same exact destination offsets the planner
+    # already computed, just windowed to this one compute chunk -- so
+    # asking whether *this* window happens to be contiguous is the same
+    # equivalent-instruction-selection question _make_store itself asks
+    # at the full simd_lanes width, only re-asked at compute_lanes
+    # granularity because that's the width the emitted arithmetic (and
+    # thus the store instruction sitting right after it) actually uses.
+    # `len(sliced) == width` excludes a chunk that reaches past
+    # valid_lanes (a tail) -- never promoted, so a partial chunk keeps
+    # writing exactly the lanes it always did.
+    if len(sliced) == width and all(
+        sliced[i] == sliced[0] + i for i in range(1, width)
+    ):
+        return StorePlan(
+            destination=store.destination,
+            buffer_name=store.buffer_name,
+            mode="vector",
+            base_offset=sliced[0],
+        )
     return StorePlan(
         destination=store.destination,
         buffer_name=store.buffer_name,
         mode="scalar_lanes",
-        lane_offsets=store.lane_offsets[offset : offset + width],
+        lane_offsets=sliced,
     )
 
 
@@ -839,6 +866,36 @@ def _emit_store_loop(
         return
 
     assert store.lane_bases is not None and store.lane_stride is not None
+    # Store vectorization, loop-stage case: mirrors _chunk_store's own
+    # equivalent-instruction-selection exactly, just against this
+    # renderer's own per-lane representation (_LoopStagePlan.lane_bases/
+    # lane_stride, filled in _try_build_loop_stage from the same exact
+    # StorePlan.lane_offsets fft_plan_core._make_store already computed --
+    # nothing here recomputes an address). This width-wide slice of lanes
+    # can share one vector store exactly when both hold: the lanes' own
+    # bases are contiguous (stride 1, same fact _chunk_store checks) *and*
+    # every one of them advances by the same amount per outer-loop
+    # iteration (`lane_stride` uniform across the slice) -- only then does
+    # a single `+ outer_it * stride` term stay correct for every lane the
+    # vector store would cover at once. Not a new layout decision: every
+    # value compared below was already fixed by the planner.
+    lane_range = range(chunk_offset, chunk_offset + width)
+    bases = [store.lane_bases[lane][residue] for lane in lane_range]
+    strides = [store.lane_stride[lane] for lane in lane_range]
+    if width > 0 and all(s == strides[0] for s in strides) and all(
+        bases[i] == bases[0] + i for i in range(1, width)
+    ):
+        offset_expr = f"({bases[0]} + outer_it * {strides[0]})"
+        if store.destination == "output":
+            e.add(f"        p.output_real_base.store(out_batch_base + {offset_expr}, or{k})")
+            e.add(f"        p.output_imag_base.store(out_batch_base + {offset_expr}, oi{k})")
+        else:
+            assert store.buffer_name is not None
+            buf = _spad(plan.kernel_name, store.buffer_name)
+            e.add(f"        {buf}.store(spad_base + {offset_expr}, or{k})")
+            e.add(f"        {buf}.store(spad_base + {plan.length} + {offset_expr}, oi{k})")
+        return
+
     for lane in range(width):
         abs_lane = chunk_offset + lane
         base = store.lane_bases[abs_lane][residue]
