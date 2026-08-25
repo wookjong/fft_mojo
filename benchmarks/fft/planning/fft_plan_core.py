@@ -490,6 +490,7 @@ def _cap_max_uthread(
     spad_capacity_bytes: int | None,
     *,
     context: str,
+    max_concurrent_scratchpad_bytes: int | None = None,
 ) -> int:
     """How many of `total_uthreads` fit on one NDP unit's own scratchpad,
     given `bytes_per_uthread` each need -- shared by every kernel/tile
@@ -497,17 +498,40 @@ def _cap_max_uthread(
     an optional per-unit capacity (see FFTCodegenPlan's own docstring for
     total_uthreads vs. max_uthread). `bytes_per_uthread <= 0` (nothing
     scratchpad-backed to cap against) or `spad_capacity_bytes is None`
-    (no capacity given) both mean "no cap" -- the always-safe, possibly
-    oversized default every caller used before this was factored out.
+    (no capacity given) both mean "no byte cap" -- the always-safe,
+    possibly oversized default every caller used before this was factored
+    out.
+
+    `max_concurrent_scratchpad_bytes`: a second, independent cap on how
+    many bytes of scratchpad may be *concurrently active* across every
+    uthread resident on one unit at once (`max_uthread * bytes_per_uthread`)
+    -- `None` (the default) applies none. Found empirically on N=8192's
+    FFTRecNear0 (2048 bytes/uthread): 16 concurrent uthreads (32768 bytes)
+    finishes in ~90K simulated cycles; 30 (61440 bytes) blew *past* the
+    simulator's 20,000,000-cycle budget for the same kernel and data. A
+    flat *count* cap (e.g. always 16) was the first fix tried, and it does
+    stop that -- but it then wrongly re-caps small-footprint kernels that
+    were never at risk (N=1024's FFTRecLeaf1, 32 bytes/uthread, ran 256
+    concurrent uthreads -- 8192 bytes total, well under budget -- in ~1.1K
+    cycles uncapped; forced down to 16 uthreads it still finishes, just
+    across many more, needlessly small launches, each paying its own
+    per-launch overhead for no reason). Capping the *byte product* instead
+    scales the allowed uthread count down only for kernels whose own
+    per-uthread footprint would actually approach the same contention,
+    leaving small-footprint kernels uncapped.
     """
     if bytes_per_uthread <= 0 or spad_capacity_bytes is None:
-        return total_uthreads
-    if bytes_per_uthread > spad_capacity_bytes:
+        result = total_uthreads
+    elif bytes_per_uthread > spad_capacity_bytes:
         raise ValueError(
             f"spad_capacity_bytes={spad_capacity_bytes} is too small to fit "
             f"even a single uthread of {context} (needs {bytes_per_uthread} bytes)"
         )
-    return min(total_uthreads, spad_capacity_bytes // bytes_per_uthread)
+    else:
+        result = min(total_uthreads, spad_capacity_bytes // bytes_per_uthread)
+    if max_concurrent_scratchpad_bytes is not None and bytes_per_uthread > 0:
+        result = min(result, max_concurrent_scratchpad_bytes // bytes_per_uthread)
+    return result
 
 
 def _scratchpad_buffer_names(
@@ -844,6 +868,7 @@ def _build_plan(
     large_twiddle: LargeTwiddlePlan | None = None,
     inverse_scale: float | None | _Default = _DEFAULT,
     spad_capacity_bytes: int | None = None,
+    max_concurrent_scratchpad_bytes: int | None = None,
 ) -> FFTCodegenPlan:
     """`spad_capacity_bytes` is one NDP unit's own scratchpad size (see
     `FFTCodegenPlan`'s docstring) -- optional and `None` by default, which
@@ -883,6 +908,7 @@ def _build_plan(
     max_uthread = _cap_max_uthread(
         total_uthreads, bytes_per_uthread, spad_capacity_bytes,
         context=f"kernel {kernel_name!r}",
+        max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
 
     scratchpad_buffers = tuple(

@@ -183,6 +183,7 @@ def _build_physical_transpose(
     simd_lanes: int,
     spad_capacity_bytes: int | None,
     apply_inverse_scale: bool,
+    max_concurrent_scratchpad_bytes: int | None = None,
 ) -> PhysicalTransposePlan:
     grid_rows = -(-rows // tile_rows)
     grid_cols = -(-cols // tile_cols)
@@ -192,6 +193,7 @@ def _build_physical_transpose(
     max_uthread = _cap_max_uthread(
         total_uthreads, scratchpad_elements * 4, spad_capacity_bytes,
         context=f"a single {tile_rows}x{tile_cols} transpose tile",
+        max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
 
     return PhysicalTransposePlan(
@@ -225,6 +227,7 @@ def _build_recursive_node(
     tile_cols: int | None,
     is_root: bool,
     node_id: list[int],
+    max_concurrent_scratchpad_bytes: int | None = None,
 ) -> FFTNode:
     idx = node_id[0]
     node_id[0] += 1
@@ -246,6 +249,7 @@ def _build_recursive_node(
             large_twiddle=None,
             inverse_scale=inverse_scale,
             spad_capacity_bytes=spad_capacity_bytes,
+            max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
         )
         return FFTLeafPlan(m=m, r=r, kernel=kernel)
 
@@ -260,7 +264,7 @@ def _build_recursive_node(
         rows=b, cols=a, replica_count=r, tile_rows=tr, tile_cols=tc,
         twiddle_modulus=None, inverse=inverse, kernel_name=f"FFTRecPre{idx}",
         simd_lanes=simd_lanes, spad_capacity_bytes=spad_capacity_bytes,
-        apply_inverse_scale=False,
+        apply_inverse_scale=False, max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
 
     near_radices = tuple(_prime_factors_supported(b))
@@ -277,6 +281,7 @@ def _build_recursive_node(
         large_twiddle=None,
         inverse_scale=None,
         spad_capacity_bytes=spad_capacity_bytes,
+        max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
     near_fft = FFTLeafPlan(m=b, r=r * a, kernel=near_kernel)
 
@@ -284,7 +289,7 @@ def _build_recursive_node(
         rows=a, cols=b, replica_count=r, tile_rows=tr, tile_cols=tc,
         twiddle_modulus=m, inverse=inverse, kernel_name=f"FFTRecMid{idx}",
         simd_lanes=simd_lanes, spad_capacity_bytes=spad_capacity_bytes,
-        apply_inverse_scale=False,
+        apply_inverse_scale=False, max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
 
     far_child = _build_recursive_node(
@@ -292,13 +297,14 @@ def _build_recursive_node(
         simd_lanes=simd_lanes, inverse=inverse,
         spad_capacity_bytes=spad_capacity_bytes, tile_rows=tile_rows,
         tile_cols=tile_cols, is_root=False, node_id=node_id,
+        max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
 
     post = _build_physical_transpose(
         rows=b, cols=a, replica_count=r, tile_rows=tr, tile_cols=tc,
         twiddle_modulus=None, inverse=inverse, kernel_name=f"FFTRecPost{idx}",
         simd_lanes=simd_lanes, spad_capacity_bytes=spad_capacity_bytes,
-        apply_inverse_scale=(inverse and is_root),
+        apply_inverse_scale=(inverse and is_root), max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
 
     return FFTRecursiveNodePlan(
@@ -316,6 +322,7 @@ def make_recursive_transpose_plan(
     tile_cols: int | None = None,
     inverse: bool = False,
     spad_capacity_bytes: int | None = None,
+    max_concurrent_scratchpad_bytes: int | None = None,
 ) -> RecursiveFFTPlan:
     """N decomposed recursively (six-step-FFT style): each node either
     fuses into one multi-radix leaf kernel (see FFTLeafPlan) or splits
@@ -326,6 +333,11 @@ def make_recursive_transpose_plan(
     is chosen completely independently of any FFT chunk length -- see the
     module design writeup. Additive: make_multi_kernel_plan/
     make_balanced_plan/make_balanced_transpose_plan are untouched.
+
+    `max_concurrent_scratchpad_bytes`: see `_cap_max_uthread` -- caps `max_uthread`
+    by microthread count, independent of `spad_capacity_bytes`'s byte cap.
+    `None` (the default) applies none, unchanged from before this
+    parameter existed.
     """
     node_id = [0]
     root = _build_recursive_node(
@@ -333,6 +345,7 @@ def make_recursive_transpose_plan(
         simd_lanes=simd_lanes, inverse=inverse,
         spad_capacity_bytes=spad_capacity_bytes, tile_rows=tile_rows,
         tile_cols=tile_cols, is_root=True, node_id=node_id,
+        max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
     host = MultiKernelHostPlan(n=n, inverse=inverse, tolerance=1.0e-3)
     return RecursiveFFTPlan(n=n, inverse=inverse, root=root, host=host)
