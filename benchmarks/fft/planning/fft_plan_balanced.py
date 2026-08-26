@@ -35,6 +35,7 @@ from planning.fft_plan_core import (
     _cap_max_uthread,
     _prime_factors_supported,
     layouts_for_radices,
+    pingpong_needed,
 )
 from planning.fft_plan_multikernel import _choose_side_chunks
 
@@ -158,7 +159,7 @@ def _build_batched_side(
                 inverse=inverse,
                 total_uthreads=total_uthreads,
                 simd_lanes=simd_lanes,
-                use_pingpong=True,
+                use_pingpong=pingpong_needed(len(chunks[i])),
                 layouts=layouts_for_radices(ki, chunks[i], simd_lanes),
                 kernel_name=f"{kernel_name_prefix}{i}",
                 input_mapping=input_mapping,

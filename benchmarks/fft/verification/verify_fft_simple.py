@@ -20,7 +20,7 @@ see that file's own comment).
 
 import numpy as np
 
-from planning.fft_plan_core import _build_plan, layouts_for_radices
+from planning.fft_plan_core import _build_plan, layouts_for_radices, pingpong_needed
 from planning.fft_plan_simple import make_decomposed_plan
 from verification.verify_fft_harness import Ptr, _make_large_twiddle_table, run_kernel
 
@@ -39,7 +39,7 @@ def verify_radix_sequence_plan(
         inverse=inverse,
         total_uthreads=1,
         simd_lanes=simd_lanes,
-        use_pingpong=True,
+        use_pingpong=pingpong_needed(len(radices)),
         layouts=layouts_for_radices(length, radices, simd_lanes),
     )
     rng = np.random.default_rng(seed)

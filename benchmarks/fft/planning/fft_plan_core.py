@@ -350,6 +350,46 @@ class FFTStagePlan:
     simd_iteration_count: int
     batches: tuple[SIMDBatchPlan, ...]
 
+    # Cooperative execution only (see CooperationPlan / fft_plan_cooperative.py):
+    # `batches` above, partitioned across this stage's workers -- worker `w`
+    # executes exactly `worker_batches[w]` (a subset of the same, already-fully-
+    # resolved SIMDBatchPlan objects in `batches`; nothing about a batch's own
+    # load/twiddle/store offsets changes depending on who executes it, since
+    # those are already absolute positions within this FFT, not uthread-
+    # relative -- see fft_plan_cooperative.py's module docstring). `None`
+    # (every plan built by `_build_plan` directly) means today's behavior: one
+    # implicit worker owns every batch in `batches`, unchanged. `len(worker_batches)`
+    # is this stage's own `active_workers` -- a worker whose id is >= that
+    # (or whose own entry is empty) does nothing this stage.
+    worker_batches: tuple[tuple[SIMDBatchPlan, ...], ...] | None = None
+
+
+@dataclass(frozen=True)
+class CooperationPlan:
+    """Attached to a leaf `FFTCodegenPlan` (see `FFTCodegenPlan.cooperation`)
+    when that leaf is executed by more than one cooperating microthread per
+    sub-FFT, instead of today's default "1 uthread = 1 whole sub-FFT" -- see
+    fft_plan_cooperative.py for the builder and the full design rationale
+    (scratchpad-capacity motivation, the local_uthread_id()-based fft_slot/
+    worker_id split, the group_id()/num_groups()-based logical FFT id that
+    replaces global_uthread_id() for a cooperative leaf's own DRAM mapping).
+
+    `workers_per_fft`: how many microthreads cooperate on one sub-FFT (their
+    local_uthread_id()s are consecutive: fft_slot = local_id // workers_per_fft,
+    worker_id = local_id % workers_per_fft).
+
+    `fft_slots_per_group`: how many independent sub-FFTs' worth of scratchpad
+    fit on one NDP unit at once -- this is what `FFTCodegenPlan.max_uthread`
+    meant for a non-cooperative plan; for a cooperative one, `max_uthread`
+    instead holds the *physical* per-group microthread cap
+    (`fft_slots_per_group * workers_per_fft`), since that is what actually
+    sizes the launch / drives round-split, so `fft_slots_per_group` is kept
+    here rather than overloading `max_uthread`'s meaning a second way.
+    """
+
+    workers_per_fft: int
+    fft_slots_per_group: int
+
 
 @dataclass(frozen=True)
 class HostPlan:
@@ -421,6 +461,11 @@ class FFTCodegenPlan:
     scratchpad_buffers: tuple[ScratchpadBufferPlan, ...]
     stages: tuple[FFTStagePlan, ...]
     host: HostPlan
+
+    # None (every plan built directly by `_build_plan`): today's behavior,
+    # one uthread per whole sub-FFT, unchanged. See `CooperationPlan` /
+    # fft_plan_cooperative.py.
+    cooperation: CooperationPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -532,6 +577,34 @@ def _cap_max_uthread(
     if max_concurrent_scratchpad_bytes is not None and bytes_per_uthread > 0:
         result = min(result, max_concurrent_scratchpad_bytes // bytes_per_uthread)
     return result
+
+
+def pingpong_needed(stage_count: int) -> bool:
+    """Whether a `stage_count`-stage kernel actually needs two ping-pong
+    scratchpad banks, vs. one shared buffer that halves scratchpad usage.
+
+    Only a *middle* stage of a Stockham chain both reads and writes its own
+    kernel's scratchpad in the same stage: stage 0 only ever reads DRAM and
+    writes scratchpad, and the last stage only ever reads scratchpad and
+    writes DRAM (see `_make_load`/`_make_store`'s own `first_stage`/
+    `last_stage` source/destination split) -- so a chain of exactly 1 or 2
+    stages has no stage that both reads and writes the buffer at once, and
+    one shared buffer is already race-free. Proven directly, not just
+    argued: numerically verified across many radix combinations at depth 1
+    and 2 via `verify_fft_simple.verify_radix_sequence_plan`'s own sweep
+    (every `radix_sequence_cases` entry of length <=2 in verify_fft_plan.py's
+    `main()` now exercises the single-buffer path for real), and confirmed
+    by hand that forcing single-buffer on a 3-stage chain instead
+    (`(4,4,4)`, `(2,2,2,2,2,2)`) corrupts the output (max error ~10-40,
+    vs. ~1e-8 for every passing case) before this helper existed.
+
+    3+ stages always need both banks: a middle stage's own read (the
+    previous stage's output) and write (the next stage's input) cannot
+    share one buffer without risking a same-stage read-after-write, since
+    the Stockham store permutation may scatter an early SIMD batch's output
+    onto an address a later, not-yet-processed batch still needs to read.
+    """
+    return stage_count > 2
 
 
 def _scratchpad_buffer_names(

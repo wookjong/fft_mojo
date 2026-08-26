@@ -29,6 +29,7 @@ from planning.fft_plan_core import (
     _build_plan,
     _prime_factors_supported,
     layouts_for_radices,
+    pingpong_needed,
 )
 
 
@@ -363,7 +364,7 @@ def make_multi_kernel_plan(
             inverse=inverse,
             total_uthreads=1,
             simd_lanes=simd_lanes,
-            use_pingpong=True,
+            use_pingpong=pingpong_needed(len(chunks[0])),
             layouts=layouts_for_radices(n, chunks[0], simd_lanes),
             spad_capacity_bytes=spad_capacity_bytes,
         )
@@ -414,7 +415,7 @@ def make_multi_kernel_plan(
                 inverse=inverse,
                 total_uthreads=total_uthreads,
                 simd_lanes=simd_lanes,
-                use_pingpong=True,
+                use_pingpong=pingpong_needed(len(chunks[i])),
                 layouts=layouts_for_radices(ki, chunks[i], simd_lanes),
                 kernel_name=f"FFTFP32Kernel{i}",
                 input_mapping=input_mapping,
