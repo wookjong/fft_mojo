@@ -39,16 +39,16 @@ elem_stride=1, never a scalar gather) but not necessarily hardware-vector-
 width-aligned when ki_near/ki_far don't happen to match VECTOR_WIDTH.
 """
 
-from codegen.fft_codegen import (
+from codegen.common import (
     Emitter,
-    _emit_array_dump,
-    _emit_kernel,
-    _emit_large_twiddle_table_precompute,
-    _emit_prelude,
-    _emit_reference_check,
-    _f32,
-    _spad,
+    emit_array_dump as _emit_array_dump,
+    emit_large_twiddle_table_precompute as _emit_large_twiddle_table_precompute,
+    emit_prelude as _emit_prelude,
+    emit_reference_check as _emit_reference_check,
+    f32 as _f32,
+    spad as _spad,
 )
+from codegen.fft_codegen import emit_kernel as _emit_kernel
 from planning.fft_plan_balanced import BalancedTransposeFFTPlan, FFTTransposePlan
 from planning.fft_plan_recursive import (
     FFTLeafPlan,

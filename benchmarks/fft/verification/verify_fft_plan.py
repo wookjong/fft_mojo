@@ -24,9 +24,9 @@ from pathlib import Path
 # (this one and verify_fft_butterflies.py) need this.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from codegen.fft_butterflies import SUPPORTED_RADICES
 from codegen.fft_codegen import _mapping_base_expr
 from codegen.lowering import _chunk_store
+from radix_spec import SUPPORTED_RADICES
 from planning.fft_plan_core import (
     StorePlan,
     _make_store,

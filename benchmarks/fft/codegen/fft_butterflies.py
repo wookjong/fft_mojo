@@ -21,6 +21,9 @@ stage scheduler.
 from math import cos, pi, sin
 from typing import Callable, Protocol
 
+from codegen.common import f32 as _f32
+from radix_spec import SUPPORTED_RADICES
+
 
 class LineEmitter(Protocol):
     def add(self, line: str = "") -> None: ...
@@ -34,19 +37,6 @@ class LineEmitter(Protocol):
 # outputs together regardless (see _emit_small_named), so calling it in a
 # plain loop after the fact is unchanged behavior for those.
 OutputCallback = Callable[[int], None]
-
-
-def _f32(value: float) -> str:
-    if abs(value) < 1.0e-12:
-        value = 0.0
-    elif abs(value - 1.0) < 1.0e-12:
-        value = 1.0
-    elif abs(value + 1.0) < 1.0e-12:
-        value = -1.0
-    return f"Float32({value:.9g})"
-
-
-SUPPORTED_RADICES = frozenset((2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 16, 17))
 
 
 def _out(prefix: str, k: int) -> tuple[str, str]:

@@ -42,7 +42,7 @@ from enum import Enum
 from math import cos, pi, sin
 from typing import Literal
 
-from codegen.fft_butterflies import SUPPORTED_RADICES
+from radix_spec import SUPPORTED_RADICES
 
 
 LoadSource = Literal["input", "scratchpad", "large_twiddle"]
