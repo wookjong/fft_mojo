@@ -242,9 +242,12 @@ def run_recursive_plan(
                 run_physical_transpose(stage, src_real=cur_r, src_imag=cur_i, dst_real=next_r, dst_imag=next_i)
         else:
             assert stage.large_twiddle is None
+            # A cooperative stage never loops regardless of the caller's own
+            # `loop_stages` -- see generate_recursive_fft_kernels's own
+            # identical per-stage decision (fft_transpose_codegen.py) for why.
             run_kernel(
                 stage, input_real=cur_r, input_imag=cur_i, output_real=next_r, output_imag=next_i,
-                loop_stages=loop_stages,
+                loop_stages=loop_stages and stage.cooperation is None,
             )
         cur_r, cur_i = next_r, next_i
     return cur_r.arr + 1j * cur_i.arr
@@ -256,6 +259,7 @@ def verify_recursive_plan(
     loop_stages: bool = True,
     spad_capacity_bytes: int | None = None,
     max_concurrent_scratchpad_bytes: int | None = None,
+    cooperative_workers: int | str | None = None,
 ) -> tuple[float, RecursiveFFTPlan]:
     """`spad_capacity_bytes`/`max_concurrent_scratchpad_bytes`: both `None`
     by default (unchanged from before either existed) -- pass a
@@ -281,6 +285,7 @@ def verify_recursive_plan(
         tile_rows=tile_rows, tile_cols=tile_cols,
         spad_capacity_bytes=spad_capacity_bytes,
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
+        cooperative_workers=cooperative_workers,
     )
     rng = np.random.default_rng(seed)
     x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)

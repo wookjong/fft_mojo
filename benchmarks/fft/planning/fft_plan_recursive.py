@@ -33,7 +33,9 @@ from planning.fft_plan_core import (
     _prime_factors_supported,
     coalesce_radices,
     layouts_for_radices,
+    pingpong_needed,
 )
+from planning.fft_plan_cooperative import choose_workers_per_fft, make_cooperative_leaf_plan
 
 
 @dataclass(frozen=True)
@@ -171,6 +173,76 @@ def _choose_recursive_split(
     )
 
 
+def _build_leaf_kernel(
+    *,
+    length: int,
+    radices: tuple[int, ...],
+    total_uthreads: int,
+    simd_lanes: int,
+    inverse: bool,
+    inverse_scale: float | None,
+    kernel_name: str,
+    spad_capacity_bytes: int | None,
+    max_concurrent_scratchpad_bytes: int | None,
+    cooperative_workers: int | str | None,
+) -> FFTCodegenPlan:
+    """One leaf/near_fft kernel -- `_build_plan` (today's one-uthread-per-
+    sub-FFT leaf) or `make_cooperative_leaf_plan` (see fft_plan_cooperative.py),
+    picked by `cooperative_workers`:
+
+    * `None` (the default): always `_build_plan`, byte-for-byte the plan
+      this function returned before cooperative leaves existed.
+    * `"auto"`: `choose_workers_per_fft` decides this leaf's own worker
+      count from its own shape (length/radices/simd_lanes) alone.
+    * a positive int: an upper bound `choose_workers_per_fft` still rounds
+      down to a divisor of the hardware's own interleave chunk that fits
+      this leaf's own busiest-stage batch count (see that function's own
+      docstring) -- never a raw override, since a value it can't actually
+      use safely would silently do nothing useful (or, worse, break the
+      local/global grouping alignment `_emit_cooperative_stage` depends on).
+
+    Either way, `choose_workers_per_fft` can decide `workers=1` is this
+    leaf's own best answer (e.g. a leaf too small to have more than one
+    SIMD batch in its busiest stage) -- `_build_plan` is used then too,
+    identical output to `cooperative_workers=None`, so a caller opting in
+    never pays for cooperation where it cannot help.
+    """
+    workers = 1
+    if cooperative_workers is not None:
+        max_workers = None if cooperative_workers == "auto" else cooperative_workers
+        workers = choose_workers_per_fft(length, radices, simd_lanes=simd_lanes, max_workers=max_workers)
+
+    if workers > 1:
+        return make_cooperative_leaf_plan(
+            length=length,
+            radices=radices,
+            workers_per_fft=workers,
+            total_ffts=total_uthreads,
+            inverse=inverse,
+            simd_lanes=simd_lanes,
+            kernel_name=kernel_name,
+            inverse_scale=inverse_scale,
+            spad_capacity_bytes=spad_capacity_bytes,
+            max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
+        )
+
+    return _build_plan(
+        length=length,
+        inverse=inverse,
+        total_uthreads=total_uthreads,
+        simd_lanes=simd_lanes,
+        use_pingpong=pingpong_needed(len(radices)),
+        layouts=layouts_for_radices(length, radices, simd_lanes),
+        kernel_name=kernel_name,
+        input_mapping=AddressMapping.contiguous(row_stride=length),
+        output_mapping=AddressMapping.contiguous(row_stride=length),
+        large_twiddle=None,
+        inverse_scale=inverse_scale,
+        spad_capacity_bytes=spad_capacity_bytes,
+        max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
+    )
+
+
 def _build_physical_transpose(
     *,
     rows: int,
@@ -229,6 +301,7 @@ def _build_recursive_node(
     is_root: bool,
     node_id: list[int],
     max_concurrent_scratchpad_bytes: int | None = None,
+    cooperative_workers: int | str | None = None,
 ) -> FFTNode:
     idx = node_id[0]
     node_id[0] += 1
@@ -237,20 +310,17 @@ def _build_recursive_node(
     if split_b is None:
         radices = coalesce_radices(_prime_factors_supported(m))
         inverse_scale = (1.0 / m) if (inverse and is_root) else None
-        kernel = _build_plan(
+        kernel = _build_leaf_kernel(
             length=m,
-            inverse=inverse,
+            radices=radices,
             total_uthreads=r,
             simd_lanes=simd_lanes,
-            use_pingpong=True,
-            layouts=layouts_for_radices(m, radices, simd_lanes),
-            kernel_name=f"FFTRecLeaf{idx}",
-            input_mapping=AddressMapping.contiguous(row_stride=m),
-            output_mapping=AddressMapping.contiguous(row_stride=m),
-            large_twiddle=None,
+            inverse=inverse,
             inverse_scale=inverse_scale,
+            kernel_name=f"FFTRecLeaf{idx}",
             spad_capacity_bytes=spad_capacity_bytes,
             max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
+            cooperative_workers=cooperative_workers,
         )
         return FFTLeafPlan(m=m, r=r, kernel=kernel)
 
@@ -269,20 +339,17 @@ def _build_recursive_node(
     )
 
     near_radices = coalesce_radices(_prime_factors_supported(b))
-    near_kernel = _build_plan(
+    near_kernel = _build_leaf_kernel(
         length=b,
-        inverse=inverse,
+        radices=near_radices,
         total_uthreads=r * a,
         simd_lanes=simd_lanes,
-        use_pingpong=True,
-        layouts=layouts_for_radices(b, near_radices, simd_lanes),
-        kernel_name=f"FFTRecNear{idx}",
-        input_mapping=AddressMapping.contiguous(row_stride=b),
-        output_mapping=AddressMapping.contiguous(row_stride=b),
-        large_twiddle=None,
+        inverse=inverse,
         inverse_scale=None,
+        kernel_name=f"FFTRecNear{idx}",
         spad_capacity_bytes=spad_capacity_bytes,
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
+        cooperative_workers=cooperative_workers,
     )
     near_fft = FFTLeafPlan(m=b, r=r * a, kernel=near_kernel)
 
@@ -299,6 +366,7 @@ def _build_recursive_node(
         spad_capacity_bytes=spad_capacity_bytes, tile_rows=tile_rows,
         tile_cols=tile_cols, is_root=False, node_id=node_id,
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
+        cooperative_workers=cooperative_workers,
     )
 
     post = _build_physical_transpose(
@@ -324,6 +392,7 @@ def make_recursive_transpose_plan(
     inverse: bool = False,
     spad_capacity_bytes: int | None = None,
     max_concurrent_scratchpad_bytes: int | None = None,
+    cooperative_workers: int | str | None = None,
 ) -> RecursiveFFTPlan:
     """N decomposed recursively (six-step-FFT style): each node either
     fuses into one multi-radix leaf kernel (see FFTLeafPlan) or splits
@@ -339,6 +408,14 @@ def make_recursive_transpose_plan(
     by microthread count, independent of `spad_capacity_bytes`'s byte cap.
     `None` (the default) applies none, unchanged from before this
     parameter existed.
+
+    `cooperative_workers`: `None` (the default) keeps every leaf/near_fft
+    exactly what `_build_plan` alone produced before cooperative leaves
+    existed -- see `_build_leaf_kernel`'s own docstring for `"auto"` and a
+    fixed-int cap. `PhysicalTransposePlan` (PRE/MIDDLE/POST) is never
+    affected -- this only changes FFTLeafPlan's own internal execution
+    granularity, per-node, exactly as fft_plan_cooperative.py's module
+    docstring scopes it.
     """
     node_id = [0]
     root = _build_recursive_node(
@@ -347,6 +424,7 @@ def make_recursive_transpose_plan(
         spad_capacity_bytes=spad_capacity_bytes, tile_rows=tile_rows,
         tile_cols=tile_cols, is_root=True, node_id=node_id,
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
+        cooperative_workers=cooperative_workers,
     )
     host = MultiKernelHostPlan(n=n, inverse=inverse, tolerance=1.0e-3)
     return RecursiveFFTPlan(n=n, inverse=inverse, root=root, host=host)

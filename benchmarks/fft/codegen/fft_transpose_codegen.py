@@ -41,6 +41,7 @@ width-aligned when ki_near/ki_far don't happen to match VECTOR_WIDTH.
 
 from codegen.fft_codegen import (
     Emitter,
+    _emit_array_dump,
     _emit_kernel,
     _emit_large_twiddle_table_precompute,
     _emit_prelude,
@@ -611,29 +612,47 @@ def _emit_physical_transpose_kernel(e: Emitter, *, plan: PhysicalTransposePlan) 
 
 
 def _emit_physical_transpose_twiddle_table_precompute(
-    e: Emitter, *, plan: PhysicalTransposePlan, real_name: str, imag_name: str
+    e: Emitter, *, plan: PhysicalTransposePlan, real_name: str, imag_name: str, index: int
 ) -> None:
     """Host precompute for a MIDDLE transpose's own dense W_M twiddle
     table -- table[r*cols+c] = W_M^(r*c), size rows*cols == M (this node's
     own current modulus, never the top-level N -- see FFTRecursiveNodePlan),
-    no per-replica duplication (see PhysicalTransposePlan's own docstring)."""
+    no per-replica duplication (see PhysicalTransposePlan's own docstring).
+
+    `index`: this call's own position in the caller's stage list (unique
+    per call site, same value the caller already uses for real_name/
+    imag_name) -- suffixed onto every local var this emits, since they all
+    live in the shared `def main():` scope alongside every other stage's
+    own precompute. A 2+-level recursion has more than one MIDDLE transpose
+    with a twiddle table (one per split level), so unsuffixed names here
+    ("tw_pi" etc, unlike real_name/imag_name which were already unique)
+    redefined on the second call -- unreachable by any single-level-
+    recursion N, which is every case this had been checked against before
+    (Python verification never re-executes this host-level text at all;
+    only the real Mojo compiler catches a redefinition -- confirmed
+    reproducing on N=262144, whose split needs two recursion levels).
+    """
     assert plan.twiddle_modulus is not None
     sign = 1.0 if plan.inverse else -1.0
-    e.add(f"    var tw_pi = Float64(3.141592653589793)")
-    e.add(f"    var tw_sign = Float64({sign})")
-    e.add(f"    var tw_r = 0")
-    e.add(f"    while tw_r < {plan.rows}:")
-    e.add(f"        var tw_c = 0")
-    e.add(f"        while tw_c < {plan.cols}:")
-    e.add(
-        f"            var tw_angle = tw_sign * 2.0 * tw_pi * Float64(tw_r) * "
-        f"Float64(tw_c) / Float64({plan.twiddle_modulus})"
+    pi, sg, r, c, ang, addr = (
+        f"tw_pi{index}", f"tw_sign{index}", f"tw_r{index}", f"tw_c{index}",
+        f"tw_angle{index}", f"tw_addr{index}",
     )
-    e.add(f"            var tw_addr = tw_r * {plan.cols} + tw_c")
-    e.add(f"            {real_name}[tw_addr] = Float32(host_cos(tw_angle))")
-    e.add(f"            {imag_name}[tw_addr] = Float32(host_sin(tw_angle))")
-    e.add(f"            tw_c += 1")
-    e.add(f"        tw_r += 1")
+    e.add(f"    var {pi} = Float64(3.141592653589793)")
+    e.add(f"    var {sg} = Float64({sign})")
+    e.add(f"    var {r} = 0")
+    e.add(f"    while {r} < {plan.rows}:")
+    e.add(f"        var {c} = 0")
+    e.add(f"        while {c} < {plan.cols}:")
+    e.add(
+        f"            var {ang} = {sg} * 2.0 * {pi} * Float64({r}) * "
+        f"Float64({c}) / Float64({plan.twiddle_modulus})"
+    )
+    e.add(f"            var {addr} = {r} * {plan.cols} + {c}")
+    e.add(f"            {real_name}[{addr}] = Float32(host_cos({ang}))")
+    e.add(f"            {imag_name}[{addr}] = Float32(host_sin({ang}))")
+    e.add(f"            {c} += 1")
+    e.add(f"        {r} += 1")
     e.add()
 
 
@@ -655,7 +674,8 @@ def flatten_recursive_node(node: FFTNode) -> list:
 
 
 def generate_recursive_fft_kernels(
-    plan: RecursiveFFTPlan, *, compute_lanes: int | None = None, loop_stages: bool = True
+    plan: RecursiveFFTPlan, *, compute_lanes: int | None = None, loop_stages: bool = True,
+    reference_check: bool = True,
 ) -> str:
     """Render a full make_recursive_transpose_plan tree as a flat, ordered
     Mojo-ish kernel sequence chained through DRAM from one host main().
@@ -678,6 +698,21 @@ def generate_recursive_fft_kernels(
     kernels (_emit_physical_transpose_kernel) have their own separate
     width story (ki_near/ki_far, see this module's own docstring) that
     this does not touch.
+
+    `reference_check`: `True` (the default) keeps today's fully self-
+    contained host check -- a direct O(N^2) DFT computed right here in the
+    generated Mojo, no external dependency, matching every other
+    benchmark's own main() (see _emit_reference_check). That check is
+    O(N^2) work on top of whatever the FFT itself costs, which stops being
+    a rounding error once N is large (N=65536 is ~4.3e9 scalar trig
+    evaluations on the host, alone dwarfing a benchmark run meant to
+    measure the *device* kernels) -- `False` skips it and instead dumps the
+    random input and the device's own output (see _emit_array_dump) between
+    `INPUT_BEGIN`/`INPUT_END` and `OUTPUT_BEGIN`/`OUTPUT_END` markers, for a
+    Python-side harness to parse and check against `numpy.fft` (O(N log N),
+    and in optimized C) instead. This changes nothing about the device
+    kernels or their own correctness -- only how large-N runs verify the
+    result without host-side O(N^2) dominating the wall-clock time.
     """
     stages = flatten_recursive_node(plan.root)
     e = Emitter()
@@ -708,14 +743,31 @@ def generate_recursive_fft_kernels(
     # loop_stages path; each entry here is that stage's own pooled twiddle
     # table (see fft_codegen._emit_task_struct), empty when loop_stages is
     # False or nothing in that particular kernel qualified to loop.
+    #
+    # A cooperative stage (stage.cooperation is not None -- see
+    # fft_plan_cooperative.py) never loops regardless of the caller's own
+    # `loop_stages`: fft_codegen._emit_stage raises rather than render a
+    # runtime loop over `stage.batches` as a whole when cooperative worker
+    # partitioning (`stage.worker_batches`) is what actually needs looping,
+    # not yet supported (see that function's own docstring) -- decided per
+    # stage, so a recursive tree mixing cooperative and plain leaves renders
+    # each correctly instead of the whole file inheriting one kernel's answer.
     loop_twiddle_tables: dict[int, list[tuple[float, float]]] = {}
+    # This stage's own resolved loop_stages (see the comment above) -- the
+    # launch site below needs this per-stage answer too, to know whether
+    # *this* kernel's Params actually declared the loop-twiddle fields
+    # (`add_loop_twiddle` inside _emit_kernel got the same value), not the
+    # caller's blanket `loop_stages` argument.
+    stage_loops: dict[int, bool] = {}
     for i, stage in enumerate(stages):
         e.add(f"# ---- stage {i}: {stage.kernel_name} ----")
         if isinstance(stage, PhysicalTransposePlan):
             _emit_physical_transpose_kernel(e, plan=stage)
         else:
+            stage_loop_stages = loop_stages and stage.cooperation is None
+            stage_loops[i] = stage_loop_stages
             loop_twiddle_tables[i] = _emit_kernel(
-                e, plan=stage, compute_lanes=compute_lanes, loop_stages=loop_stages
+                e, plan=stage, compute_lanes=compute_lanes, loop_stages=stage_loop_stages
             )
 
     e.add("# " + "=" * 76)
@@ -761,7 +813,7 @@ def generate_recursive_fft_kernels(
             table_size = stage.rows * stage.cols
             e.add(f"    var {rn} = cxl_alloc[Float32]({table_size})")
             e.add(f"    var {imn} = cxl_alloc[Float32]({table_size})")
-            _emit_physical_transpose_twiddle_table_precompute(e, plan=stage, real_name=rn, imag_name=imn)
+            _emit_physical_transpose_twiddle_table_precompute(e, plan=stage, real_name=rn, imag_name=imn, index=i)
 
     # `tile_id // {tiles_per_replica,grid_cols}` tables (see _needs_q_table/
     # _needs_tr_table/_emit_physical_transpose_stage): plain Python integer
@@ -836,6 +888,9 @@ def generate_recursive_fft_kernels(
     e.add("        ref_imag[i] = Float32(0)")
     e.add()
 
+    if not reference_check:
+        _emit_array_dump(e, n=plan.n, real_name="input_real", imag_name="input_imag", marker="INPUT")
+
     for i, stage in enumerate(stages):
         in_r, in_i = buf_name(i - 1, "real"), buf_name(i - 1, "imag")
         out_r, out_i = buf_name(i, "real"), buf_name(i, "imag")
@@ -895,9 +950,21 @@ def generate_recursive_fft_kernels(
         # against this same codegen with total_uthreads=4, max_uthread=1.
         assert stage.large_twiddle is None
         rounds = -(-stage.total_uthreads // stage.max_uthread)
+        # elem_off advances by this stage's own *logical* replicas per round
+        # -- `stage.max_uthread` physical microthreads (used for round_count/
+        # PooledRange above and below, unchanged) only when there's one
+        # uthread per sub-FFT; a cooperative stage's `max_uthread` is
+        # `workers_per_fft` times that many (see CooperationPlan), so the
+        # DRAM row a round actually advances by is `fft_slots_per_group`
+        # rows, not `max_uthread` -- see fft_plan_cooperative.py's own
+        # module docstring for why a physical microthread count is never
+        # the same thing as a logical FFT count once workers share one.
+        replicas_per_round = (
+            stage.max_uthread if stage.cooperation is None else stage.cooperation.fft_slots_per_group
+        )
         for r in range(rounds):
             round_count = min(stage.max_uthread, stage.total_uthreads - r * stage.max_uthread)
-            elem_off = r * stage.max_uthread * stage.length
+            elem_off = r * replicas_per_round * stage.length
             round_in_r = in_r if elem_off == 0 else f"({in_r} + {elem_off})"
             round_in_i = in_i if elem_off == 0 else f"({in_i} + {elem_off})"
             round_out_r = out_r if elem_off == 0 else f"({out_r} + {elem_off})"
@@ -906,7 +973,7 @@ def generate_recursive_fft_kernels(
 
             e.add(f"    var rc{suffix} = {stage.kernel_name}.launch(")
             e.add(f"        PooledRange.over(pool{i}, {stage.simd_lanes * round_count}),")
-            if loop_stages:
+            if stage_loops.get(i, False):
                 ltrn, ltimn = loop_twiddle_names[i]
                 e.add(
                     f"        {stage.kernel_name}Params({round_in_r}, {round_in_i}, "
@@ -927,11 +994,14 @@ def generate_recursive_fft_kernels(
             e.add("        return")
             e.add()
 
-    _emit_reference_check(
-        e, n=plan.n, batch_count=1, inverse=plan.inverse,
-        input_real="input_real", input_imag="input_imag",
-        output_real="output_real", output_imag="output_imag",
-        ref_real="ref_real", ref_imag="ref_imag",
-        tolerance=host.tolerance, label="recursive tiled-transpose FFT",
-    )
+    if reference_check:
+        _emit_reference_check(
+            e, n=plan.n, batch_count=1, inverse=plan.inverse,
+            input_real="input_real", input_imag="input_imag",
+            output_real="output_real", output_imag="output_imag",
+            ref_real="ref_real", ref_imag="ref_imag",
+            tolerance=host.tolerance, label="recursive tiled-transpose FFT",
+        )
+    else:
+        _emit_array_dump(e, n=plan.n, real_name="output_real", imag_name="output_imag", marker="OUTPUT")
     return e.text()

@@ -88,11 +88,12 @@ def make_fft_kernel(
     n: int,
     *,
     inverse: bool = False,
-    scratchpad_byte_budget: int = 4096,
+    scratchpad_byte_budget: int | None = None,
     simd_lanes: int = 8,
     compute_lanes: int | None = None,
     tile_rows: int | None = None,
     tile_cols: int | None = None,
+    cooperative_workers: int | str | None = None,
     output_path: str | Path | None = None,
 ) -> Path:
     """Plan and render a length-`n` FFT kernel, write it to `output_path`
@@ -102,10 +103,30 @@ def make_fft_kernel(
     `scratchpad_byte_budget`: how many bytes of one NDP unit's own
     scratchpad one leaf kernel may use -- the planner recurses (adds a
     tiled-transpose boundary) only once N would exceed this as a single
-    fused kernel. `tile_rows`/`tile_cols`: physical transpose tile size,
-    default `min(simd_lanes, ...)` picked by the planner itself (see
+    fused kernel. `None` (the default) picks `4096` regardless of
+    `cooperative_workers` -- tried making this cooperation-aware (a
+    `16*sqrt(n)`-ish guess, see fft_plan_cooperative.
+    default_cooperative_scratchpad_budget's own docstring) and measured it
+    against the flat constant at three N: it won at two (N=4096, N=16384)
+    but lost by ~26% at a third (N=1024, where keeping the *flat* 4096
+    default outright beat every budget tried except one even bigger one
+    that hit a register-spill wall) -- no formula found so far is safe to
+    default to over just keeping `4096`, so this still does that. Pass a
+    number explicitly to try something else for a specific N; see
+    default_cooperative_scratchpad_budget's own docstring for the numbers
+    behind this and what a real per-N search would need.
+    `tile_rows`/`tile_cols`: physical transpose tile size, default
+    `min(simd_lanes, ...)` picked by the planner itself (see
     make_recursive_transpose_plan) -- pass explicitly only to compare
     tile-size choices.
+
+    `cooperative_workers`: `None` (the default) keeps every leaf exactly
+    what this project produced before cooperative leaves existed (see
+    CooperationPlan / fft_plan_cooperative.py). `"auto"` lets
+    `choose_workers_per_fft` decide each leaf's own worker count from its
+    own shape; a positive int caps that choice instead of overriding it
+    outright (see `_build_leaf_kernel`'s own docstring in fft_plan_
+    recursive.py for why it's a cap, not a raw override).
 
     `simd_lanes` is the hardware launch granule (ties to `PooledRange`/
     `VECTOR_WIDTH` in src/m2ndp.mojo -- do not change it to tune register
@@ -132,6 +153,8 @@ def make_fft_kernel(
         raise ValueError(f"n={n} is too small: make_fft_kernel needs n >= 2")
     if compute_lanes is None:
         compute_lanes = min(simd_lanes, _LMUL1_FLOAT32_LANES)
+    if scratchpad_byte_budget is None:
+        scratchpad_byte_budget = 4096
     plan = make_recursive_transpose_plan(
         n,
         scratchpad_byte_budget=scratchpad_byte_budget,
@@ -141,6 +164,7 @@ def make_fft_kernel(
         inverse=inverse,
         spad_capacity_bytes=_SPAD_CAPACITY_BYTES,
         max_concurrent_scratchpad_bytes=_MAX_CONCURRENT_SCRATCHPAD_BYTES,
+        cooperative_workers=cooperative_workers,
     )
     source = generate_recursive_fft_kernels(plan, compute_lanes=compute_lanes)
 
@@ -161,8 +185,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("n", type=int, help="FFT length (any product of supported radices)")
     parser.add_argument("--inverse", action="store_true", help="generate the inverse FFT")
     parser.add_argument(
-        "--scratchpad-byte-budget", type=int, default=4096,
-        help="bytes of one NDP unit's own scratchpad one leaf kernel may use (default: 4096)",
+        "--scratchpad-byte-budget", type=int, default=None,
+        help="bytes of one NDP unit's own scratchpad one leaf kernel may use "
+        "(default: 4096, same whether or not --cooperative-workers is given -- "
+        "see make_fft_kernel's own docstring on why a cooperation-aware "
+        "default isn't safe yet)",
+    )
+    parser.add_argument(
+        "--cooperative-workers", type=str, default=None,
+        help='"auto" to let each leaf pick its own cooperative worker count '
+        "(see choose_workers_per_fft), or an integer to cap it -- default: "
+        "off, one uthread per sub-FFT (this project's original behavior)",
     )
     parser.add_argument("--simd-lanes", type=int, default=8, help="SIMD lane count (default: 8)")
     parser.add_argument(
@@ -182,6 +215,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
+    cooperative_workers: int | str | None = args.cooperative_workers
+    if cooperative_workers is not None and cooperative_workers != "auto":
+        cooperative_workers = int(cooperative_workers)
     path = make_fft_kernel(
         args.n,
         inverse=args.inverse,
@@ -190,6 +226,7 @@ def main() -> None:
         compute_lanes=args.compute_lanes,
         tile_rows=args.tile_rows,
         tile_cols=args.tile_cols,
+        cooperative_workers=cooperative_workers,
         output_path=args.output,
     )
     print(f"generated: {path}")
