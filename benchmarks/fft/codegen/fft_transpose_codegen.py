@@ -906,18 +906,11 @@ def generate_recursive_fft_kernels(
         # against this same codegen with total_uthreads=4, max_uthread=1.
         assert stage.large_twiddle is None
         rounds = -(-stage.total_uthreads // stage.max_uthread)
-        # elem_off advances by this stage's own *logical* replicas per round
-        # -- `stage.max_uthread` physical microthreads (used for round_count/
-        # PooledRange above and below, unchanged) only when there's one
-        # uthread per sub-FFT; a cooperative stage's `max_uthread` is
-        # `workers_per_fft` times that many (see CooperationPlan), so the
-        # DRAM row a round actually advances by is `fft_slots_per_group`
-        # rows, not `max_uthread` -- see fft_plan_cooperative.py's own
-        # module docstring for why a physical microthread count is never
-        # the same thing as a logical FFT count once workers share one.
-        replicas_per_round = (
-            stage.max_uthread if stage.cooperation is None else stage.cooperation.fft_slots_per_group
-        )
+        # elem_off advances by this stage's own *logical* replicas per round,
+        # not physical microthreads once workers share one replica's
+        # scratchpad -- see FFTCodegenPlan.replicas_per_round's own
+        # docstring.
+        replicas_per_round = stage.replicas_per_round()
         for r in range(rounds):
             round_count = min(stage.max_uthread, stage.total_uthreads - r * stage.max_uthread)
             elem_off = r * replicas_per_round * stage.length

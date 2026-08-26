@@ -440,6 +440,17 @@ class FFTCodegenPlan:
     scratchpad at all (a single-stage kernel -- see
     `_scratchpad_buffer_names`), since then there's nothing to divide
     across units.
+
+    `max_uthread` carries a second, *different* meaning once `cooperation`
+    is set: `make_cooperative_leaf_plan` (fft_plan_cooperative.py)
+    overwrites it to `fft_slots_per_group * workers_per_fft` -- the
+    physical microthread count a round launches, not "how many of this
+    kernel's own logical units resident on one core" the plain (no-
+    cooperation) meaning above describes. A caller advancing a DRAM
+    pointer by *logical* replicas per round (not physical microthreads)
+    wants `cooperation.fft_slots_per_group` in that case -- see
+    `replicas_per_round`, which resolves this once instead of every call
+    site re-deriving it from `cooperation is None`.
     """
 
     length: int
@@ -466,6 +477,20 @@ class FFTCodegenPlan:
     # one uthread per whole sub-FFT, unchanged. See `CooperationPlan` /
     # fft_plan_cooperative.py.
     cooperation: CooperationPlan | None = None
+
+    def replicas_per_round(self) -> int:
+        """How many *logical* replicas (independent sub-FFTs) one launch
+        round advances a DRAM pointer by -- `max_uthread` itself in the
+        plain case (one uthread per replica, so physical and logical
+        counts coincide), or `cooperation.fft_slots_per_group` once
+        multiple workers share one replica's scratchpad and `max_uthread`
+        means the physical worker count instead (see this dataclass's own
+        docstring). The one place that distinction gets resolved, instead
+        of every caller re-deriving it from `cooperation is None`.
+        """
+        if self.cooperation is None:
+            return self.max_uthread
+        return self.cooperation.fft_slots_per_group
 
 
 @dataclass(frozen=True)
