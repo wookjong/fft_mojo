@@ -16,9 +16,9 @@ No FFT planning is performed here.  In particular this module does not:
 * choose store layouts,
 * build host reference FFT values.
 
-All of those decisions are already materialized in fft_plangen.FFTCodegenPlan
-/ fft_plangen.DecomposedFFTPlan. A decomposed FFT is two ordinary
-FFTCodegenPlan kernels (see fft_plangen's module docstring); this module
+All of those decisions are already materialized in fft_plan_core.FFTCodegenPlan
+/ fft_plan_simple.DecomposedFFTPlan. A decomposed FFT is two ordinary
+FFTCodegenPlan kernels (see fft_plan_simple's module docstring); this module
 renders each exactly as it would a single-kernel plan, and additionally
 threads the large-twiddle table and the two kernels' DRAM hand-off through
 one combined main() -- there is no separate "transpose kernel" abstraction
@@ -73,7 +73,7 @@ def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
     """`global_uthread_id() * row_stride [+ base]` -- the one runtime
     multiply a CONTIGUOUS/STRIDED AddressMapping ever costs. `elem*elem_stride`
     is folded into each load/store's own offset at plan time (see
-    fft_plangen._make_load / _make_store), so that's the whole of what
+    fft_plan_core._make_load / _make_store), so that's the whole of what
     codegen computes at runtime for those two kinds: no per-access division
     or modulo.
 
@@ -223,7 +223,7 @@ def _emit_large_twiddle(
     e: Emitter, *, output: int, store: StorePlan, width: int
 ) -> None:
     """Runtime cross-block twiddle, fused into this output's own store path
-    (see fft_plangen.LargeTwiddlePlan): multiply by a value fetched from the
+    (see fft_plan_core.LargeTwiddlePlan): multiply by a value fetched from the
     large-twiddle DRAM table at exactly the address this output is about to
     store to (the table shares this kernel's output_mapping layout), rather
     than by a compile-time SIMD constant -- the exponent depends on
@@ -259,7 +259,7 @@ def _emit_large_twiddle(
             ii_lanes.append(f"{ii_scalar}[0]")
         # Lanes past what this store actually writes never reach DRAM, so
         # they are padded with the neutral rotation (1, 0) rather than
-        # fetched -- same convention fft_plangen._make_twiddle uses for a
+        # fetched -- same convention fft_plan_core._make_twiddle uses for a
         # partial SIMD batch's compile-time twiddle.
         pad = width - len(rr_lanes)
         rr_lanes += ["Float32(1)"] * pad
@@ -1195,7 +1195,7 @@ def generate_decomposed_fft_kernels(
 def generate_multi_kernel_fft_kernels(
     plan: MultiKernelFFTPlan, *, compute_lanes: int | None = None
 ) -> str:
-    """Render an M-kernel chained plan (see fft_plangen.make_multi_kernel_plan):
+    """Render an M-kernel chained plan (see fft_plan_multikernel.make_multi_kernel_plan):
     M NDPTask structs, chained through DRAM one launch after another from
     one host main(), each non-last kernel's own large-twiddle table
     precomputed alongside it. Generalizes generate_decomposed_fft_kernels

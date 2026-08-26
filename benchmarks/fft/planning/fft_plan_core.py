@@ -96,7 +96,7 @@ class AddressMappingKind(Enum):
     tail_size)*(a*kernel_length*k_next)`. Derived and verified by direct
     index-permutation simulation (bijective, and every downstream read
     pulls a clean single-digit sweep) up to a 10-kernel chain before this
-    touched fft_plangen.py -- same discipline SPLIT's own derivation used.
+    touched fft_plan_core.py -- same discipline SPLIT's own derivation used.
     This is a read-locality optimization, not a stride bound: the worst
     stride anywhere in the chain is unchanged (conserved, not reduced) --
     it moves from every kernel's read to this kernel's own write, whose
@@ -125,7 +125,7 @@ class AddressMappingKind(Enum):
     generalization. Verified by direct index simulation *and* full
     complex-arithmetic comparison against numpy.fft (both sides
     multi-kernel chains, forward and inverse) before this touched
-    fft_plangen.py.
+    fft_plan_core.py.
     """
 
     CONTIGUOUS = "contiguous"
@@ -371,8 +371,12 @@ class CooperationPlan:
     sub-FFT, instead of today's default "1 uthread = 1 whole sub-FFT" -- see
     fft_plan_cooperative.py for the builder and the full design rationale
     (scratchpad-capacity motivation, the local_uthread_id()-based fft_slot/
-    worker_id split, the group_id()/num_groups()-based logical FFT id that
-    replaces global_uthread_id() for a cooperative leaf's own DRAM mapping).
+    worker_id split, and why a cooperative leaf's own DRAM mapping computes
+    its logical FFT id as `global_uthread_id() // workers_per_fft` -- reading
+    the one primitive the hardware already hands out dense over the entire
+    launch, not reconstructed from `group_id()`/`num_groups()`, which
+    fft_plan_cooperative.py's own module docstring documents as an earlier
+    version that was concretely wrong against this project's real config).
 
     `workers_per_fft`: how many microthreads cooperate on one sub-FFT (their
     local_uthread_id()s are consecutive: fft_slot = local_id // workers_per_fft,

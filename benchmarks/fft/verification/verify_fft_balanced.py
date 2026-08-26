@@ -222,7 +222,7 @@ def summarize_balanced_transpose_plan(plan: BalancedTransposeFFTPlan) -> None:
 # ------------------------------------------ make_recursive_transpose_plan
 #
 # FFT chunk size and physical transpose tile size are fully independent
-# here (see fft_plangen.PhysicalTransposePlan) -- verified below by (1)
+# here (see fft_plan_recursive.PhysicalTransposePlan) -- verified below by (1)
 # index-only bijection of the generic tiled transpose (full tile, row
 # tail, column tail, both tails, multiple replicas), (2) full numeric
 # re-execution of the actual emitted stage text (both FFT leaf kernels via

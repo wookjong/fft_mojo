@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """Codegen for the standalone tiled-transpose + fused large-twiddle
-boundary kernel (see fft_plangen.FFTTransposePlan / make_balanced_transpose_
+boundary kernel (see fft_plan_balanced.FFTTransposePlan / make_balanced_transpose_
 plan). Separate from fft_codegen.py's FFT-stage codegen on purpose: an
 FFTTransposePlan is not an FFTStagePlan chain (no radix butterflies, no
 ping-pong, one stage, a different DRAM access shape) -- fusing its logic
@@ -28,7 +28,7 @@ row has been read, `ki_near` contiguous vector reads (one per `elem_near`,
 width `ki_far`) come back out of the scratchpad and go straight to the far
 side's own row `row_far = prefix + digit_multiplier_near*elem_near +
 n_a*rest`, `ki_far` contiguous elements per row -- that side's own plain
-input. digit_multiplier_near/divisor_far are chosen (in fft_plangen.py) so
+input. digit_multiplier_near/divisor_far are chosen (in fft_plan_balanced.py) so
 this tiling always divides n_a/n_b exactly: there is never a ragged/tail
 tile, so no masked-tail code path is needed here.
 
@@ -371,7 +371,7 @@ def generate_balanced_transpose_fft_kernels(plan: BalancedTransposeFFTPlan) -> s
 #
 # Generalizes the ki_near x ki_far tile above to a physical tile size
 # (tile_rows x tile_cols) chosen completely independently of any FFT
-# chunk/radix length -- see fft_plangen.PhysicalTransposePlan and the
+# chunk/radix length -- see fft_plan_recursive.PhysicalTransposePlan and the
 # module design writeup for this session. Used by PRE/MIDDLE/POST
 # transposes in a make_recursive_transpose_plan tree; the ki_near x
 # ki_far-tiled emitter above is untouched (regression baseline for
@@ -616,7 +616,7 @@ def flatten_recursive_node(node: FFTNode) -> list:
     node -> [pre, near_fft.kernel, middle] + flatten(far_child) + [post].
     Each element is either an FFTCodegenPlan (an ordinary FFT kernel) or a
     PhysicalTransposePlan (a standalone transpose kernel) -- codegen
-    dispatches on type, never re-decides anything (see fft_plangen.py's
+    dispatches on type, never re-decides anything (see fft_plan_core.py's
     own "planner decides everything" discipline)."""
     if isinstance(node, FFTLeafPlan):
         return [node.kernel]

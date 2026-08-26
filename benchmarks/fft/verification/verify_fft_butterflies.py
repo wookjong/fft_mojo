@@ -104,7 +104,7 @@ def verify_butterflies(*, seed: int = 0, tolerance: float = 1.0e-5) -> None:
 
 
 def main() -> None:
-    here = Path(__file__).resolve().parent
+    here = Path(__file__).resolve().parent / "fixtures"
 
     print("Verifying FFT butterflies against their DFT matrices...")
     verify_butterflies()
@@ -142,7 +142,7 @@ def main() -> None:
     # before any final output exists, independent of store timing or SIMD
     # width. Two chained radix-4 *stages* need only one stage's 4 pairs
     # live at a time -- the same structure that already clears kernel0 of
-    # test case C. See fft_plangen.make_multi_kernel_plan /
+    # test case C. See fft_plan_multikernel.make_multi_kernel_plan /
     # factor_into_kernel_chunks.
     decomposed = make_multi_kernel_plan(((4, 4), (4, 4)), simd_lanes=4)
     decomposed_source = generate_multi_kernel_fft_kernels(decomposed)
@@ -152,7 +152,7 @@ def main() -> None:
 
     # Test case C: N=960, three kernels chained through DRAM. Exercises
     # AddressMappingKind.SPLIT (the runtime %/// a middle kernel's output
-    # needs) end to end. See fft_plangen.make_multi_kernel_plan.
+    # needs) end to end. See fft_plan_multikernel.make_multi_kernel_plan.
     #
     # Chunks come from factor_into_kernel_chunks rather than a hand-picked
     # radix split: every kernel in the chain pays both a *read* stride

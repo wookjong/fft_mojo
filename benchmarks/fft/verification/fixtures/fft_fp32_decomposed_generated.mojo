@@ -2,7 +2,7 @@ from std.sys import size_of
 from std.random import random_float64, seed
 from std.math import cos as host_cos, sin as host_sin
 
-from m2ndp import VECTOR_WIDTH, NDPTask, PooledRange, global_uthread_id, local_uthread_id, launch_parallel, scratchpad
+from m2ndp import VECTOR_WIDTH, NDPTask, PooledRange, global_uthread_id, local_uthread_id, group_id, num_groups, launch_parallel, scratchpad
 from m2ndp_host import cxl_alloc
 
 comptime W = VECTOR_WIDTH // size_of[Float32]()
@@ -23,8 +23,7 @@ struct FFTFP32Kernel0Params(Movable):
 struct FFTFP32Kernel0(NDPTask):
     comptime Params = FFTFP32Kernel0Params
 
-    comptime buf_a = scratchpad[512, Float32, name="fftfp32kernel0_buf_a"]()
-    comptime buf_b = scratchpad[512, Float32, name="fftfp32kernel0_buf_b"]()
+    comptime buf = scratchpad[512, Float32, name="fftfp32kernel0_buf"]()
 
     @staticmethod
     def stage_0():
@@ -97,14 +96,14 @@ struct FFTFP32Kernel0(NDPTask):
         var oi1 = oa1i - ob1r
         var or3 = oa1r - ob1i
         var oi3 = oa1i + ob1r
-        FFTFP32Kernel0.buf_a.store(spad_base + 0, or0[0])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 0, oi0[0])
-        FFTFP32Kernel0.buf_a.store(spad_base + 4, or0[1])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 4, oi0[1])
-        FFTFP32Kernel0.buf_a.store(spad_base + 8, or0[2])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 8, oi0[2])
-        FFTFP32Kernel0.buf_a.store(spad_base + 12, or0[3])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 12, oi0[3])
+        FFTFP32Kernel0.buf.store(spad_base + 0, or0[0])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 0, oi0[0])
+        FFTFP32Kernel0.buf.store(spad_base + 4, or0[1])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 4, oi0[1])
+        FFTFP32Kernel0.buf.store(spad_base + 8, or0[2])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 8, oi0[2])
+        FFTFP32Kernel0.buf.store(spad_base + 12, or0[3])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 12, oi0[3])
 
         var twr1 = SIMD[DType.float32, 4](Float32(1), Float32(0.923879533), Float32(0.707106781), Float32(0.382683432))
         var twi1 = SIMD[DType.float32, 4](Float32(0), Float32(-0.382683432), Float32(-0.707106781), Float32(-0.923879533))
@@ -112,14 +111,14 @@ struct FFTFP32Kernel0(NDPTask):
         var ti1 = or1 * twi1 + oi1 * twr1
         or1 = tr1
         oi1 = ti1
-        FFTFP32Kernel0.buf_a.store(spad_base + 1, or1[0])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 1, oi1[0])
-        FFTFP32Kernel0.buf_a.store(spad_base + 5, or1[1])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 5, oi1[1])
-        FFTFP32Kernel0.buf_a.store(spad_base + 9, or1[2])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 9, oi1[2])
-        FFTFP32Kernel0.buf_a.store(spad_base + 13, or1[3])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 13, oi1[3])
+        FFTFP32Kernel0.buf.store(spad_base + 1, or1[0])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 1, oi1[0])
+        FFTFP32Kernel0.buf.store(spad_base + 5, or1[1])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 5, oi1[1])
+        FFTFP32Kernel0.buf.store(spad_base + 9, or1[2])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 9, oi1[2])
+        FFTFP32Kernel0.buf.store(spad_base + 13, or1[3])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 13, oi1[3])
 
         var twr2 = SIMD[DType.float32, 4](Float32(1), Float32(0.707106781), Float32(0), Float32(-0.707106781))
         var twi2 = SIMD[DType.float32, 4](Float32(0), Float32(-0.707106781), Float32(-1), Float32(-0.707106781))
@@ -127,14 +126,14 @@ struct FFTFP32Kernel0(NDPTask):
         var ti2 = or2 * twi2 + oi2 * twr2
         or2 = tr2
         oi2 = ti2
-        FFTFP32Kernel0.buf_a.store(spad_base + 2, or2[0])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 2, oi2[0])
-        FFTFP32Kernel0.buf_a.store(spad_base + 6, or2[1])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 6, oi2[1])
-        FFTFP32Kernel0.buf_a.store(spad_base + 10, or2[2])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 10, oi2[2])
-        FFTFP32Kernel0.buf_a.store(spad_base + 14, or2[3])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 14, oi2[3])
+        FFTFP32Kernel0.buf.store(spad_base + 2, or2[0])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 2, oi2[0])
+        FFTFP32Kernel0.buf.store(spad_base + 6, or2[1])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 6, oi2[1])
+        FFTFP32Kernel0.buf.store(spad_base + 10, or2[2])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 10, oi2[2])
+        FFTFP32Kernel0.buf.store(spad_base + 14, or2[3])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 14, oi2[3])
 
         var twr3 = SIMD[DType.float32, 4](Float32(1), Float32(0.382683432), Float32(-0.707106781), Float32(-0.923879533))
         var twi3 = SIMD[DType.float32, 4](Float32(0), Float32(-0.923879533), Float32(-0.707106781), Float32(0.382683432))
@@ -142,14 +141,14 @@ struct FFTFP32Kernel0(NDPTask):
         var ti3 = or3 * twi3 + oi3 * twr3
         or3 = tr3
         oi3 = ti3
-        FFTFP32Kernel0.buf_a.store(spad_base + 3, or3[0])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 3, oi3[0])
-        FFTFP32Kernel0.buf_a.store(spad_base + 7, or3[1])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 7, oi3[1])
-        FFTFP32Kernel0.buf_a.store(spad_base + 11, or3[2])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 11, oi3[2])
-        FFTFP32Kernel0.buf_a.store(spad_base + 15, or3[3])
-        FFTFP32Kernel0.buf_a.store(spad_base + 16 + 15, oi3[3])
+        FFTFP32Kernel0.buf.store(spad_base + 3, or3[0])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 3, oi3[0])
+        FFTFP32Kernel0.buf.store(spad_base + 7, or3[1])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 7, oi3[1])
+        FFTFP32Kernel0.buf.store(spad_base + 11, or3[2])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 11, oi3[2])
+        FFTFP32Kernel0.buf.store(spad_base + 15, or3[3])
+        FFTFP32Kernel0.buf.store(spad_base + 16 + 15, oi3[3])
 
 
     @staticmethod
@@ -165,14 +164,14 @@ struct FFTFP32Kernel0(NDPTask):
         var out_batch_base = (((global_uthread_id() // 1) % 1) * 256) + ((global_uthread_id() % 1) * 16) + ((global_uthread_id() // 1) // 1)
 
         # ===== stage 1, SIMD batch 0 (valid lanes: 4/4) =====
-        var rr0 = FFTFP32Kernel0.buf_a.load[DType.float32, 4](spad_base + 0)
-        var ii0 = FFTFP32Kernel0.buf_a.load[DType.float32, 4](spad_base + 16 + 0)
-        var rr1 = FFTFP32Kernel0.buf_a.load[DType.float32, 4](spad_base + 4)
-        var ii1 = FFTFP32Kernel0.buf_a.load[DType.float32, 4](spad_base + 16 + 4)
-        var rr2 = FFTFP32Kernel0.buf_a.load[DType.float32, 4](spad_base + 8)
-        var ii2 = FFTFP32Kernel0.buf_a.load[DType.float32, 4](spad_base + 16 + 8)
-        var rr3 = FFTFP32Kernel0.buf_a.load[DType.float32, 4](spad_base + 12)
-        var ii3 = FFTFP32Kernel0.buf_a.load[DType.float32, 4](spad_base + 16 + 12)
+        var rr0 = FFTFP32Kernel0.buf.load[DType.float32, 4](spad_base + 0)
+        var ii0 = FFTFP32Kernel0.buf.load[DType.float32, 4](spad_base + 16 + 0)
+        var rr1 = FFTFP32Kernel0.buf.load[DType.float32, 4](spad_base + 4)
+        var ii1 = FFTFP32Kernel0.buf.load[DType.float32, 4](spad_base + 16 + 4)
+        var rr2 = FFTFP32Kernel0.buf.load[DType.float32, 4](spad_base + 8)
+        var ii2 = FFTFP32Kernel0.buf.load[DType.float32, 4](spad_base + 16 + 8)
+        var rr3 = FFTFP32Kernel0.buf.load[DType.float32, 4](spad_base + 12)
+        var ii3 = FFTFP32Kernel0.buf.load[DType.float32, 4](spad_base + 16 + 12)
 
         # fixed radix-4 butterfly
         var oa0r = rr0 + rr2
@@ -303,8 +302,7 @@ struct FFTFP32Kernel1Params(Movable):
 struct FFTFP32Kernel1(NDPTask):
     comptime Params = FFTFP32Kernel1Params
 
-    comptime buf_a = scratchpad[512, Float32, name="fftfp32kernel1_buf_a"]()
-    comptime buf_b = scratchpad[512, Float32, name="fftfp32kernel1_buf_b"]()
+    comptime buf = scratchpad[512, Float32, name="fftfp32kernel1_buf"]()
 
     @staticmethod
     def stage_0():
@@ -345,14 +343,14 @@ struct FFTFP32Kernel1(NDPTask):
         var oi1 = oa1i - ob1r
         var or3 = oa1r - ob1i
         var oi3 = oa1i + ob1r
-        FFTFP32Kernel1.buf_a.store(spad_base + 0, or0[0])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 0, oi0[0])
-        FFTFP32Kernel1.buf_a.store(spad_base + 4, or0[1])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 4, oi0[1])
-        FFTFP32Kernel1.buf_a.store(spad_base + 8, or0[2])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 8, oi0[2])
-        FFTFP32Kernel1.buf_a.store(spad_base + 12, or0[3])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 12, oi0[3])
+        FFTFP32Kernel1.buf.store(spad_base + 0, or0[0])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 0, oi0[0])
+        FFTFP32Kernel1.buf.store(spad_base + 4, or0[1])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 4, oi0[1])
+        FFTFP32Kernel1.buf.store(spad_base + 8, or0[2])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 8, oi0[2])
+        FFTFP32Kernel1.buf.store(spad_base + 12, or0[3])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 12, oi0[3])
 
         var twr1 = SIMD[DType.float32, 4](Float32(1), Float32(0.923879533), Float32(0.707106781), Float32(0.382683432))
         var twi1 = SIMD[DType.float32, 4](Float32(0), Float32(-0.382683432), Float32(-0.707106781), Float32(-0.923879533))
@@ -360,14 +358,14 @@ struct FFTFP32Kernel1(NDPTask):
         var ti1 = or1 * twi1 + oi1 * twr1
         or1 = tr1
         oi1 = ti1
-        FFTFP32Kernel1.buf_a.store(spad_base + 1, or1[0])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 1, oi1[0])
-        FFTFP32Kernel1.buf_a.store(spad_base + 5, or1[1])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 5, oi1[1])
-        FFTFP32Kernel1.buf_a.store(spad_base + 9, or1[2])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 9, oi1[2])
-        FFTFP32Kernel1.buf_a.store(spad_base + 13, or1[3])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 13, oi1[3])
+        FFTFP32Kernel1.buf.store(spad_base + 1, or1[0])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 1, oi1[0])
+        FFTFP32Kernel1.buf.store(spad_base + 5, or1[1])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 5, oi1[1])
+        FFTFP32Kernel1.buf.store(spad_base + 9, or1[2])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 9, oi1[2])
+        FFTFP32Kernel1.buf.store(spad_base + 13, or1[3])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 13, oi1[3])
 
         var twr2 = SIMD[DType.float32, 4](Float32(1), Float32(0.707106781), Float32(0), Float32(-0.707106781))
         var twi2 = SIMD[DType.float32, 4](Float32(0), Float32(-0.707106781), Float32(-1), Float32(-0.707106781))
@@ -375,14 +373,14 @@ struct FFTFP32Kernel1(NDPTask):
         var ti2 = or2 * twi2 + oi2 * twr2
         or2 = tr2
         oi2 = ti2
-        FFTFP32Kernel1.buf_a.store(spad_base + 2, or2[0])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 2, oi2[0])
-        FFTFP32Kernel1.buf_a.store(spad_base + 6, or2[1])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 6, oi2[1])
-        FFTFP32Kernel1.buf_a.store(spad_base + 10, or2[2])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 10, oi2[2])
-        FFTFP32Kernel1.buf_a.store(spad_base + 14, or2[3])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 14, oi2[3])
+        FFTFP32Kernel1.buf.store(spad_base + 2, or2[0])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 2, oi2[0])
+        FFTFP32Kernel1.buf.store(spad_base + 6, or2[1])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 6, oi2[1])
+        FFTFP32Kernel1.buf.store(spad_base + 10, or2[2])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 10, oi2[2])
+        FFTFP32Kernel1.buf.store(spad_base + 14, or2[3])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 14, oi2[3])
 
         var twr3 = SIMD[DType.float32, 4](Float32(1), Float32(0.382683432), Float32(-0.707106781), Float32(-0.923879533))
         var twi3 = SIMD[DType.float32, 4](Float32(0), Float32(-0.923879533), Float32(-0.707106781), Float32(0.382683432))
@@ -390,14 +388,14 @@ struct FFTFP32Kernel1(NDPTask):
         var ti3 = or3 * twi3 + oi3 * twr3
         or3 = tr3
         oi3 = ti3
-        FFTFP32Kernel1.buf_a.store(spad_base + 3, or3[0])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 3, oi3[0])
-        FFTFP32Kernel1.buf_a.store(spad_base + 7, or3[1])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 7, oi3[1])
-        FFTFP32Kernel1.buf_a.store(spad_base + 11, or3[2])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 11, oi3[2])
-        FFTFP32Kernel1.buf_a.store(spad_base + 15, or3[3])
-        FFTFP32Kernel1.buf_a.store(spad_base + 16 + 15, oi3[3])
+        FFTFP32Kernel1.buf.store(spad_base + 3, or3[0])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 3, oi3[0])
+        FFTFP32Kernel1.buf.store(spad_base + 7, or3[1])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 7, oi3[1])
+        FFTFP32Kernel1.buf.store(spad_base + 11, or3[2])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 11, oi3[2])
+        FFTFP32Kernel1.buf.store(spad_base + 15, or3[3])
+        FFTFP32Kernel1.buf.store(spad_base + 16 + 15, oi3[3])
 
 
     @staticmethod
@@ -413,14 +411,14 @@ struct FFTFP32Kernel1(NDPTask):
         var out_batch_base = global_uthread_id() * 1
 
         # ===== stage 1, SIMD batch 0 (valid lanes: 4/4) =====
-        var rr0 = FFTFP32Kernel1.buf_a.load[DType.float32, 4](spad_base + 0)
-        var ii0 = FFTFP32Kernel1.buf_a.load[DType.float32, 4](spad_base + 16 + 0)
-        var rr1 = FFTFP32Kernel1.buf_a.load[DType.float32, 4](spad_base + 4)
-        var ii1 = FFTFP32Kernel1.buf_a.load[DType.float32, 4](spad_base + 16 + 4)
-        var rr2 = FFTFP32Kernel1.buf_a.load[DType.float32, 4](spad_base + 8)
-        var ii2 = FFTFP32Kernel1.buf_a.load[DType.float32, 4](spad_base + 16 + 8)
-        var rr3 = FFTFP32Kernel1.buf_a.load[DType.float32, 4](spad_base + 12)
-        var ii3 = FFTFP32Kernel1.buf_a.load[DType.float32, 4](spad_base + 16 + 12)
+        var rr0 = FFTFP32Kernel1.buf.load[DType.float32, 4](spad_base + 0)
+        var ii0 = FFTFP32Kernel1.buf.load[DType.float32, 4](spad_base + 16 + 0)
+        var rr1 = FFTFP32Kernel1.buf.load[DType.float32, 4](spad_base + 4)
+        var ii1 = FFTFP32Kernel1.buf.load[DType.float32, 4](spad_base + 16 + 4)
+        var rr2 = FFTFP32Kernel1.buf.load[DType.float32, 4](spad_base + 8)
+        var ii2 = FFTFP32Kernel1.buf.load[DType.float32, 4](spad_base + 16 + 8)
+        var rr3 = FFTFP32Kernel1.buf.load[DType.float32, 4](spad_base + 12)
+        var ii3 = FFTFP32Kernel1.buf.load[DType.float32, 4](spad_base + 16 + 12)
 
         # fixed radix-4 butterfly
         var oa0r = rr0 + rr2

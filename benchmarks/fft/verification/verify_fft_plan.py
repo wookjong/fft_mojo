@@ -17,8 +17,8 @@ from pathlib import Path
 
 # benchmarks/fft/ (this file's grandparent) holds the role directories
 # (planning/, codegen/, verification/) as importable packages, plus
-# fft_butterflies.py itself at the top level -- add it to sys.path so this
-# script runs directly (`python3 verification/verify_fft_plan.py`) without
+# make_fft_kernel.py/radix_spec.py themselves at the top level -- add it to
+# sys.path so this script runs directly (`python3 verification/verify_fft_plan.py`) without
 # needing `python3 -m`. Everything this file imports afterward inherits
 # the same sys.path (it's process-global), so only entry-point scripts
 # (this one and verify_fft_butterflies.py) need this.
@@ -379,7 +379,7 @@ def main() -> None:
     # make_balanced_transpose_plan: N=N_A*N_B, each side its own PEELED
     # chain, joined by a standalone tiled transpose+twiddle kernel instead
     # of make_balanced_plan's scalar CROSSED-fused write -- see
-    # fft_plangen.FFTTransposePlan and fft_transpose_codegen.py.
+    # fft_plan_balanced.FFTTransposePlan and fft_transpose_codegen.py.
     #
     # Baseline checkpoints (17x17, 8x8, 4x8 -- what make_decomposed_plan
     # already covers directly), one-side-bare/other-multi-kernel and the
@@ -499,7 +499,7 @@ def main() -> None:
     print()
 
     # make_recursive_transpose_plan: FFT chunk size and physical transpose
-    # tile size are fully independent (see fft_plangen.PhysicalTransposePlan
+    # tile size are fully independent (see fft_plan_recursive.PhysicalTransposePlan
     # / FFTRecursiveNodePlan) -- generalizes make_balanced_transpose_plan's
     # single 2-way split to a full six-step-FFT-style recursion, additive,
     # make_multi_kernel_plan/make_balanced_plan/make_balanced_transpose_plan

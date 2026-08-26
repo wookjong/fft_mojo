@@ -2,7 +2,7 @@ from std.sys import size_of
 from std.random import random_float64, seed
 from std.math import cos as host_cos, sin as host_sin
 
-from m2ndp import VECTOR_WIDTH, NDPTask, PooledRange, global_uthread_id, local_uthread_id, launch_parallel, scratchpad
+from m2ndp import VECTOR_WIDTH, NDPTask, PooledRange, global_uthread_id, local_uthread_id, group_id, num_groups, launch_parallel, scratchpad
 from m2ndp_host import cxl_alloc
 
 comptime W = VECTOR_WIDTH // size_of[Float32]()
