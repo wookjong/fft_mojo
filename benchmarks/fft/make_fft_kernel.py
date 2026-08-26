@@ -39,49 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
 from planning.fft_plan_recursive import make_recursive_transpose_plan
-
-
-
-# This target's guaranteed vector register length (+zvl128b, see
-# scripts/build.sh's FEATURES) in Float32 elements: 128 bits / 32 bits.
-# Above this width RVV needs LMUL>1 register grouping, which is exactly
-# what makes a heavily-unrolled kernel spill (see the `compute_lanes`
-# discussion below and docs/STATUS.md).
-_LMUL1_FLOAT32_LANES = 4
-
-# One NDP unit's own scratchpad, bytes -- matches `spad_size` in
-# third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config and
-# `spad (rw) : ORIGIN = 0, LENGTH = 128K` in scripts/m2ndp.lds (both
-# 131072); duplicated here for the same reason `_LMUL1_FLOAT32_LANES` is --
-# there's no single place in this repo both the C++ simulator config and
-# this Python planner could read it from. A margin below the real 131072
-# (rather than that exact figure) leaves room for a kernel's own Params
-# struct and other scratchpad-resident globals (see scripts/m2ndp.lds's own
-# docstring: "the globals are laid out from" the scratchpad base), which
-# _cap_max_uthread has no visibility into and so cannot budget for itself.
-_SPAD_CAPACITY_BYTES = 120 * 1024
-
-# A cap on `max_uthread * bytes_per_uthread` -- how many bytes of
-# scratchpad may be concurrently active across every uthread resident on
-# one NDP unit at once, independent of how many total bytes
-# _SPAD_CAPACITY_BYTES alone would allow. Found by hand on N=8192's
-# FFTRecNear0 (4096 bytes/uthread -- length 256, ping-pong-doubled: see
-# fft_plan_core._build_plan's own `bytes_per_uthread = len(buffer_names) *
-# scratchpad_stride * 4`, not FFTCodegenPlan.scratchpad_uthread_stride
-# alone, which is only one buffer's share): 16 concurrent uthreads (65536
-# bytes) finishes in ~90,000 simulated cycles; 30 (122880 bytes) blew
-# *past* the simulator's fixed 20,000,000-cycle-per-launch budget for the
-# exact same kernel and data. 16 * 4096 = 65536 is the largest
-# *confirmed-safe* point on that line, so that's the budget here -- not a
-# fitted formula. A flat uthread-*count* cap (always 16) was tried first
-# and also fixes this, but then wrongly re-caps kernels whose own
-# footprint was never at risk (e.g. N=1024's FFTRecLeaf1 at 64 bytes/
-# uthread, fine at 256 concurrent uthreads -- 16384 bytes total), forcing
-# them into extra small launches that only add per-launch overhead.
-# Capping the byte product instead leaves those uncapped while still
-# catching Near0-shaped kernels at any N. See _cap_max_uthread's own
-# docstring.
-_MAX_CONCURRENT_SCRATCHPAD_BYTES = 16 * 4096
+from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
 
 def make_fft_kernel(
@@ -95,10 +53,18 @@ def make_fft_kernel(
     tile_cols: int | None = None,
     cooperative_workers: int | str | None = None,
     output_path: str | Path | None = None,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
 ) -> Path:
     """Plan and render a length-`n` FFT kernel, write it to `output_path`
     (default: `fft_fp32_N{n}{_inverse}_generated.mojo` next to this file),
     and return the path written.
+
+    `target`: the hardware/simulator constants this generator otherwise has
+    no single source for (scratchpad capacity, LMUL=1 vector width, the
+    interleave chunk cooperative leaves must divide evenly) -- see
+    `TargetProfile`'s own docstring. Defaults to `DEFAULT_TARGET_PROFILE`,
+    this repo's one real target today; pass a different profile only to
+    plan against a different config.
 
     `scratchpad_byte_budget`: how many bytes of one NDP unit's own
     scratchpad one leaf kernel may use -- the planner recurses (adds a
@@ -134,7 +100,8 @@ def make_fft_kernel(
     silently produces an all-zero result). `compute_lanes` is the
     separate, safe knob for that: how wide a vector *instruction* each
     stage's arithmetic actually emits (see fft_codegen._chunk_batch).
-    Defaults to `min(simd_lanes, 4)` -- this target's LMUL=1 width -- since
+    Defaults to `min(simd_lanes, target.lmul1_float32_lanes)` -- this target's
+    LMUL=1 width -- since
     a full `simd_lanes=8` butterfly, fully unrolled the way this generator
     always renders one, needs more RVV registers (LMUL=2) than this
     target's simulator can spill through: it emits `csrr t, vlenb` to size
@@ -152,7 +119,7 @@ def make_fft_kernel(
         # internal ValueError.
         raise ValueError(f"n={n} is too small: make_fft_kernel needs n >= 2")
     if compute_lanes is None:
-        compute_lanes = min(simd_lanes, _LMUL1_FLOAT32_LANES)
+        compute_lanes = min(simd_lanes, target.lmul1_float32_lanes)
     if scratchpad_byte_budget is None:
         scratchpad_byte_budget = 4096
     plan = make_recursive_transpose_plan(
@@ -162,9 +129,10 @@ def make_fft_kernel(
         tile_rows=tile_rows,
         tile_cols=tile_cols,
         inverse=inverse,
-        spad_capacity_bytes=_SPAD_CAPACITY_BYTES,
-        max_concurrent_scratchpad_bytes=_MAX_CONCURRENT_SCRATCHPAD_BYTES,
+        spad_capacity_bytes=target.spad_capacity_bytes,
+        max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
         cooperative_workers=cooperative_workers,
+        interleave_chunk_uthreads=target.interleave_chunk_uthreads,
     )
     source = generate_recursive_fft_kernels(plan, compute_lanes=compute_lanes)
 
@@ -202,7 +170,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--compute-lanes", type=int, default=None,
         help="SIMD width the emitted arithmetic actually uses, independent of "
         "--simd-lanes (the launch granule -- do not use this to change that). "
-        f"Default: min(simd_lanes, {_LMUL1_FLOAT32_LANES}), this target's LMUL=1 "
+        f"Default: min(simd_lanes, {DEFAULT_TARGET_PROFILE.lmul1_float32_lanes}), this target's LMUL=1 "
         "width, to avoid register-spill instructions the simulator can't run. "
         "Pass --compute-lanes matching --simd-lanes to opt back into the old, "
         "unchunked code shape.",

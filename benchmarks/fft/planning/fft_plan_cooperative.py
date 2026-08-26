@@ -52,19 +52,7 @@ from planning.fft_plan_core import (
     layouts_for_radices,
     pingpong_needed,
 )
-
-
-# The M2NDP address decoder hands consecutive microthreads to the same NDP
-# unit in blocks of this size before rotating to the next unit (the real
-# config's `m2ndp_interleave_size / packet_size` -- see
-# make_fft_kernel.py's own `_SPAD_CAPACITY_BYTES` for why a constant
-# duplicated from the C++ config, not read from it, is this repo's only
-# option). `workers_per_fft` must divide this so that local_uthread_id()'s
-# and global_uthread_id()'s own groupings of `workers_per_fft` partition the
-# same physical microthreads into the same groups -- see
-# fft_codegen._emit_cooperative_stage's own docstring for the concrete trace
-# (against this exact config) that found this the hard way.
-_INTERLEAVE_CHUNK_UTHREADS = 8
+from planning.target_profile import DEFAULT_TARGET_PROFILE
 
 
 def choose_workers_per_fft(
@@ -73,17 +61,19 @@ def choose_workers_per_fft(
     *,
     simd_lanes: int = 8,
     max_workers: int | None = None,
+    interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
 ) -> int:
     """A leaf's own useful cooperative worker count.
 
     The largest divisor of the hardware's own interleave chunk
-    (`_INTERLEAVE_CHUNK_UTHREADS`, see above) that does not exceed this
-    leaf's own *busiest* stage's SIMD batch count (`max(ceil((length //
-    radix) / simd_lanes) for radix in radices)`): a worker beyond that
-    count is never active on *any* stage of this leaf -- pure launch
-    overhead for zero benefit. A worker beyond a *thinner* stage's own
-    (smaller) batch count but still within the busiest stage's is fine: it
-    idles on the thin stage and works on the busy one (see
+    (`interleave_chunk_uthreads` -- see `TargetProfile.interleave_chunk_uthreads`'s
+    own comment for what this is and where it comes from) that does not
+    exceed this leaf's own *busiest* stage's SIMD batch count
+    (`max(ceil((length // radix) / simd_lanes) for radix in radices)`): a
+    worker beyond that count is never active on *any* stage of this leaf --
+    pure launch overhead for zero benefit. A worker beyond a *thinner*
+    stage's own (smaller) batch count but still within the busiest stage's
+    is fine: it idles on the thin stage and works on the busy one (see
     CooperationPlan / `_partition_batches`'s own possibly-uneven,
     possibly-empty per-worker split) -- only the bound above describes a
     worker with literally nothing to do anywhere.
@@ -104,7 +94,10 @@ def choose_workers_per_fft(
         raise ValueError("radices must be non-empty")
     max_batches = max(-(-(length // radix) // simd_lanes) for radix in radices)
     cap = max_batches if max_workers is None else min(max_batches, max_workers)
-    divisors = [d for d in range(1, _INTERLEAVE_CHUNK_UTHREADS + 1) if _INTERLEAVE_CHUNK_UTHREADS % d == 0]
+    divisors = [
+        d for d in range(1, interleave_chunk_uthreads + 1)
+        if interleave_chunk_uthreads % d == 0
+    ]
     return max(d for d in divisors if d <= cap)
 
 

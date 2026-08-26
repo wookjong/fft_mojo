@@ -36,6 +36,7 @@ from planning.fft_plan_core import (
     pingpong_needed,
 )
 from planning.fft_plan_cooperative import choose_workers_per_fft, make_cooperative_leaf_plan
+from planning.target_profile import DEFAULT_TARGET_PROFILE
 
 
 @dataclass(frozen=True)
@@ -203,6 +204,7 @@ def _build_leaf_kernel(
     spad_capacity_bytes: int | None,
     max_concurrent_scratchpad_bytes: int | None,
     cooperative_workers: int | str | None,
+    interleave_chunk_uthreads: int,
 ) -> FFTCodegenPlan:
     """One leaf/near_fft kernel -- `_build_plan` (today's one-uthread-per-
     sub-FFT leaf) or `make_cooperative_leaf_plan` (see fft_plan_cooperative.py),
@@ -228,7 +230,10 @@ def _build_leaf_kernel(
     workers = 1
     if cooperative_workers is not None:
         max_workers = None if cooperative_workers == "auto" else cooperative_workers
-        workers = choose_workers_per_fft(length, radices, simd_lanes=simd_lanes, max_workers=max_workers)
+        workers = choose_workers_per_fft(
+            length, radices, simd_lanes=simd_lanes, max_workers=max_workers,
+            interleave_chunk_uthreads=interleave_chunk_uthreads,
+        )
 
     if workers > 1:
         return make_cooperative_leaf_plan(
@@ -320,6 +325,7 @@ def _build_recursive_node(
     node_id: list[int],
     max_concurrent_scratchpad_bytes: int | None = None,
     cooperative_workers: int | str | None = None,
+    interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
 ) -> FFTNode:
     idx = node_id[0]
     node_id[0] += 1
@@ -339,6 +345,7 @@ def _build_recursive_node(
             spad_capacity_bytes=spad_capacity_bytes,
             max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
             cooperative_workers=cooperative_workers,
+            interleave_chunk_uthreads=interleave_chunk_uthreads,
         )
         return FFTLeafPlan(m=m, r=r, kernel=kernel)
 
@@ -368,6 +375,7 @@ def _build_recursive_node(
         spad_capacity_bytes=spad_capacity_bytes,
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
         cooperative_workers=cooperative_workers,
+        interleave_chunk_uthreads=interleave_chunk_uthreads,
     )
     near_fft = FFTLeafPlan(m=b, r=r * a, kernel=near_kernel)
 
@@ -385,6 +393,7 @@ def _build_recursive_node(
         tile_cols=tile_cols, is_root=False, node_id=node_id,
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
         cooperative_workers=cooperative_workers,
+        interleave_chunk_uthreads=interleave_chunk_uthreads,
     )
 
     post = _build_physical_transpose(
@@ -411,6 +420,7 @@ def make_recursive_transpose_plan(
     spad_capacity_bytes: int | None = None,
     max_concurrent_scratchpad_bytes: int | None = None,
     cooperative_workers: int | str | None = None,
+    interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
 ) -> RecursiveFFTPlan:
     """N decomposed recursively (six-step-FFT style): each node either
     fuses into one multi-radix leaf kernel (see FFTLeafPlan) or splits
@@ -443,6 +453,7 @@ def make_recursive_transpose_plan(
         tile_cols=tile_cols, is_root=True, node_id=node_id,
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
         cooperative_workers=cooperative_workers,
+        interleave_chunk_uthreads=interleave_chunk_uthreads,
     )
     host = MultiKernelHostPlan(n=n, inverse=inverse, tolerance=1.0e-3)
     return RecursiveFFTPlan(n=n, inverse=inverse, root=root, host=host)
