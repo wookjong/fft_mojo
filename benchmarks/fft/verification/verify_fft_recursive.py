@@ -26,9 +26,6 @@ from planning.fft_plan_recursive import (
 from codegen.fft_codegen import Emitter
 from codegen.fft_transpose_codegen import (
     _emit_physical_transpose_stage,
-    _needs_q_table,
-    _needs_round_split,
-    _needs_tr_table,
     flatten_recursive_node,
 )
 from verification.verify_fft_harness import Ptr, _simd, _translate_emitted_lines, run_kernel
@@ -61,23 +58,23 @@ def run_physical_transpose(
         p_ns.twiddle_imag_base = tw_imag
     # Same tables _emit_physical_transpose_stage reads at runtime when a
     # non-power-of-2 tiles_per_replica/grid_cols would otherwise need a
-    # `mulhsu`-lowering `//`/`%` (see _needs_q_table/_needs_tr_table) --
-    # filled the same way generate_recursive_fft_kernels's own host main()
-    # does, plain Python `//` here since this harness never touches the
-    # simulator at all.
-    if _needs_q_table(plan):
+    # `mulhsu`-lowering `//`/`%` (see PhysicalTransposePlan.needs_q_table/
+    # needs_tr_table) -- filled the same way generate_recursive_fft_kernels's
+    # own host main() does, plain Python `//` here since this harness never
+    # touches the simulator at all.
+    if plan.needs_q_table:
         tiles_per_replica = plan.grid_rows * plan.grid_cols
         q_table = Ptr(plan.total_uthreads)
         for tid in range(plan.total_uthreads):
             q_table[tid] = tid // tiles_per_replica
         p_ns.q_table = q_table
-    if _needs_tr_table(plan):
+    if plan.needs_tr_table:
         tiles_per_replica = plan.grid_rows * plan.grid_cols
         t_r_table = Ptr(tiles_per_replica)
         for lt in range(tiles_per_replica):
             t_r_table[lt] = lt // plan.grid_cols
         p_ns.t_r_table = t_r_table
-    if _needs_round_split(plan):
+    if plan.needs_round_split:
         # On real hardware this is generate_recursive_fft_kernels' own
         # per-round host constant (`r * plan.max_uthread`, added once so
         # `tile_id` stays absolute across a stage split into several
@@ -88,7 +85,7 @@ def run_physical_transpose(
         # `tile_id = global_uthread_id() + p.round_offset` exactly the
         # `tile_id = global_uthread_id()` every non-round-split plan
         # computes, only present here because the emitted Params struct
-        # always declares the field once `_needs_round_split` is true (see
+        # always declares the field once `needs_round_split` is true (see
         # _emit_physical_transpose_params_struct), whether or not this
         # particular translate/exec call cares about rounds.
         p_ns.round_offset = 0
@@ -266,7 +263,7 @@ def verify_recursive_plan(
     `max_concurrent_scratchpad_bytes` small enough to force some kernel's
     own `max_uthread < total_uthreads` to numerically exercise
     generate_recursive_fft_kernels' round-split launches (see
-    _cap_max_uthread/_needs_round_split). This only checks the *stage
+    _cap_max_uthread/PhysicalTransposePlan.needs_round_split). This only checks the *stage
     body*'s own address formula stays correct once max_uthread is capped
     (global_uthread_id() * row_stride + base, same value whether summed as
     one absolute range here or as round*max_uthread + a per-round-relative

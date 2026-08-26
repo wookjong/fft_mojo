@@ -68,6 +68,22 @@ class PhysicalTransposePlan:
     row-to-row jumps are allowed and expected. Tail tiles (rows/cols not a
     multiple of tile_rows/tile_cols) are masked, never out-of-bounds -- see
     fft_transpose_codegen.py.
+
+    `needs_q_table`/`needs_tr_table`: whether `tile_id`'s own decomposition
+    (`_emit_physical_transpose_stage`'s `q`/`t_r`) needs a plan-time-built
+    lookup table instead of a plain runtime `//`/`%` -- true exactly when
+    that division is both non-trivial (more than one replica/grid column;
+    otherwise the quotient is always 0) and by a non-power-of-2 constant.
+    LLVM's usual move for a non-power-of-2 constant divisor -- multiply by
+    its reciprocal instead of a real divide -- emits `mulhsu`, an opcode
+    M2NDP-Detour's decoder does not implement (confirmed: N=960's recursion
+    produces a non-power-of-2 tiles_per_replica and panics without this).
+    `needs_round_split`: whether this stage's own total_uthreads exceeds
+    what max_uthread's scratchpad capacity fits in one `.launch()`, so
+    fft_transpose_codegen.py's host loop needs more than one round. All
+    three are pure functions of this plan's own already-decided fields
+    (never a new decision -- see this dataclass's other fields), computed
+    once here rather than re-derived from codegen at render time.
     """
 
     kernel_name: str
@@ -84,6 +100,9 @@ class PhysicalTransposePlan:
     twiddle_modulus: int | None
     inverse: bool
     simd_lanes: int
+    needs_q_table: bool
+    needs_tr_table: bool
+    needs_round_split: bool
     apply_inverse_scale: bool = False
 
 
@@ -266,6 +285,10 @@ def _build_leaf_kernel(
     )
 
 
+def _is_pow2(x: int) -> bool:
+    return x > 0 and (x & (x - 1)) == 0
+
+
 def _build_physical_transpose(
     *,
     rows: int,
@@ -285,6 +308,7 @@ def _build_physical_transpose(
     grid_cols = -(-cols // tile_cols)
     total_uthreads = replica_count * grid_rows * grid_cols
     scratchpad_elements = 2 * tile_rows * tile_cols
+    tiles_per_replica = grid_rows * grid_cols
 
     max_uthread = _cap_max_uthread(
         total_uthreads, scratchpad_elements * 4, spad_capacity_bytes,
@@ -304,6 +328,9 @@ def _build_physical_transpose(
         total_uthreads=total_uthreads,
         max_uthread=max_uthread,
         scratchpad_elements=scratchpad_elements,
+        needs_q_table=replica_count > 1 and not _is_pow2(tiles_per_replica),
+        needs_tr_table=grid_cols > 1 and not _is_pow2(grid_cols),
+        needs_round_split=max_uthread < total_uthreads,
         twiddle_modulus=twiddle_modulus,
         inverse=inverse,
         simd_lanes=simd_lanes,

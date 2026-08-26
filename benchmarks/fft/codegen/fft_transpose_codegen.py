@@ -378,51 +378,6 @@ def generate_balanced_transpose_fft_kernels(plan: BalancedTransposeFFTPlan) -> s
 # make_balanced_transpose_plan).
 
 
-def _is_pow2(x: int) -> bool:
-    return x > 0 and (x & (x - 1)) == 0
-
-
-def _needs_q_table(plan: PhysicalTransposePlan) -> bool:
-    """`tile_id // tiles_per_replica` (see _emit_physical_transpose_stage)
-    needs a lookup table -- instead of a plain runtime `//` -- exactly when
-    that division is both non-trivial (replica_count > 1; otherwise q is
-    always 0 and there's nothing to divide) and by a non-power-of-2
-    constant. A power-of-2 divisor lowers to a shift, same as today; a
-    non-power-of-2 one is where LLVM's usual move -- multiply by the
-    divisor's reciprocal instead of a real divide -- emits `mulhsu`, an
-    opcode M2NDP-Detour's decoder does not implement (confirmed: a length
-    whose recursion produces a non-power-of-2 tiles_per_replica, e.g.
-    N=960, panics here). See the table precompute in
-    generate_recursive_fft_kernels and its use in
-    _emit_physical_transpose_stage.
-    """
-    tiles_per_replica = plan.grid_rows * plan.grid_cols
-    return plan.replica_count > 1 and not _is_pow2(tiles_per_replica)
-
-
-def _needs_tr_table(plan: PhysicalTransposePlan) -> bool:
-    """Same reasoning as `_needs_q_table`, for `local_tile // grid_cols`."""
-    return plan.grid_cols > 1 and not _is_pow2(plan.grid_cols)
-
-
-def _needs_round_split(plan: PhysicalTransposePlan) -> bool:
-    """Whether this tile's own scratchpad capacity (max_uthread) fits fewer
-    tiles than this stage needs in total -- see the round loop in
-    generate_recursive_fft_kernels. `tile_id`'s only use is as an index (a
-    lookup into q_table/t_r_table, or as the arithmetic `_build_plan`
-    derives q/t_r/t_c from), so a stage that needs several rounds just adds
-    a plan-time-unknown, round-time-known `round_offset` to it once, up
-    front (see `p.round_offset` below) -- everything downstream (q, t_r,
-    t_c, every DRAM address _emit_tile_transfer computes from them) is
-    already expressed purely in terms of `tile_id`, so nothing else needs
-    to change. Unlike an FFTCodegenPlan leaf/near_fft stage's own round
-    split, no DRAM pointer needs offsetting either: a tile's own source/
-    destination address already spans this kernel's *whole* src/dst matrix
-    (q/t_r/t_c pick out the position), never just this round's slice of it.
-    """
-    return plan.max_uthread < plan.total_uthreads
-
-
 def _emit_physical_transpose_params_struct(e: Emitter, *, plan: PhysicalTransposePlan) -> None:
     e.add("@fieldwise_init")
     e.add(f"struct {plan.kernel_name}Params(Movable):")
@@ -433,11 +388,11 @@ def _emit_physical_transpose_params_struct(e: Emitter, *, plan: PhysicalTranspos
     if plan.twiddle_modulus is not None:
         e.add("    var twiddle_real_base: UnsafePointer[Float32, MutAnyOrigin]")
         e.add("    var twiddle_imag_base: UnsafePointer[Float32, MutAnyOrigin]")
-    if _needs_q_table(plan):
+    if plan.needs_q_table:
         e.add("    var q_table: UnsafePointer[Int, MutAnyOrigin]")
-    if _needs_tr_table(plan):
+    if plan.needs_tr_table:
         e.add("    var t_r_table: UnsafePointer[Int, MutAnyOrigin]")
-    if _needs_round_split(plan):
+    if plan.needs_round_split:
         e.add("    var round_offset: Int")
     e.add()
     e.add()
@@ -531,32 +486,32 @@ def _emit_physical_transpose_stage(e: Emitter, *, plan: PhysicalTransposePlan) -
     e.add("            return")
     e.add(f"        var spad_base = local_id * {plan.scratchpad_elements}")
     e.add()
-    if _needs_round_split(plan):
+    if plan.needs_round_split:
         e.add("        var tile_id = global_uthread_id() + p.round_offset")
     else:
         e.add("        var tile_id = global_uthread_id()")
     tiles_per_replica = grid_rows * grid_cols
     if plan.replica_count == 1:
         # Nothing to divide -- tile_id is already this replica's own local
-        # tile index (see _needs_q_table).
+        # tile index (see PhysicalTransposePlan.needs_q_table).
         e.add("        var q = 0")
         e.add("        var local_tile = tile_id")
-    elif _is_pow2(tiles_per_replica):
+    elif not plan.needs_q_table:
         e.add(f"        var tiles_per_replica = {tiles_per_replica}")
         e.add("        var q = tile_id // tiles_per_replica")
         e.add("        var local_tile = tile_id % tiles_per_replica")
     else:
         # A plain `//`/`%` by this non-power-of-2 constant is what used to
-        # be here; see _needs_q_table for why that's unsafe on this target.
-        # `local_tile` comes back out via one MUL + SUB (both implemented)
-        # instead of a second table lookup.
+        # be here; see PhysicalTransposePlan.needs_q_table for why that's
+        # unsafe on this target. `local_tile` comes back out via one MUL +
+        # SUB (both implemented) instead of a second table lookup.
         e.add(f"        var q = p.q_table[tile_id]")
         e.add(f"        var local_tile = tile_id - q * {tiles_per_replica}")
 
     if grid_cols == 1:
         e.add("        var t_r = local_tile")
         e.add("        var t_c = 0")
-    elif _is_pow2(grid_cols):
+    elif not plan.needs_tr_table:
         e.add(f"        var t_r = local_tile // {grid_cols}")
         e.add(f"        var t_c = local_tile % {grid_cols}")
     else:
@@ -815,8 +770,9 @@ def generate_recursive_fft_kernels(
             e.add(f"    var {imn} = cxl_alloc[Float32]({table_size})")
             _emit_physical_transpose_twiddle_table_precompute(e, plan=stage, real_name=rn, imag_name=imn, index=i)
 
-    # `tile_id // {tiles_per_replica,grid_cols}` tables (see _needs_q_table/
-    # _needs_tr_table/_emit_physical_transpose_stage): plain Python integer
+    # `tile_id // {tiles_per_replica,grid_cols}` tables (see
+    # PhysicalTransposePlan.needs_q_table/needs_tr_table and
+    # _emit_physical_transpose_stage): plain Python integer
     # division, at codegen time, into a small DRAM table -- avoids the
     # runtime `mulhsu` a non-power-of-2 constant division would otherwise
     # lower to, an opcode M2NDP-Detour's decoder does not implement.
@@ -825,14 +781,14 @@ def generate_recursive_fft_kernels(
         if not isinstance(stage, PhysicalTransposePlan):
             continue
         q_name = tr_name = None
-        if _needs_q_table(stage):
+        if stage.needs_q_table:
             tiles_per_replica = stage.grid_rows * stage.grid_cols
             q_name = f"qtab{i}"
             e.add(f"    var {q_name} = cxl_alloc[Int]({stage.total_uthreads})")
             for tid in range(stage.total_uthreads):
                 e.add(f"    {q_name}[{tid}] = {tid // tiles_per_replica}")
             e.add()
-        if _needs_tr_table(stage):
+        if stage.needs_tr_table:
             tiles_per_replica = stage.grid_rows * stage.grid_cols
             tr_name = f"trtab{i}"
             e.add(f"    var {tr_name} = cxl_alloc[Int]({tiles_per_replica})")
@@ -896,7 +852,7 @@ def generate_recursive_fft_kernels(
         out_r, out_i = buf_name(i, "real"), buf_name(i, "imag")
 
         if isinstance(stage, PhysicalTransposePlan):
-            # See _needs_round_split: a tile's own address is a function of
+            # See PhysicalTransposePlan.needs_round_split: a tile's own address is a function of
             # tile_id alone (via q/t_r/t_c), so splitting rounds only needs
             # tile_id itself shifted by a per-round `round_offset` -- no
             # DRAM pointer offsetting, unlike the FFTCodegenPlan branch
@@ -911,7 +867,7 @@ def generate_recursive_fft_kernels(
                 args = f"{in_r}, {in_i}, {out_r}, {out_i}"
                 if fixed_args:
                     args += ", " + ", ".join(fixed_args)
-                if _needs_round_split(stage):
+                if stage.needs_round_split:
                     args += f", {r * stage.max_uthread}"
 
                 e.add(f"    var rc{suffix} = {stage.kernel_name}.launch(")

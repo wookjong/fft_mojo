@@ -594,12 +594,12 @@ def main() -> None:
 
     print()
     print("  round-split launches and non-power-of-2 tile-count lookup tables (real emitted code vs. numpy.fft/ifft):")
-    # Both _needs_round_split (generate_recursive_fft_kernels' own launch
+    # Both needs_round_split (generate_recursive_fft_kernels' own launch
     # split once max_uthread < total_uthreads -- see
     # verify_recursive_plan's own docstring for exactly what this harness
-    # can and cannot check about it) and _needs_q_table (the
+    # can and cannot check about it) and needs_q_table (the
     # replica_count > 1 branch of the mulhsu-avoidance tables -- the
-    # sibling _needs_tr_table branch is already exercised by the n=60/210
+    # sibling needs_tr_table branch is already exercised by the n=60/210
     # cases above, both of which have grid_cols=3/5) had zero regression
     # coverage before this: nothing above ever passes
     # max_concurrent_scratchpad_bytes, and no existing case's tiling
@@ -610,7 +610,7 @@ def main() -> None:
     # first hit.
     round_split_cases: list[tuple[str, int, int, int | None, int | None, int | None]] = [
         ("N=960 max_concurrent_scratchpad_bytes forces every kernel to round-split", 960, 512, None, None, 3840),
-        ("N=98 tile=3x2 exercises _needs_q_table (replica_count=7, grid=3x1)", 98, 196, 3, 2, None),
+        ("N=98 tile=3x2 exercises needs_q_table (replica_count=7, grid=3x1)", 98, 196, 3, 2, None),
     ]
     for label, n, budget, tile_rows, tile_cols, cap in round_split_cases:
         for inverse in (False, True):
