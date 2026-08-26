@@ -133,24 +133,42 @@ class RecursiveFFTPlan:
     host: MultiKernelHostPlan
 
 
+def _leaf_scratchpad_bytes(m: int) -> int:
+    """Bytes a single leaf-uthread of length m actually needs for its own
+    intermediate scratchpad buffer(s): 0 for a one-stage fused kernel (no
+    intermediate at all), 8*m for two stages (pingpong_needed is False --
+    one shared buffer), 16*m for three or more (both ping-pong banks).
+    Mirrors _build_plan's own sizing exactly -- scratchpad_stride = 2*length,
+    bytes_per_uthread = len(buffer_names) * scratchpad_stride * 4, from
+    _scratchpad_buffer_names/pingpong_needed in fft_plan_core.py -- so a
+    candidate leaf is judged by what it will actually cost, not a flat
+    always-ping-pong assumption.
+    """
+    stage_count = len(coalesce_radices(_prime_factors_supported(m)))
+    if stage_count <= 1:
+        return 0
+    buffers = 2 if pingpong_needed(stage_count) else 1
+    return buffers * 2 * m * 4
+
+
 def _choose_recursive_split(
     m: int, *, scratchpad_byte_budget: int
 ) -> int | None:
     """Returns b (the near_fft's own length) if m needs splitting, or None
     if m already fits one fused leaf kernel outright. b is chosen as the
     *largest* suffix-factor-product of m's own supported prime
-    factorization that still fits scratchpad_byte_budget as a single
-    leaf -- larger b means fewer recursion levels, fewer transpose kernels,
-    and a leaf that fuses as many radix stages as it can (see the module
-    design writeup's own reasoning for this heuristic; candidate
-    generation is kept in this one function so a benchmark-driven cost
-    model can replace just this later, same discipline
-    factor_into_kernel_chunks's own docstring already established).
+    factorization whose actual scratchpad footprint (_leaf_scratchpad_bytes)
+    still fits scratchpad_byte_budget as a single leaf -- larger b means
+    fewer recursion levels, fewer transpose kernels, and a leaf that fuses
+    as many radix stages as it can (see the module design writeup's own
+    reasoning for this heuristic; candidate generation is kept in this one
+    function so a benchmark-driven cost model can replace just this later,
+    same discipline factor_into_kernel_chunks's own docstring already
+    established).
     """
     if scratchpad_byte_budget <= 0:
         raise ValueError("scratchpad_byte_budget must be positive")
-    cap = scratchpad_byte_budget // 16
-    if m <= cap:
+    if _leaf_scratchpad_bytes(m) <= scratchpad_byte_budget:
         return None
 
     factors = _prime_factors_supported(m)
@@ -159,7 +177,7 @@ def _choose_recursive_split(
         suffix[i] = suffix[i + 1] * factors[i]
 
     for i in range(1, len(factors) + 1):
-        if suffix[i] <= cap:
+        if _leaf_scratchpad_bytes(suffix[i]) <= scratchpad_byte_budget:
             if suffix[i] <= 1:
                 raise ValueError(
                     f"scratchpad_byte_budget={scratchpad_byte_budget} is too "
