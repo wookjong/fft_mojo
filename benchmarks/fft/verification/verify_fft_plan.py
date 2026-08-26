@@ -25,7 +25,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codegen.fft_butterflies import SUPPORTED_RADICES
-from codegen.fft_codegen import _chunk_store, _mapping_base_expr
+from codegen.fft_codegen import _mapping_base_expr
+from codegen.lowering import _chunk_store
 from planning.fft_plan_core import (
     StorePlan,
     _make_store,
