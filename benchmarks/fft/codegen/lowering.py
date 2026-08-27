@@ -45,12 +45,39 @@ def _chunk_load(load: LoadPlan, offset: int, width: int) -> LoadPlan:
             mode="vector",
             base_offset=load.base_offset + offset,
         )
+    # `packed_lane_offsets` is exactly `simd_lanes` long, `None` marking a
+    # planner-selected padding lane (see LoadPlan's own docstring; a tail
+    # SIMD batch's own invalid lanes render this way -- fft_plan_core.
+    # _make_load only ever promotes to "vector" at the *full* simd_lanes
+    # width, so any partial batch starts here unconditionally). The exact
+    # mirror of _chunk_store's own re-promotion just below: a batch that
+    # can't vectorize at simd_lanes width may still have a compute_lanes-
+    # wide *sub*-slice that's fully populated and contiguous (a tail
+    # batch's own valid prefix, most commonly) -- same equivalent-
+    # instruction-selection question _make_load already asks at the full
+    # width, just re-asked at the narrower width the emitted arithmetic
+    # actually uses. Confirmed a real, not just theoretical, case: N=960's
+    # FFTRecNear0 stage_0 tail batch (4 valid of 8 lanes, compute_lanes=4)
+    # rendered 4 separate scalar loads of contiguous offsets before this
+    # fix, one vector load[width=4] after -- no change to *which* offsets
+    # get read, only how many instructions read them.
+    sliced = load.packed_lane_offsets[offset : offset + width]
+    if len(sliced) == width and all(o is not None for o in sliced) and all(
+        sliced[i] == sliced[0] + i for i in range(1, width)  # type: ignore[operator]
+    ):
+        return LoadPlan(
+            operand=load.operand,
+            source=load.source,
+            buffer_name=load.buffer_name,
+            mode="vector",
+            base_offset=sliced[0],
+        )
     return LoadPlan(
         operand=load.operand,
         source=load.source,
         buffer_name=load.buffer_name,
         mode="scalar_pack",
-        packed_lane_offsets=load.packed_lane_offsets[offset : offset + width],
+        packed_lane_offsets=sliced,
     )
 
 

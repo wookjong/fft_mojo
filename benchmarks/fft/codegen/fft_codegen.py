@@ -662,6 +662,18 @@ def _emit_stage_batches(
                 compute_lanes=compute_lanes if compute_lanes is not None else plan.simd_lanes,
             )
         )
+    # A tail SIMD batch chunked narrower than its own valid_lanes can leave
+    # a piece with nothing valid in it at all (e.g. an 8-wide batch with 4
+    # valid lanes, chunked into two 4-wide pieces: the second is entirely
+    # padding) -- _chunk_store already gives such a piece an empty
+    # lane_offsets (see its own "nothing in that chunk is ever written"
+    # comment), so it computes a full butterfly on garbage/zero SIMD
+    # constants and stores none of it: pure dead code, and register
+    # pressure from live values nothing ever reads. Confirmed a real
+    # contributor, not just theoretical -- N=960's FFTRecNear0 stage_0
+    # kept spilling after _chunk_load's own vector-load fix alone (128-byte
+    # frame, unchanged) until this filter dropped the piece entirely.
+    pieces = [(width, piece) for width, piece in pieces if piece.valid_lanes > 0]
 
     for width, piece in pieces:
         if len(pieces) > 1:
