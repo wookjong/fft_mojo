@@ -19,12 +19,10 @@ not the specific interleaving, is what correctness actually depends on).
 splits into), mirroring `run_kernel`'s own `plan.total_uthreads // plan.max_uthread`.
 """
 
-import types
-
 import numpy as np
 
 from planning.fft_plan_core import FFTCodegenPlan
-from verification.verify_fft_harness import Ptr, _simd, _translate_stage
+from verification.verify_fft_harness import Ptr, run_kernel
 
 
 def run_cooperative_kernel(
@@ -34,54 +32,39 @@ def run_cooperative_kernel(
     input_imag: Ptr,
     output_real: Ptr,
     output_imag: Ptr,
+    compute_lanes: int | None = None,
+    narrow_middle_stages: bool = False,
+    loop_stages: bool = False,
 ) -> None:
-    assert plan.cooperation is not None
-    max_uthread = plan.max_uthread  # physical cap per group -- see CooperationPlan
-    num_groups = -(-plan.total_uthreads // max_uthread)  # ceil div, mirrors run_kernel
+    """Thin wrapper over `verify_fft_harness.run_kernel` -- this module used
+    to carry its own parallel reimplementation of the group/local_id split
+    and stage exec loop, byte-for-byte the same generic logic `run_kernel`
+    already does for *any* `FFTCodegenPlan`, cooperative or not (that
+    function's own `num_groups`/`local_id` handling never assumed
+    non-cooperative in the first place). Kept as a distinct name for this
+    module's own callers (`verify_cooperative_leaf`), not because the
+    behavior actually differs from calling `run_kernel` directly.
 
-    group_namespaces: list[types.SimpleNamespace] = []
-    for _ in range(num_groups):
-        ns = types.SimpleNamespace()
-        for buf in plan.scratchpad_buffers:
-            setattr(ns, buf.name, Ptr(buf.elements))
-        group_namespaces.append(ns)
-
-    p_ns = types.SimpleNamespace(
-        input_real_base=input_real,
-        input_imag_base=input_imag,
-        output_real_base=output_real,
-        output_imag_base=output_imag,
+    That duplication had silently fallen behind `run_kernel`'s own
+    `compute_lanes`/`narrow_middle_stages`/`loop_stages` support (all
+    added 2026-08-27, the same day as `fft_cooperative_codegen.
+    _emit_cooperative_stage`'s own per-worker `loop_stages` fix) until
+    this delegation replaced it -- every `verify_cooperative_leaf` call
+    was silently testing full-width (`compute_lanes=None`), fully-unrolled
+    (`loop_stages=False`) rendering, not the `compute_lanes=4`/
+    `narrow_middle_stages=True`/`loop_stages=True` shape `make_fft_kernel.
+    py` actually ships by default -- the same class of "the harness tests
+    a code path nobody ships" gap `verify_fft_harness.run_kernel`'s own
+    tail-batch fix closed for the non-cooperative case earlier the same
+    day. See `verify_cooperative_leaf`'s own docstring for this function's
+    new real defaults.
+    """
+    run_kernel(
+        plan, input_real=input_real, input_imag=input_imag,
+        output_real=output_real, output_imag=output_imag,
+        compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+        loop_stages=loop_stages,
     )
-
-    stage_sources = {
-        stage.stage_id: _translate_stage(plan, stage) for stage in plan.stages
-    }
-
-    current = {"global_id": 0, "local_id": 0}
-
-    for stage in plan.stages:
-        # _translate_stage returns (source, has_tail); a cooperative stage
-        # never renders loop_stages (see _emit_stage's own early raise), so
-        # has_tail is always False here -- nothing to launch beyond src.
-        src, _has_tail = stage_sources[stage.stage_id]
-        namespace = {
-            "Float32": float,
-            "SIMD": _simd,
-            "local_uthread_id": lambda: current["local_id"],
-            "global_uthread_id": lambda: current["global_id"],
-            "N": plan.length,
-            "W": plan.simd_lanes,
-            f"MAX_UTHREAD_{plan.kernel_name}": plan.max_uthread,
-            "p": p_ns,
-        }
-        code = compile(src, f"<{plan.kernel_name} stage {stage.stage_id}>", "exec")
-        exec(code, namespace)
-        stage_fn = namespace[f"stage_{stage.stage_id}"]
-        for global_id in range(plan.total_uthreads):
-            current["global_id"] = global_id
-            current["local_id"] = global_id % max_uthread
-            namespace[plan.kernel_name] = group_namespaces[global_id // max_uthread]
-            stage_fn()
 
 
 def verify_cooperative_leaf(
@@ -94,6 +77,9 @@ def verify_cooperative_leaf(
     simd_lanes: int = 8,
     seed: int = 0,
     in_place: bool = False,
+    compute_lanes: int | None = None,
+    narrow_middle_stages: bool = True,
+    loop_stages: bool = True,
 ) -> float:
     """Plan + run a standalone cooperative leaf against `total_ffts`
     independent random length-`length` signals -- return the max abs error
@@ -101,8 +87,21 @@ def verify_cooperative_leaf(
     output (see fft_codegen.generate_cooperative_fft_kernel's own docstring
     for why this is race-free) by handing `run_cooperative_kernel` one `Ptr`
     for both.
+
+    `compute_lanes`/`narrow_middle_stages`/`loop_stages`: `True`/`True`
+    and `compute_lanes=None` resolved the same way `make_fft_kernel()`
+    resolves it (`min(simd_lanes, DEFAULT_TARGET_PROFILE.
+    lmul1_float32_lanes)`) are the *real* shipped defaults -- unlike
+    `run_cooperative_kernel`'s own former defaults (`False`/`False`/full
+    width), which silently tested a code shape nobody ships until this
+    function's own signature gained these. Pass `False`/explicit widths to
+    compare against the old shape deliberately.
     """
     from planning.fft_plan_cooperative import make_cooperative_leaf_plan
+    from planning.target_profile import DEFAULT_TARGET_PROFILE
+
+    if compute_lanes is None:
+        compute_lanes = min(simd_lanes, DEFAULT_TARGET_PROFILE.lmul1_float32_lanes)
 
     plan = make_cooperative_leaf_plan(
         length=length,
@@ -129,6 +128,8 @@ def verify_cooperative_leaf(
     run_cooperative_kernel(
         plan,
         input_real=in_r, input_imag=in_i, output_real=out_r, output_imag=out_i,
+        compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+        loop_stages=loop_stages,
     )
 
     got = out_r.arr + 1j * out_i.arr

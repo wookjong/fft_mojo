@@ -55,6 +55,7 @@ from verification.verify_fft_recursive import (
     verify_recursive_plan,
     verify_recursive_tree_index_only,
 )
+from verification.verify_fft_cooperative import verify_cooperative_leaf
 
 
 def main() -> None:
@@ -687,6 +688,52 @@ def main() -> None:
             )
             ok = err <= tolerance
             tag = f"{label} (n={n} budget={budget} workers={workers} inverse={inverse})"
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    print()
+    print("  standalone cooperative leaves (verify_fft_cooperative.verify_cooperative_leaf, real emitted code vs. numpy.fft/ifft):")
+    # verify_fft_cooperative.py was never imported by this file (or any
+    # other entry point) before this -- confirmed by grep, 2026-08-27: its
+    # own run_cooperative_kernel/verify_cooperative_leaf had zero automated
+    # coverage of any kind, despite fft_cooperative_codegen.py being a real,
+    # separate rendering path this whole suite otherwise exercises
+    # thoroughly for the plain (non-cooperative) case. Also found and fixed
+    # in the same pass: run_cooperative_kernel carried its own parallel
+    # reimplementation of run_kernel's group/local_id exec loop that had
+    # silently fallen behind run_kernel's own compute_lanes/narrow_middle_
+    # stages/loop_stages support -- every call here now defaults to the
+    # *real* make_fft_kernel.py shape (compute_lanes=4, narrow_middle_
+    # stages=True, loop_stages=True) instead of the stale full-width/fully-
+    # unrolled one, see verify_cooperative_leaf's own docstring.
+    #
+    # total_ffts here is deliberately > 1 (workers cooperating on *each* of
+    # several logical sub-FFTs sharing one launch, not just one) -- the
+    # shape make_recursive_transpose_plan's own near_fft leaves actually
+    # produce (r*a independent transforms) and the coop_loop_cases above
+    # only exercise indirectly (root r=1 there). N=1024/workers=8 is the
+    # same real N=1024 register-pressure regression as coop_loop_cases'
+    # own first case, built directly through make_cooperative_leaf_plan
+    # instead of the recursive tree -- narrower, more direct coverage of
+    # exactly the fix in fft_cooperative_codegen.py itself.
+    coop_leaf_cases: list[tuple[str, int, tuple[int, ...], int, int]] = [
+        ("N=1024 radix (4,4,4,4,4), workers=8, single FFT (the real regression case)", 1024, (4, 4, 4, 4, 4), 8, 1),
+        ("N=1024 radix (4,4,4,4,4), workers=8, total_ffts=3", 1024, (4, 4, 4, 4, 4), 8, 3),
+        ("N=105 radix (3,5,7), workers=2, total_ffts=6", 105, (3, 5, 7), 2, 6),
+        ("N=32 radix (4,4,2), workers=4, total_ffts=5", 32, (4, 4, 2), 4, 5),
+    ]
+    for label, length, radices, workers_per_fft, total_ffts in coop_leaf_cases:
+        for inverse in (False, True):
+            err = verify_cooperative_leaf(
+                length, radices, workers_per_fft=workers_per_fft, total_ffts=total_ffts,
+                inverse=inverse, seed=113,
+            )
+            ok = err <= tolerance
+            tag = (
+                f"{label} (length={length} radices={radices} workers_per_fft={workers_per_fft} "
+                f"total_ffts={total_ffts} inverse={inverse})"
+            )
             print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
             if not ok:
                 failures.append(tag)
