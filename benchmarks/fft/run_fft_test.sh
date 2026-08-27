@@ -62,6 +62,21 @@ Usage: $(basename "$0") N [N ...] [options]
                                 uses (default: make_fft_kernel.py's own
                                 min(simd_lanes, 4))
   --tile-rows N / --tile-cols N  transpose tile size override
+  --cooperative-workers W      "auto", or an integer worker count cap --
+                                see make_fft_kernel.py's own --help
+                                (default: off, one uthread per sub-FFT)
+  --plan-index K                build candidate K from planning.fft_plan_
+                                search.generate_candidates's ranked list
+                                instead of the default single-heuristic
+                                plan -- see make_fft_kernel.py --dump-
+                                candidates to see what each index is first
+  --no-reference-check          skip the O(N^2) host DFT check (needed for
+                                large N -- see make_fft_kernel.py --help);
+                                this script's own PASS/FAIL check then
+                                cannot fire (nothing prints "verification
+                                passed"), so this is for cycle/timing runs,
+                                not correctness runs -- see
+                                benchmark_fft_candidates.sh
   --keep                       keep generated .mojo + build artifacts
   -o, --outdir DIR             directory for generated .mojo files
                                 (default: a temp directory, removed unless
@@ -78,6 +93,9 @@ SIMD_LANES=8
 COMPUTE_LANES=""
 TILE_ROWS=""
 TILE_COLS=""
+COOPERATIVE_WORKERS=""
+PLAN_INDEX=""
+NO_REFERENCE_CHECK=0
 KEEP=0
 OUTDIR=""
 RUN_TIMEOUT=180
@@ -90,6 +108,9 @@ while [ $# -gt 0 ]; do
         --compute-lanes) COMPUTE_LANES="$2"; shift 2 ;;
         --tile-rows) TILE_ROWS="$2"; shift 2 ;;
         --tile-cols) TILE_COLS="$2"; shift 2 ;;
+        --cooperative-workers) COOPERATIVE_WORKERS="$2"; shift 2 ;;
+        --plan-index) PLAN_INDEX="$2"; shift 2 ;;
+        --no-reference-check) NO_REFERENCE_CHECK=1; shift ;;
         --keep) KEEP=1; shift ;;
         -o|--outdir) OUTDIR="$2"; shift 2 ;;
         --timeout) RUN_TIMEOUT="$2"; shift 2 ;;
@@ -144,6 +165,9 @@ for LEN in "${LENGTHS[@]}"; do
     [ -n "$COMPUTE_LANES" ] && ARGS+=(--compute-lanes "$COMPUTE_LANES")
     [ -n "$TILE_ROWS" ] && ARGS+=(--tile-rows "$TILE_ROWS")
     [ -n "$TILE_COLS" ] && ARGS+=(--tile-cols "$TILE_COLS")
+    [ -n "$COOPERATIVE_WORKERS" ] && ARGS+=(--cooperative-workers "$COOPERATIVE_WORKERS")
+    [ -n "$PLAN_INDEX" ] && ARGS+=(--plan-index "$PLAN_INDEX")
+    [ "$NO_REFERENCE_CHECK" = 1 ] && ARGS+=(--no-reference-check)
 
     printf "${B}[fft-test]${N} N=%-8s${N} " "$LEN"
 

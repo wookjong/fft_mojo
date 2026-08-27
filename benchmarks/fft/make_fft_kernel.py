@@ -64,6 +64,7 @@ def make_fft_kernel(
     output_path: str | Path | None = None,
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
     plan_index: int | None = None,
+    reference_check: bool = True,
 ) -> Path:
     """Plan and render a length-`n` FFT kernel, write it to `output_path`
     (default: `fft_fp32_N{n}{_inverse}_generated.mojo` next to this file),
@@ -114,6 +115,20 @@ def make_fft_kernel(
     outright (see `_build_leaf_kernel`'s own docstring in fft_plan_
     recursive.py for why it's a cap, not a raw override).
 
+    `reference_check`: `True` (the default) keeps today's self-contained
+    O(N^2) host DFT check baked into the generated kernel's own main() --
+    fine for small correctness runs, but O(N^2) dwarfs the device kernels'
+    own runtime long before N reaches the range plan comparison actually
+    needs (confirmed directly: N=16384 with this on didn't finish inside a
+    300s run timeout that ran to completion easily with it off). `False`
+    instead dumps the random input and device output between INPUT_BEGIN/
+    INPUT_END and OUTPUT_BEGIN/OUTPUT_END markers (see
+    generate_recursive_fft_kernels's own docstring) for a Python-side
+    numpy.fft check -- use this for any performance/cycle-comparison run
+    at a large N; correctness at that N is established separately (the
+    Python re-execution harness in verification/, or a real-toolchain run
+    at a smaller N with reference_check left on).
+
     `simd_lanes` is the hardware launch granule (ties to `PooledRange`/
     `VECTOR_WIDTH` in src/m2ndp.mojo -- do not change it to tune register
     pressure, that miscounts how many microthreads get launched and
@@ -160,7 +175,9 @@ def make_fft_kernel(
             n, plan_index, inverse=inverse, target=target,
             scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
         )
-    source = generate_recursive_fft_kernels(plan, compute_lanes=compute_lanes)
+    source = generate_recursive_fft_kernels(
+        plan, compute_lanes=compute_lanes, reference_check=reference_check,
+    )
 
     if output_path is None:
         suffix = "_inverse" if inverse else ""
@@ -259,6 +276,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--cooperative-workers/--tile-rows/--tile-cols: the chosen candidate's own "
         "choices already determine those",
     )
+    parser.add_argument(
+        "--no-reference-check", action="store_true",
+        help="skip the self-contained O(N^2) host DFT check and instead dump "
+        "INPUT/OUTPUT markers for a Python-side numpy.fft check -- use for a "
+        "large-N performance/cycle-comparison run (see make_fft_kernel's own "
+        "reference_check docstring; O(N^2) dominates wall-clock well before N "
+        "reaches the range plan comparison needs)",
+    )
     return parser.parse_args(argv)
 
 
@@ -314,6 +339,7 @@ def main() -> None:
         cooperative_workers=cooperative_workers,
         output_path=args.output,
         plan_index=args.plan_index,
+        reference_check=not args.no_reference_check,
     )
     print(f"generated: {path}")
 
