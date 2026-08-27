@@ -67,6 +67,10 @@ def make_fft_kernel(
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
     plan_index: int | None = None,
     reference_check: bool = True,
+    verify_spill_free: bool = False,
+    spill_probe_top_k: int = 1,
+    mojo_root: str | None = None,
+    m2ndp_root: str | None = None,
 ) -> Path:
     """Plan and render a length-`n` FFT kernel, write it to `output_path`
     (default: `fft_fp32_N{n}{_inverse}_generated.mojo` next to this file),
@@ -180,6 +184,48 @@ def make_fft_kernel(
     _ALWAYS_NARROW_RADICES's own comment): this project has never confirmed
     those radices clean at compute_lanes=4 in any configuration, so
     `narrow_middle_stages=False` still narrows a stage using one of them.
+
+    `verify_spill_free`: `False` (the default) keeps this function exactly
+    what its own module docstring promises -- instant, toolchain-free,
+    "just give it a number." `True` instead builds+runs the resolved plan
+    against the real M2NDP-Detour toolchain (planning.spill_probe.
+    probe_spill_free) before writing anything, closing the one gap every
+    fix in narrow_middle_stages/_ALWAYS_NARROW_RADICES still leaves open:
+    those eliminate every *known* spill-driven correctness liability, but
+    a real spill can still occur elsewhere (confirmed 2026-08-27: the PRE/
+    MIDDLE/POST transpose kernels' own tile-position address arithmetic --
+    a scalar/GPR spill, not the `csrr ...,vlenb` vector liability those
+    fixes target, and non-monotonic in tile size in a way this project
+    doesn't yet have a static rule for -- see fft_plan_search.
+    generate_tile_candidates' own tile sweep). Whether this searches or
+    just checks depends on what else was requested:
+
+    * `plan_index` given, or an explicit `tile_rows`/`tile_cols`/
+      `cooperative_workers` override: the caller already picked one exact
+      configuration, so this only *verifies* it -- raises planning.
+      spill_probe.NoSpillFreeCandidateError (propagated, not swallowed) if
+      that exact plan spills, rather than silently writing a kernel this
+      project's own architecture (docs/STATUS.md: the whole register file
+      is free, a spill should never be needed) says shouldn't exist.
+    * Otherwise (the fully default heuristic path): searches
+      `fft_plan_search.generate_candidates`'s own ranked candidates (split/
+      radix-tier/tile/worker axes together) via planning.spill_probe.
+      probe_and_rerank_candidates(top_k=spill_probe_top_k) for the
+      cheapest *confirmed* spill-free one, and writes that plan instead of
+      the bare heuristic pick if it differs. Still raises
+      NoSpillFreeCandidateError if every candidate probed spills.
+
+    Real cost: one or more full build+run round trips (tens of seconds to
+    minutes each, same as `run_fft_test.sh`/`benchmark_fft_candidates.sh`)
+    -- needs the real toolchain present (see scripts/env.sh), and is not
+    something to enable for quick iteration. `spill_probe_top_k` (default
+    1) caps how many candidates the search path probes before giving up;
+    raise it to try harder before raising NoSpillFreeCandidateError, at
+    the cost of more build+run rounds. `mojo_root`/`m2ndp_root`: passed
+    straight through to spill_probe -- `None` picks the same defaults
+    `scripts/env.sh` does (see that function's own docstring); override
+    only to probe against a different toolchain build (e.g. a `git
+    worktree`).
     """
     if n < 2:
         # A length-1 "FFT" needs zero radix stages, which _build_plan/
@@ -192,6 +238,10 @@ def make_fft_kernel(
         compute_lanes = min(simd_lanes, target.lmul1_float32_lanes)
     if scratchpad_byte_budget is None:
         scratchpad_byte_budget = 4096
+    explicit_choice = (
+        plan_index is not None or tile_rows is not None or tile_cols is not None
+        or cooperative_workers is not None
+    )
     if plan_index is None:
         plan = make_recursive_transpose_plan(
             n,
@@ -211,6 +261,50 @@ def make_fft_kernel(
             n, plan_index, inverse=inverse, target=target, batch=batch,
             scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
         )
+
+    if verify_spill_free:
+        # Local import: this is the one call site in the whole module that
+        # needs the real toolchain, and every other caller of this file
+        # (verification/, the CLI's own --dump-plan/--dump-candidates
+        # paths) must keep working with no toolchain present at all -- see
+        # planning/spill_probe.py's own module docstring for the same
+        # "toolchain-free unless a caller opts in" discipline.
+        from planning.spill_probe import NoSpillFreeCandidateError, probe_and_rerank_candidates, probe_spill_free
+
+        if explicit_choice:
+            result = probe_spill_free(
+                plan, compute_lanes=compute_lanes, simd_lanes=simd_lanes,
+                narrow_middle_stages=narrow_middle_stages, target=target,
+                mojo_root=mojo_root, m2ndp_root=m2ndp_root,
+            )
+            if not (result.build_ok and result.run_ok):
+                raise RuntimeError(
+                    f"verify_spill_free: the toolchain probe itself failed for n={n} "
+                    f"(build_ok={result.build_ok} run_ok={result.run_ok}) -- see its own log:\n{result.log}"
+                )
+            if not result.spill_free:
+                raise NoSpillFreeCandidateError(
+                    f"verify_spill_free: the exact plan requested for n={n} "
+                    f"(plan_index={plan_index} tile_rows={tile_rows} tile_cols={tile_cols} "
+                    f"cooperative_workers={cooperative_workers}) spills "
+                    f"({result.spilling_kernels}) -- refusing to write a kernel this "
+                    f"project's own architecture (docs/STATUS.md) says shouldn't spill at all. "
+                    f"Pick a different tile_rows/tile_cols/cooperative_workers/plan_index, or "
+                    f"drop verify_spill_free to accept it anyway.",
+                    kept=[], excluded=[result], unresolved=[],
+                )
+        else:
+            ranked = rank_candidates(generate_candidates(
+                n, target=target, inverse=inverse, batch=batch,
+                scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
+            ))
+            probed = probe_and_rerank_candidates(
+                ranked, compute_lanes=compute_lanes, simd_lanes=simd_lanes,
+                narrow_middle_stages=narrow_middle_stages, target=target,
+                top_k=spill_probe_top_k, mojo_root=mojo_root, m2ndp_root=m2ndp_root,
+            )
+            plan = probed.candidates[0].plan
+
     source = generate_recursive_fft_kernels(
         plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         reference_check=reference_check,
@@ -309,6 +403,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--tile-rows", type=int, default=None, help="transpose tile rows (default: planner's own choice)")
     parser.add_argument("--tile-cols", type=int, default=None, help="transpose tile cols (default: planner's own choice)")
+    parser.add_argument(
+        "--verify-spill-free", action="store_true",
+        help="build+run the resolved plan against the real M2NDP-Detour toolchain "
+        "before writing anything, and refuse to write a kernel that spills -- see "
+        "make_fft_kernel's own verify_spill_free docstring. Slow (a real build+run "
+        "round trip, or several if searching); needs the toolchain present. Default: off.",
+    )
+    parser.add_argument(
+        "--spill-probe-top-k", type=int, default=1,
+        help="with --verify-spill-free and no --plan-index/--tile-rows/--tile-cols/"
+        "--cooperative-workers override: how many confirmed spill-free candidates to "
+        "search for before giving up (default: 1 -- just the cheapest one)",
+    )
     parser.add_argument("-o", "--output", type=str, default=None, help="output .mojo path")
     parser.add_argument(
         "--dump-candidates", action="store_true",
@@ -396,6 +503,8 @@ def main() -> None:
         output_path=args.output,
         plan_index=args.plan_index,
         reference_check=not args.no_reference_check,
+        verify_spill_free=args.verify_spill_free,
+        spill_probe_top_k=args.spill_probe_top_k,
     )
     print(f"generated: {path}")
 

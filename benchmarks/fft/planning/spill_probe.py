@@ -33,6 +33,7 @@ from pathlib import Path
 from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
 from planning.fft_cost_model import CostWeights, DEFAULT_COST_WEIGHTS, PlanMetrics, estimate_cost
 from planning.fft_plan_recursive import RecursiveFFTPlan
+from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -107,8 +108,10 @@ def _toolchain_env(*, mojo_root: str | None, m2ndp_root: str | None) -> dict[str
 def probe_spill_free(
     plan: RecursiveFFTPlan,
     *,
-    compute_lanes: int | None,
-    narrow_middle_stages: bool = False,
+    compute_lanes: int | None = None,
+    simd_lanes: int = 8,
+    narrow_middle_stages: bool = True,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
     mojo_root: str | None = None,
     m2ndp_root: str | None = None,
     build_timeout: float = 120.0,
@@ -122,6 +125,28 @@ def probe_spill_free(
     simulator, which is what actually prints a spill warning -- see
     `docs/STATUS.md`), and report every kernel/stage that spilled.
 
+    `compute_lanes=None`/`narrow_middle_stages=True` are the real defaults
+    -- resolved the *same way* `make_fft_kernel()` resolves them
+    (`min(simd_lanes, target.lmul1_float32_lanes)`) before this function
+    ever calls `generate_recursive_fft_kernels`, not passed through as a
+    raw `None`. This matters: `generate_recursive_fft_kernels`/`_emit_
+    stage`/`_chunk_batch` treat a raw `compute_lanes=None` as "no
+    narrowing at all, use the full `simd_lanes` width" (see `_chunk_
+    batch`'s own `compute_lanes if compute_lanes is not None else plan.
+    simd_lanes`) -- a materially *wider*, more register-pressured
+    rendering than the actually-shipped default of 4. Before this
+    resolution step existed here, `probe_spill_free(plan, compute_lanes=
+    None)` silently probed compute_lanes=8 while every real caller
+    (make_fft_kernel.py, run_fft_test.sh, benchmark_fft_candidates.sh)
+    ships compute_lanes=4 -- confirmed the hard way: N=1024's own
+    baseline plan (verified spill-free via run_fft_test.sh's real
+    default path) came back `spill_free=False` here before this fix,
+    purely from testing an unrepresentative width nobody actually ships.
+    Pass an explicit `compute_lanes` int to deliberately probe a
+    non-default width (mirrors make_fft_kernel.py's own `--compute-lanes`
+    override) -- only the `None` case's *meaning* changed, not its
+    availability as an override mechanism.
+
     Correctness is *not* checked here (reference_check=False, and this
     never parses the INPUT_BEGIN/OUTPUT_BEGIN dump either) -- this answers
     one question only, "does anything spill," not "is the answer right."
@@ -134,6 +159,8 @@ def probe_spill_free(
     out to that script, so a caller only pays for one temp directory and
     one subprocess round trip per probe, not a second Python startup.
     """
+    if compute_lanes is None:
+        compute_lanes = min(simd_lanes, target.lmul1_float32_lanes)
     env = _toolchain_env(mojo_root=mojo_root, m2ndp_root=m2ndp_root)
     source = generate_recursive_fft_kernels(
         plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
@@ -220,47 +247,142 @@ def apply_spill_probe(
     return replace(probed, estimated_cost=estimate_cost(probed, weights))
 
 
+class NoSpillFreeCandidateError(RuntimeError):
+    """Raised by `probe_and_rerank_candidates` when it ran out of
+    candidates before finding `top_k` confirmed spill-free ones. Carries
+    the partial probing work done so far (`kept`/`excluded`/`unresolved`,
+    same meaning as `ProbeAndRerankResult`'s own fields) so a caller can
+    inspect what was found -- e.g. fall back to a smaller `top_k`, widen
+    `scratchpad_byte_budget`/try a different `compute_lanes`, or just
+    report the situation -- rather than losing every probe result along
+    with the exception.
+    """
+
+    def __init__(self, message: str, *, kept, excluded, unresolved):
+        super().__init__(message)
+        self.kept = kept
+        self.excluded = excluded
+        self.unresolved = unresolved
+
+
+@dataclass(frozen=True)
+class ProbeAndRerankResult:
+    """`candidates`: up to `top_k` real-build+run-CONFIRMED spill-free
+    candidates, ranked by `estimated_cost` -- see `probe_and_rerank_
+    candidates`'s own docstring for why this is a hard filter, not a cost
+    term, despite `fft_cost_model.CostWeights.spill_penalty` still
+    existing (that penalty is for a candidate nobody has probed yet, so
+    `estimate_cost` still has *some* signal to rank unprobed candidates
+    against each other -- once a candidate is actually probed here,
+    confirmed-spilling is disqualifying, period).
+
+    `excluded_for_spill`: candidates dropped because probing confirmed a
+    real spill, in the order encountered -- kept for visibility (this
+    project's own history, e.g. N=630's compute_lanes=4/ReadCsr/vlenb
+    bug, is why "it happened to still pass its reference check" is not
+    good enough to keep a spilling candidate around).
+
+    `unresolved`: candidates whose probe itself failed (toolchain
+    error/timeout, `SpillProbeResult.build_ok`/`run_ok` False) -- neither
+    confirmed safe nor confirmed spilling, so these count toward neither
+    `candidates` nor `excluded_for_spill`; a caller that wants to treat
+    "couldn't tell" as acceptable can inspect this list and decide for
+    itself, rather than this function silently picking a side.
+    """
+
+    candidates: list
+    excluded_for_spill: tuple
+    unresolved: tuple
+    probed_count: int
+
+
 def probe_and_rerank_candidates(
     candidates,
     *,
-    compute_lanes: int | None,
+    compute_lanes: int | None = None,
+    simd_lanes: int = 8,
     narrow_middle_stages: bool = True,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
     top_k: int = 5,
     weights: CostWeights = DEFAULT_COST_WEIGHTS,
     mojo_root: str | None = None,
     m2ndp_root: str | None = None,
     build_timeout: float = 120.0,
     run_timeout: float = 200.0,
-):
-    """Probe only the `top_k` already-ranked candidates (real build+run is
-    the expensive part of this whole module -- see its own docstring --
-    so this never probes a candidate `rank_candidates` already ranked
-    behind the cut, matching `benchmark_fft_candidates.sh`'s own "only the
-    top-K get built" discipline) and re-rank with each one's own
-    `spill_free` folded in. A candidate that turns out to spill can still
-    end up ranked above a spill-free one further down `candidates` --
-    `spill_penalty` is a cost term, not a hard filter (see its own
-    comment in fft_cost_model.py for why a spill isn't an automatic
-    disqualification) -- so this returns every candidate given, re-sorted,
-    never a filtered subset.
+) -> ProbeAndRerankResult:
+    """`compute_lanes`/`simd_lanes`/`target`: passed straight through to
+    `probe_spill_free`, which is where `compute_lanes=None`'s actual
+    resolution to `make_fft_kernel()`'s own real default lives -- see that
+    function's own docstring for why this matters (a raw `None` means
+    something wider and more spill-prone at the codegen layer than what
+    every real caller actually ships).
 
-    `candidates` should already be `rank_candidates`'s own output (or
-    anything sorted the same way) -- this re-sorts its result again after
-    probing, so passing an unsorted list still produces a correctly
-    ranked answer, just probes an arbitrary `top_k` slice of it instead of
-    the `top_k` cheapest-by-estimate ones.
+    Walk `candidates` in the order given (should already be
+    `rank_candidates`'s own output, cheapest-estimated first, so the
+    candidates probed first are the ones that would otherwise have been
+    recommended) and probe each one for real until `top_k` are CONFIRMED
+    spill-free -- a confirmed spill is a hard disqualification, never
+    just a cost penalty (this project's own architecture assumes spill
+    basically never happens -- no callee-saved registers -- and a real
+    spill has previously produced a silently wrong answer on this
+    simulator, see fft_cost_model.py's own _NON_FIRST_STAGE_RISKY_RADICES
+    comment and this module's own N=630 reference above; "it happened to
+    pass its reference check this time" is not a basis for recommending a
+    plan). Unlike the version of this function that existed before this
+    discipline (spill_penalty as a soft cost term, every candidate
+    returned regardless), this keeps probing PAST `top_k` into the rest
+    of `candidates` whenever a spill knocks one out, so the caller still
+    gets `top_k` genuinely safe options rather than fewer.
+
+    Raises `NoSpillFreeCandidateError` if every candidate in `candidates`
+    is exhausted without finding `top_k` confirmed spill-free ones --
+    silently returning fewer than asked would look like "there just
+    weren't more good candidates," when the real situation is "every
+    remaining one actually spills," a materially different (and more
+    urgent) fact for the caller. See that exception's own docstring for
+    what it carries.
     """
     from planning.fft_plan_search import rank_candidates
 
-    head = list(candidates[:top_k])
-    tail = list(candidates[top_k:])
-    probed_head = []
-    for candidate in head:
+    kept: list = []
+    excluded: list = []
+    unresolved: list = []
+    probed_count = 0
+
+    for candidate in candidates:
+        if len(kept) >= top_k:
+            break
+        probed_count += 1
         result = probe_spill_free(
-            candidate.plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+            candidate.plan, compute_lanes=compute_lanes, simd_lanes=simd_lanes,
+            narrow_middle_stages=narrow_middle_stages, target=target,
             mojo_root=mojo_root, m2ndp_root=m2ndp_root,
             build_timeout=build_timeout, run_timeout=run_timeout,
         )
         new_metrics = apply_spill_probe(candidate.metrics, result, weights=weights)
-        probed_head.append(replace(candidate, metrics=new_metrics))
-    return rank_candidates(probed_head + tail)
+        probed_candidate = replace(candidate, metrics=new_metrics)
+        if new_metrics.spill_free is True:
+            kept.append(probed_candidate)
+        elif new_metrics.spill_free is False:
+            excluded.append(probed_candidate)
+        else:
+            unresolved.append(probed_candidate)
+
+    if len(kept) < top_k:
+        raise NoSpillFreeCandidateError(
+            f"probe_and_rerank_candidates: exhausted all {len(candidates)} "
+            f"candidate(s), probed {probed_count}, and found only "
+            f"{len(kept)} confirmed spill-free -- short of the requested "
+            f"top_k={top_k}. {len(excluded)} confirmed spilling, "
+            f"{len(unresolved)} unresolved (probe itself failed). No plan "
+            f"is safe to recommend at this compute_lanes="
+            f"{compute_lanes}/narrow_middle_stages={narrow_middle_stages} "
+            f"combination under this discipline -- spilling is a hard "
+            f"disqualification here, not a risk to weigh against other terms.",
+            kept=kept, excluded=excluded, unresolved=unresolved,
+        )
+
+    return ProbeAndRerankResult(
+        candidates=rank_candidates(kept), excluded_for_spill=tuple(excluded),
+        unresolved=tuple(unresolved), probed_count=probed_count,
+    )
