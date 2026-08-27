@@ -53,6 +53,27 @@ from planning.target_profile import TargetProfile
 _NON_FIRST_STAGE_RISKY_RADICES = frozenset({6, 9, 11, 13, 17})
 _ALWAYS_RISKY_RADICES = frozenset({10})
 
+# Real M2NDP runs (benchmark_fft_candidates.sh, --batch sweep at N=1024 plus
+# one N=16384 point) of a transpose stage's own total_uthreads vs. whether a
+# smaller tile (more, smaller tiles) still wins over a bigger one:
+#
+#   1024 uthreads (N=1024, batch=1): tile=1x1 wins (1252 vs. 1516 cycles)
+#   2048 uthreads (N=1024, batch=2): tile=1x1 wins (1355 vs. 1471 cycles)
+#   4096 uthreads (N=1024, batch=4): tile=1x1 LOSES (1786 vs. 1560 cycles)
+#  16384 uthreads (N=16384, batch=1): tile=1x1 LOSES (2258 vs. 1787 cycles)
+#
+# So CostWeights.transpose_tile_count's own "more/smaller tiles is usually
+# faster" (see its own comment) only holds up to some point -- past it, the
+# same extra tiles apparently cost more in launch/scheduling overhead than
+# they gain in parallelism. Only 4 points, all at one of two N -- nowhere
+# near enough to fit *where* the crossover really sits, so this uses the
+# last CONFIRMED-still-winning point (2048) as the threshold, the same
+# "last confirmed-safe point, not a guessed midpoint" discipline target_
+# profile.DEFAULT_TARGET_PROFILE's own max_concurrent_scratchpad_bytes
+# comment already uses. Reread with more benchmark_fft_candidates.sh data
+# before trusting this far from N=1024/16384.
+_TILE_PARALLELISM_SATURATION_UTHREADS = 2048
+
 
 @dataclass(frozen=True)
 class PlanMetrics:
@@ -61,6 +82,13 @@ class PlanMetrics:
     transpose_kernel_count: int
     total_leaf_stage_count: int
     total_transpose_tiles: int
+    # The single busiest PRE/MIDDLE/POST transpose stage's own total_uthreads
+    # (0 if this plan has no transpose stage at all, i.e. a single fused
+    # leaf) -- see CostWeights.tile_oversaturation_penalty's own comment for
+    # why this, not total_transpose_tiles (summed across stages), is the
+    # quantity the "smaller tile stops helping" crossover was measured
+    # against.
+    max_transpose_stage_uthreads: int
     estimated_dram_bytes: int
     max_scratchpad_bytes: int
     worst_worker_utilization: float  # 1.0 = no cooperative leaf ever idles a worker
@@ -110,6 +138,15 @@ class CostWeights:
     # single ranking decision it flips as a hint to verify with
     # benchmark_fft_candidates.sh, not a settled answer.
     transpose_tile_count: float = -2.0
+    # Counteracts transpose_tile_count once a candidate's own busiest
+    # transpose stage passes _TILE_PARALLELISM_SATURATION_UTHREADS -- see
+    # that constant's own comment for the 4 real data points this is based
+    # on. Sized so that N=1024/batch=4's tile=1x1 candidate (4096 uthreads,
+    # 2048 over threshold) actually ranks behind its own tile=2x2 sibling
+    # (real cycles: 1786 vs. 1560) -- picked as the smallest multiple of 10
+    # that does, not a fitted rate; recheck this weight if more benchmark_
+    # fft_candidates.sh data at other N/batch combinations disagrees.
+    tile_oversaturation_penalty: float = 10.0
 
 
 DEFAULT_COST_WEIGHTS = CostWeights()
@@ -156,6 +193,7 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
     transpose_kernel_count = 0
     total_leaf_stage_count = 0
     total_transpose_tiles = 0
+    max_transpose_stage_uthreads = 0
     max_scratchpad_bytes = 0
     radix_risk_score = 0.0
     utilizations: list[float] = []
@@ -164,6 +202,7 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
         if isinstance(stage, PhysicalTransposePlan):
             transpose_kernel_count += 1
             total_transpose_tiles += stage.total_uthreads
+            max_transpose_stage_uthreads = max(max_transpose_stage_uthreads, stage.total_uthreads)
             max_scratchpad_bytes = max(max_scratchpad_bytes, stage.scratchpad_elements * 4)
         else:
             leaf_kernel_count += 1
@@ -175,11 +214,15 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
             if util is not None:
                 utilizations.append(util)
 
-    # One full real+imag read + write per stage in the chain -- see the
+    # One full real+imag read + write per stage in the chain, times how many
+    # independent batch transforms actually move through it -- see the
     # module design writeup's own "DRAM full-array passes" accounting
-    # (fft_plan_recursive's own docstrings describe every stage as
-    # touching the whole N-element buffer once each way).
-    estimated_dram_bytes = len(stages) * plan.n * 2 * 2 * 4
+    # (fft_plan_recursive's own docstrings describe every stage as touching
+    # the whole N-element buffer once each way) and make_recursive_transpose
+    # _plan's own `batch` docstring (every stage's total_uthreads already
+    # scales with it, so the DRAM traffic estimate must too or every batch
+    # sweep would under-count it identically regardless of batch).
+    estimated_dram_bytes = len(stages) * plan.n * plan.batch * 2 * 2 * 4
 
     return PlanMetrics(
         recursion_depth=_tree_depth(plan.root),
@@ -187,6 +230,7 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
         transpose_kernel_count=transpose_kernel_count,
         total_leaf_stage_count=total_leaf_stage_count,
         total_transpose_tiles=total_transpose_tiles,
+        max_transpose_stage_uthreads=max_transpose_stage_uthreads,
         estimated_dram_bytes=estimated_dram_bytes,
         max_scratchpad_bytes=max_scratchpad_bytes,
         worst_worker_utilization=min(utilizations) if utilizations else 1.0,
@@ -195,6 +239,9 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
 
 
 def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIGHTS) -> float:
+    oversaturation = max(
+        0, metrics.max_transpose_stage_uthreads - _TILE_PARALLELISM_SATURATION_UTHREADS
+    )
     return (
         weights.memory_traffic * metrics.estimated_dram_bytes
         + weights.transpose_passes * metrics.transpose_kernel_count
@@ -203,4 +250,5 @@ def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIG
         + weights.radix_risk_penalty * metrics.radix_risk_score
         + weights.recursion_depth_penalty * metrics.recursion_depth
         + weights.transpose_tile_count * metrics.total_transpose_tiles
+        + weights.tile_oversaturation_penalty * oversaturation
     )

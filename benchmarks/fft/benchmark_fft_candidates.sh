@@ -52,6 +52,11 @@ Usage: $(basename "$0") N [options]
                                 make_fft_kernel.py --help (default: 8)
   --compute-lanes N             SIMD width the emitted arithmetic actually
                                 uses -- see make_fft_kernel.py --help
+  --batch B                     how many independent length-N transforms
+                                to run in one launch (default: 1) -- see
+                                make_fft_kernel.py --help. Applied to
+                                every candidate the same way; not itself
+                                a ranked search axis.
   --max-candidates K            cap how many ranked candidates to actually
                                 build+run (default: 8 -- generate_candidates
                                 can return up to 24; each one is a real
@@ -76,6 +81,7 @@ INVERSE=0
 SCRATCHPAD_BUDGET=4096
 SIMD_LANES=8
 COMPUTE_LANES=""
+BATCH=1
 MAX_CANDIDATES=8
 KEEP=0
 OUTDIR=""
@@ -87,6 +93,7 @@ while [ $# -gt 0 ]; do
         --scratchpad-byte-budget) SCRATCHPAD_BUDGET="$2"; shift 2 ;;
         --simd-lanes) SIMD_LANES="$2"; shift 2 ;;
         --compute-lanes) COMPUTE_LANES="$2"; shift 2 ;;
+        --batch) BATCH="$2"; shift 2 ;;
         --max-candidates) MAX_CANDIDATES="$2"; shift 2 ;;
         --keep) KEEP=1; shift ;;
         -o|--outdir) OUTDIR="$2"; shift 2 ;;
@@ -135,7 +142,7 @@ fi
 
 # ---- 1. dump every candidate's own estimated_cost (no build yet) ----------
 
-DUMP_ARGS=("$LEN" --scratchpad-byte-budget "$SCRATCHPAD_BUDGET" --simd-lanes "$SIMD_LANES" --dump-candidates)
+DUMP_ARGS=("$LEN" --scratchpad-byte-budget "$SCRATCHPAD_BUDGET" --simd-lanes "$SIMD_LANES" --batch "$BATCH" --dump-candidates)
 [ "$INVERSE" = 1 ] && DUMP_ARGS+=(--inverse)
 [ -n "$COMPUTE_LANES" ] && DUMP_ARGS+=(--compute-lanes "$COMPUTE_LANES")
 
@@ -178,7 +185,7 @@ for ((i = 0; i < RUN_COUNT; i++)); do
     MOJO_FILE="$GEN_DIR/${NAME}_generated.mojo"
 
     ARGS=("$LEN" --scratchpad-byte-budget "$SCRATCHPAD_BUDGET" --simd-lanes "$SIMD_LANES"
-          --plan-index "$K" --no-reference-check -o "$MOJO_FILE")
+          --batch "$BATCH" --plan-index "$K" --no-reference-check -o "$MOJO_FILE")
     [ "$INVERSE" = 1 ] && ARGS+=(--inverse)
     [ -n "$COMPUTE_LANES" ] && ARGS+=(--compute-lanes "$COMPUTE_LANES")
 
