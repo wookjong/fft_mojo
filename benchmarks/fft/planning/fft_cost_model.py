@@ -110,6 +110,18 @@ class PlanMetrics:
     max_scratchpad_bytes: int
     worst_worker_utilization: float  # 1.0 = no cooperative leaf ever idles a worker
     radix_risk_score: float          # 0.0 = every leaf's radix sequence is the confirmed-safe kind
+    # How many PRE/MIDDLE/POST transpose stages have a tile that does NOT
+    # divide `rows`/`cols` exactly (`rows % tile_rows != 0 or cols %
+    # tile_cols != 0` -- see fft_plan_search.generate_tile_candidates' own
+    # comment for the real-hardware finding this is based on). 0 means
+    # every transpose stage's own tile evenly divides both dimensions --
+    # confirmed real-hardware clean at every no-tail size tried (N=630's
+    # PRE transpose, gcd(105,6)=3's own divisors 1 and 3). A stage WITH a
+    # tail is not confirmed unsafe (tile=2x2/5x5 also had one and stayed
+    # clean) -- only a weak risk signal, not a certainty, which is why
+    # transpose_tail_risk_penalty (below) stays small relative to
+    # radix_risk_penalty.
+    transpose_tail_tile_count: int
     # `None` (the default, and the only value estimate_metrics itself ever
     # produces) means "not probed" -- unlike every other field above, this
     # one cannot be computed from the plan alone (see planning/spill_probe.
@@ -171,6 +183,19 @@ class CostWeights:
     # final recommendation; only probe_and_rerank_candidates' own hard
     # exclusion does that reliably.
     spill_penalty: float = 2000.0
+    # A weak, pre-probe nudge toward tile choices that structurally can't
+    # hit the tail-branch liability transpose_tail_tile_count flags (see
+    # that field's own comment) -- deliberately much smaller than
+    # radix_risk_penalty/spill_penalty, since a tail tile is only a risk
+    # signal, not a confirmed one (tile=2x2/5x5 in the real N=630 case
+    # this is based on both had a tail and stayed clean). Sized just large
+    # enough to break a near-tie in favor of the no-tail option (e.g. two
+    # tile sizes with otherwise-similar transpose_tile_count/DRAM cost),
+    # not to override a genuinely cheaper has-tail candidate outright --
+    # a caller who wants the stronger guarantee should reach for
+    # planning.spill_probe's real probe instead, same as radix_risk_score
+    # vs. a confirmed spill_free=False.
+    transpose_tail_risk_penalty: float = 20.0
     recursion_depth_penalty: float = 100.0
     # Real M2NDP runs (this project's own benchmark_fft_candidates.sh
     # sweeps at N=1024/960/630) show MORE, SMALLER transpose tiles usually
@@ -248,6 +273,7 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
     max_transpose_stage_uthreads = 0
     max_scratchpad_bytes = 0
     radix_risk_score = 0.0
+    transpose_tail_tile_count = 0
     utilizations: list[float] = []
 
     for stage in stages:
@@ -256,6 +282,8 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
             total_transpose_tiles += stage.total_uthreads
             max_transpose_stage_uthreads = max(max_transpose_stage_uthreads, stage.total_uthreads)
             max_scratchpad_bytes = max(max_scratchpad_bytes, stage.scratchpad_elements * 4)
+            if stage.rows % stage.tile_rows != 0 or stage.cols % stage.tile_cols != 0:
+                transpose_tail_tile_count += 1
         else:
             leaf_kernel_count += 1
             total_leaf_stage_count += len(stage.stages)
@@ -287,6 +315,7 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
         max_scratchpad_bytes=max_scratchpad_bytes,
         worst_worker_utilization=min(utilizations) if utilizations else 1.0,
         radix_risk_score=radix_risk_score,
+        transpose_tail_tile_count=transpose_tail_tile_count,
     )
 
 
@@ -308,5 +337,6 @@ def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIG
         + weights.recursion_depth_penalty * metrics.recursion_depth
         + weights.transpose_tile_count * metrics.total_transpose_tiles
         + weights.tile_oversaturation_penalty * oversaturation
+        + weights.transpose_tail_risk_penalty * metrics.transpose_tail_tile_count
         + spill_term
     )

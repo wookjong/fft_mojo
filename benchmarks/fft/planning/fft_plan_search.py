@@ -49,6 +49,7 @@ not crossed with step 7's own joint search, for the same worker-legality-
 depends-on-split reason above).
 """
 
+import math
 from dataclasses import dataclass, replace
 
 from planning.fft_cost_model import PlanMetrics, estimate_cost, estimate_metrics
@@ -218,7 +219,25 @@ def generate_tile_candidates(rows: int, cols: int, *, simd_lanes: int) -> list[t
     cycles vs. 1516) -- one halving step alone stopped short of the actual
     optimum here, so this keeps going to the floor instead of guessing
     where to stop. Still small (at most log2(default_dim) extra entries)
-    per section 10's own "avoid combinatorial explosion" instruction."""
+    per section 10's own "avoid combinatorial explosion" instruction.
+
+    Also includes every divisor of `gcd(rows, cols)` as a square tile --
+    these, and *only* these, divide both `rows` and `cols` exactly, so
+    `_emit_physical_transpose_stage`'s own `has_row_tail`/`has_col_tail`
+    are both `False` and it renders a single fast-path branch with no
+    tail case at all. Confirmed real-hardware significant, not just
+    tidier code (2026-08-27, N=630's own PRE transpose, rows=105 cols=6,
+    gcd=3): direct disassembly showed a tail branch is where LLVM's own
+    runtime value-specialization lives (`bnez`/`bne` against exact
+    constants) -- tile=4x4/6x6 (each with at least one tail) spilled,
+    while tile=1x1/3x3 (gcd(105,6)=3's own divisors, no tail at all) were
+    completely clean; tile=2x2/5x5 also had a tail yet didn't spill, so a
+    tail alone doesn't guarantee trouble -- only *no* tail guarantees
+    safety. Not guaranteed fastest on real cycles (a tail tile can still
+    win), but gives planning.spill_probe-driven search at least one
+    candidate per shape it never has to actually build+run to trust is
+    spill-free at the tile level specifically.
+    """
     default_dim = max(1, min(simd_lanes, rows, cols))
     candidates = {(default_dim, default_dim)}
     candidates.add((max(1, min(simd_lanes, rows)), max(1, min(simd_lanes, cols))))
@@ -229,6 +248,10 @@ def generate_tile_candidates(rows: int, cols: int, *, simd_lanes: int) -> list[t
     doubled = min(default_dim * 2, rows, cols)
     if doubled > default_dim:
         candidates.add((doubled, doubled))
+    gcd = math.gcd(rows, cols)
+    for d in range(1, gcd + 1):
+        if gcd % d == 0:
+            candidates.add((d, d))
     return sorted(candidates)
 
 
