@@ -166,6 +166,7 @@ def generate_candidates(
     inverse: bool = False,
     scratchpad_byte_budget: int = 4096,
     simd_lanes: int = 8,
+    batch: int = 1,
     max_candidates: int = 40,
     max_joint_split_candidates: int = 16,
 ) -> list[FFTPlanCandidate]:
@@ -175,6 +176,13 @@ def generate_candidates(
     RecursiveFFTPlan (byte-for-byte what `generate_recursive_fft_kernels`
     already knows how to render), so nothing downstream needs to change to
     consume one.
+
+    `batch`: passed straight through to every candidate's own
+    make_recursive_transpose_plan call, unchanged across the whole sweep --
+    it multiplies every leaf/transpose kernel's own total_uthreads
+    uniformly (see that function's own `batch` docstring) and never
+    affects which splits/tiers/workers/tiles are legal or how they rank
+    against each other, so it is not itself a search axis here.
     """
 
     def build(
@@ -186,6 +194,7 @@ def generate_candidates(
             scratchpad_byte_budget=scratchpad_byte_budget,
             simd_lanes=simd_lanes,
             inverse=inverse,
+            batch=batch,
             spad_capacity_bytes=target.spad_capacity_bytes,
             max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
             interleave_chunk_uthreads=target.interleave_chunk_uthreads,
@@ -275,6 +284,7 @@ def generate_candidates(
             scratchpad_byte_budget=scratchpad_byte_budget,
             simd_lanes=simd_lanes,
             inverse=inverse,
+            batch=batch,
             spad_capacity_bytes=target.spad_capacity_bytes,
             max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
             interleave_chunk_uthreads=target.interleave_chunk_uthreads,

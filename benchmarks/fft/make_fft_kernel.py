@@ -61,6 +61,7 @@ def make_fft_kernel(
     tile_rows: int | None = None,
     tile_cols: int | None = None,
     cooperative_workers: int | str | None = None,
+    batch: int = 1,
     output_path: str | Path | None = None,
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
     plan_index: int | None = None,
@@ -115,6 +116,17 @@ def make_fft_kernel(
     outright (see `_build_leaf_kernel`'s own docstring in fft_plan_
     recursive.py for why it's a cap, not a raw override).
 
+    `batch`: how many independent length-`n` transforms to run in one
+    launch, `1` by default (today's exact prior behavior). The `batch`
+    transforms sit back to back in one flat buffer -- see
+    make_recursive_transpose_plan's own `batch` docstring for why every
+    kernel this renders is already sized for it with no other planning
+    change. Compatible with `--plan-index`: every candidate
+    generate_candidates builds gets the same `batch`, since it's not
+    itself a ranked search axis (it never changes which split/tier/
+    worker/tile choice is legal or how they compare -- see that module's
+    own note on this).
+
     `reference_check`: `True` (the default) keeps today's self-contained
     O(N^2) host DFT check baked into the generated kernel's own main() --
     fine for small correctness runs, but O(N^2) dwarfs the device kernels'
@@ -165,6 +177,7 @@ def make_fft_kernel(
             tile_rows=tile_rows,
             tile_cols=tile_cols,
             inverse=inverse,
+            batch=batch,
             spad_capacity_bytes=target.spad_capacity_bytes,
             max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
             cooperative_workers=cooperative_workers,
@@ -172,7 +185,7 @@ def make_fft_kernel(
         )
     else:
         plan = plan_for_index(
-            n, plan_index, inverse=inverse, target=target,
+            n, plan_index, inverse=inverse, target=target, batch=batch,
             scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
         )
     source = generate_recursive_fft_kernels(
@@ -191,14 +204,14 @@ def make_fft_kernel(
 
 def plan_for_index(
     n: int, plan_index: int, *, inverse: bool, target: TargetProfile,
-    scratchpad_byte_budget: int, simd_lanes: int,
+    scratchpad_byte_budget: int, simd_lanes: int, batch: int = 1,
 ) -> RecursiveFFTPlan:
     """The `plan_index`'th plan from `generate_candidates`/`rank_candidates`
     (index 0 = lowest estimated cost) -- shared by `make_fft_kernel` and
     the `--dump-plan --plan-index` CLI path so both resolve exactly the
     same candidate the same way."""
     ranked = rank_candidates(generate_candidates(
-        n, target=target, inverse=inverse,
+        n, target=target, inverse=inverse, batch=batch,
         scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
     ))
     if not (0 <= plan_index < len(ranked)):
@@ -243,6 +256,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help='"auto" to let each leaf pick its own cooperative worker count '
         "(see choose_workers_per_fft), or an integer to cap it -- default: "
         "off, one uthread per sub-FFT (this project's original behavior)",
+    )
+    parser.add_argument(
+        "--batch", type=int, default=1,
+        help="how many independent length-N transforms to run in one launch, "
+        "back to back in one flat buffer -- default: 1 (a single transform, "
+        "today's prior behavior)",
     )
     parser.add_argument("--simd-lanes", type=int, default=8, help="SIMD lane count (default: 8)")
     parser.add_argument(
@@ -296,7 +315,7 @@ def main() -> None:
 
     if args.dump_candidates:
         ranked = rank_candidates(generate_candidates(
-            args.n, inverse=args.inverse,
+            args.n, inverse=args.inverse, batch=args.batch,
             scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=args.simd_lanes,
         ))
         for i, candidate in enumerate(ranked):
@@ -307,7 +326,7 @@ def main() -> None:
     if args.dump_plan:
         if args.plan_index is not None:
             ranked = rank_candidates(generate_candidates(
-                args.n, inverse=args.inverse,
+                args.n, inverse=args.inverse, batch=args.batch,
                 scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=args.simd_lanes,
             ))
             if not (0 <= args.plan_index < len(ranked)):
@@ -320,6 +339,7 @@ def main() -> None:
             plan = make_recursive_transpose_plan(
                 args.n, scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=args.simd_lanes,
                 tile_rows=args.tile_rows, tile_cols=args.tile_cols, inverse=args.inverse,
+                batch=args.batch,
                 spad_capacity_bytes=DEFAULT_TARGET_PROFILE.spad_capacity_bytes,
                 max_concurrent_scratchpad_bytes=DEFAULT_TARGET_PROFILE.max_concurrent_scratchpad_bytes,
                 cooperative_workers=cooperative_workers,
@@ -337,6 +357,7 @@ def main() -> None:
         tile_rows=args.tile_rows,
         tile_cols=args.tile_cols,
         cooperative_workers=cooperative_workers,
+        batch=args.batch,
         output_path=args.output,
         plan_index=args.plan_index,
         reference_check=not args.no_reference_check,

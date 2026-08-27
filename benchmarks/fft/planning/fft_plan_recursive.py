@@ -151,6 +151,17 @@ class RecursiveFFTPlan:
     inverse: bool
     root: FFTNode
     host: MultiKernelHostPlan
+    # How many independent length-n transforms this plan's own root node
+    # covers -- root.r itself already carries this (FFTNode(M, R)'s own
+    # contract: "R independent M-point transforms", threaded multiplicatively
+    # through every recursion level, so every leaf/transpose kernel this
+    # tree renders is already sized for it with zero further plan changes --
+    # see make_recursive_transpose_plan's own `batch` parameter). Kept as
+    # its own explicit field anyway rather than making every caller re-derive
+    # it from root.r (which isn't even always a plain int -- root can be a
+    # leaf with no further nesting): host-side buffer sizing/reference-check
+    # (generate_recursive_fft_kernels) needs this number directly.
+    batch: int = 1
 
 
 def flatten_recursive_node(node: FFTNode) -> list:
@@ -655,6 +666,7 @@ def make_recursive_transpose_plan(
     tile_rows: int | None = None,
     tile_cols: int | None = None,
     inverse: bool = False,
+    batch: int = 1,
     spad_capacity_bytes: int | None = None,
     max_concurrent_scratchpad_bytes: int | None = None,
     cooperative_workers: int | str | None = None,
@@ -692,10 +704,23 @@ def make_recursive_transpose_plan(
     own docstring. Exist so `fft_plan_search.py` can build a specific
     candidate plan instead of only "the one plan this budget/heuristic
     combination implies".
+
+    `batch`: how many independent length-`n` transforms to run in one
+    launch, `1` by default (today's exact prior behavior, a single
+    transform). Passed straight through as the root node's own `r`
+    (FFTNode(M, R)'s "R independent M-point transforms" contract already
+    threads multiplicatively through every recursion level -- see
+    FFTRecursiveNodePlan's own docstring's "b x a -> a x b -> ... -> a x b"
+    derivation -- so every leaf/transpose kernel this tree renders is
+    already correctly sized for any batch with zero further plan changes).
+    The `batch` independent transforms sit back to back in one flat
+    `batch*n`-element buffer (`transform_index*n + element_index`), the
+    same layout `codegen.common.emit_reference_check`'s own `batch_count`
+    already assumes for a single-kernel plan's `total_uthreads`.
     """
     node_id = [0]
     root = _build_recursive_node(
-        n, 1, scratchpad_byte_budget=scratchpad_byte_budget,
+        n, batch, scratchpad_byte_budget=scratchpad_byte_budget,
         simd_lanes=simd_lanes, inverse=inverse,
         spad_capacity_bytes=spad_capacity_bytes, tile_rows=tile_rows,
         tile_cols=tile_cols, is_root=True, node_id=node_id,
@@ -707,4 +732,4 @@ def make_recursive_transpose_plan(
         forced_split_sequence=forced_split_sequence,
     )
     host = MultiKernelHostPlan(n=n, inverse=inverse, tolerance=1.0e-3)
-    return RecursiveFFTPlan(n=n, inverse=inverse, root=root, host=host)
+    return RecursiveFFTPlan(n=n, inverse=inverse, root=root, host=host, batch=batch)

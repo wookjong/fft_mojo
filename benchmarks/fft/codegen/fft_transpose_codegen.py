@@ -729,17 +729,23 @@ def generate_recursive_fft_kernels(
     e.add(f"    if {first_kernel_name}.emit_ir_if_asked():")
     e.add("        return")
     e.add()
-    e.add(f"    var n = {host.n}")
-    e.add("    var input_real = cxl_alloc[Float32](n)")
-    e.add("    var input_imag = cxl_alloc[Float32](n)")
-    e.add("    var work0_real = cxl_alloc[Float32](n)")
-    e.add("    var work0_imag = cxl_alloc[Float32](n)")
-    e.add("    var work1_real = cxl_alloc[Float32](n)")
-    e.add("    var work1_imag = cxl_alloc[Float32](n)")
-    e.add("    var output_real = cxl_alloc[Float32](n)")
-    e.add("    var output_imag = cxl_alloc[Float32](n)")
-    e.add("    var ref_real = cxl_alloc[Float32](n)")
-    e.add("    var ref_imag = cxl_alloc[Float32](n)")
+    # plan.batch independent length-host.n transforms sit back to back in
+    # one flat buffer (see make_recursive_transpose_plan's own `batch`
+    # docstring) -- every per-stage kernel below is already sized for this
+    # (total_uthreads scales with root.r == plan.batch throughout the whole
+    # tree), so only this host driver's own buffer sizing/fill/reference-
+    # check needs to know about it explicitly.
+    e.add(f"    var total_elems = {host.n * plan.batch}")
+    e.add("    var input_real = cxl_alloc[Float32](total_elems)")
+    e.add("    var input_imag = cxl_alloc[Float32](total_elems)")
+    e.add("    var work0_real = cxl_alloc[Float32](total_elems)")
+    e.add("    var work0_imag = cxl_alloc[Float32](total_elems)")
+    e.add("    var work1_real = cxl_alloc[Float32](total_elems)")
+    e.add("    var work1_imag = cxl_alloc[Float32](total_elems)")
+    e.add("    var output_real = cxl_alloc[Float32](total_elems)")
+    e.add("    var output_imag = cxl_alloc[Float32](total_elems)")
+    e.add("    var ref_real = cxl_alloc[Float32](total_elems)")
+    e.add("    var ref_imag = cxl_alloc[Float32](total_elems)")
     e.add()
 
     for i, stage in enumerate(stages):
@@ -812,7 +818,7 @@ def generate_recursive_fft_kernels(
     e.add()
 
     e.add("    seed(0)")
-    e.add("    for i in range(n):")
+    e.add("    for i in range(total_elems):")
     e.add("        input_real[i] = Float32(random_float64(-1.0, 1.0))")
     e.add("        input_imag[i] = Float32(random_float64(-1.0, 1.0))")
     e.add("        work0_real[i] = Float32(0)")
@@ -826,7 +832,7 @@ def generate_recursive_fft_kernels(
     e.add()
 
     if not reference_check:
-        _emit_array_dump(e, n=plan.n, real_name="input_real", imag_name="input_imag", marker="INPUT")
+        _emit_array_dump(e, n=plan.n * plan.batch, real_name="input_real", imag_name="input_imag", marker="INPUT")
 
     for i, stage in enumerate(stages):
         in_r, in_i = buf_name(i - 1, "real"), buf_name(i - 1, "imag")
@@ -926,12 +932,12 @@ def generate_recursive_fft_kernels(
 
     if reference_check:
         _emit_reference_check(
-            e, n=plan.n, batch_count=1, inverse=plan.inverse,
+            e, n=plan.n, batch_count=plan.batch, inverse=plan.inverse,
             input_real="input_real", input_imag="input_imag",
             output_real="output_real", output_imag="output_imag",
             ref_real="ref_real", ref_imag="ref_imag",
             tolerance=host.tolerance, label="recursive tiled-transpose FFT",
         )
     else:
-        _emit_array_dump(e, n=plan.n, real_name="output_real", imag_name="output_imag", marker="OUTPUT")
+        _emit_array_dump(e, n=plan.n * plan.batch, real_name="output_real", imag_name="output_imag", marker="OUTPUT")
     return e.text()
