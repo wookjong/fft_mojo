@@ -93,6 +93,18 @@ class PlanMetrics:
     max_scratchpad_bytes: int
     worst_worker_utilization: float  # 1.0 = no cooperative leaf ever idles a worker
     radix_risk_score: float          # 0.0 = every leaf's radix sequence is the confirmed-safe kind
+    # `None` (the default, and the only value estimate_metrics itself ever
+    # produces) means "not probed" -- unlike every other field above, this
+    # one cannot be computed from the plan alone (see planning/spill_probe.
+    # py's own module docstring: it needs a real Mojo -> llc -> M2NDP-
+    # Detour build+run, tens of seconds to minutes, not something
+    # estimate_metrics can afford to do for every candidate). A caller who
+    # wants this signal calls spill_probe.probe_spill_free explicitly and
+    # folds the result in via apply_spill_probe (below) -- estimate_cost
+    # then only applies spill_penalty once this is actually `True`/`False`,
+    # never for the untouched `None` default, so every existing caller's
+    # ranking is bit-for-bit unchanged unless it opts in.
+    spill_free: bool | None = None
     estimated_cost: float = 0.0      # filled in by estimate_cost, 0.0 until then
 
 
@@ -119,6 +131,20 @@ class CostWeights:
     # every other term whenever radix_risk_score is nonzero.
     idle_worker_penalty: float = 200.0
     radix_risk_penalty: float = 5000.0
+    # Only applied when PlanMetrics.spill_free has actually been probed
+    # (see that field's own docstring -- estimate_cost skips this entirely
+    # for the untouched `None` default). Smaller than radix_risk_penalty
+    # deliberately: a radix flagged there is a *confirmed-wrong-answer*
+    # risk (see _NON_FIRST_STAGE_RISKY_RADICES's own comment), while a
+    # spill is not inherently wrong -- this session's own N=630 isolation
+    # found compute_lanes=2 spilling the exact same stage, byte-for-byte,
+    # and still passing; only compute_lanes=4's own spill *shape* (a
+    # dynamically vlenb-sized stack slot M2NDP-Detour's ReadCsr answers
+    # wrong) was the actual liability. Still large enough to dominate
+    # every non-risk term for one spilling candidate against an otherwise-
+    # similar spill-free one, since a spill is still real DRAM-spill cost
+    # on top of whatever correctness risk it may or may not carry.
+    spill_penalty: float = 2000.0
     recursion_depth_penalty: float = 100.0
     # Real M2NDP runs (this project's own benchmark_fft_candidates.sh
     # sweeps at N=1024/960/630) show MORE, SMALLER transpose tiles usually
@@ -242,6 +268,11 @@ def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIG
     oversaturation = max(
         0, metrics.max_transpose_stage_uthreads - _TILE_PARALLELISM_SATURATION_UTHREADS
     )
+    # metrics.spill_free is None until a caller explicitly probes it (see
+    # that field's own docstring) -- only apply the penalty once it's
+    # actually been measured `False`, never for "not probed" or "probed
+    # spill-free".
+    spill_term = weights.spill_penalty if metrics.spill_free is False else 0.0
     return (
         weights.memory_traffic * metrics.estimated_dram_bytes
         + weights.transpose_passes * metrics.transpose_kernel_count
@@ -251,4 +282,5 @@ def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIG
         + weights.recursion_depth_penalty * metrics.recursion_depth
         + weights.transpose_tile_count * metrics.total_transpose_tiles
         + weights.tile_oversaturation_penalty * oversaturation
+        + spill_term
     )
