@@ -32,13 +32,22 @@ computed at runtime.
 """
 
 import argparse
+import dataclasses
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
-from planning.fft_plan_recursive import make_recursive_transpose_plan
+from planning.fft_cost_model import estimate_cost, estimate_metrics
+from planning.fft_plan_recursive import RecursiveFFTPlan, make_recursive_transpose_plan
+from planning.fft_plan_search import (
+    FFTPlanCandidate,
+    PlanChoices,
+    format_plan_summary,
+    generate_candidates,
+    rank_candidates,
+)
 from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
 
@@ -54,6 +63,7 @@ def make_fft_kernel(
     cooperative_workers: int | str | None = None,
     output_path: str | Path | None = None,
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    plan_index: int | None = None,
 ) -> Path:
     """Plan and render a length-`n` FFT kernel, write it to `output_path`
     (default: `fft_fp32_N{n}{_inverse}_generated.mojo` next to this file),
@@ -65,6 +75,16 @@ def make_fft_kernel(
     `TargetProfile`'s own docstring. Defaults to `DEFAULT_TARGET_PROFILE`,
     this repo's one real target today; pass a different profile only to
     plan against a different config.
+
+    `plan_index`: `None` (the default) keeps today's exact single-heuristic
+    plan (`make_recursive_transpose_plan` called directly, as if this
+    parameter never existed). A given index instead builds candidate
+    `plan_index` from `planning.fft_plan_search.generate_candidates` /
+    `rank_candidates` (index 0 = lowest estimated cost) -- see that
+    module's own docstring for what a candidate varies. When given,
+    `cooperative_workers`/`tile_rows`/`tile_cols` are ignored: the chosen
+    candidate's own choices already fully determine those (see `--dump-
+    candidates` to see what each index actually is before picking one).
 
     `scratchpad_byte_budget`: how many bytes of one NDP unit's own
     scratchpad one leaf kernel may use -- the planner recurses (adds a
@@ -122,18 +142,24 @@ def make_fft_kernel(
         compute_lanes = min(simd_lanes, target.lmul1_float32_lanes)
     if scratchpad_byte_budget is None:
         scratchpad_byte_budget = 4096
-    plan = make_recursive_transpose_plan(
-        n,
-        scratchpad_byte_budget=scratchpad_byte_budget,
-        simd_lanes=simd_lanes,
-        tile_rows=tile_rows,
-        tile_cols=tile_cols,
-        inverse=inverse,
-        spad_capacity_bytes=target.spad_capacity_bytes,
-        max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
-        cooperative_workers=cooperative_workers,
-        interleave_chunk_uthreads=target.interleave_chunk_uthreads,
-    )
+    if plan_index is None:
+        plan = make_recursive_transpose_plan(
+            n,
+            scratchpad_byte_budget=scratchpad_byte_budget,
+            simd_lanes=simd_lanes,
+            tile_rows=tile_rows,
+            tile_cols=tile_cols,
+            inverse=inverse,
+            spad_capacity_bytes=target.spad_capacity_bytes,
+            max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
+            cooperative_workers=cooperative_workers,
+            interleave_chunk_uthreads=target.interleave_chunk_uthreads,
+        )
+    else:
+        plan = plan_for_index(
+            n, plan_index, inverse=inverse, target=target,
+            scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
+        )
     source = generate_recursive_fft_kernels(plan, compute_lanes=compute_lanes)
 
     if output_path is None:
@@ -144,6 +170,42 @@ def make_fft_kernel(
 
     output_path.write_text(source, encoding="utf-8")
     return output_path
+
+
+def plan_for_index(
+    n: int, plan_index: int, *, inverse: bool, target: TargetProfile,
+    scratchpad_byte_budget: int, simd_lanes: int,
+) -> RecursiveFFTPlan:
+    """The `plan_index`'th plan from `generate_candidates`/`rank_candidates`
+    (index 0 = lowest estimated cost) -- shared by `make_fft_kernel` and
+    the `--dump-plan --plan-index` CLI path so both resolve exactly the
+    same candidate the same way."""
+    ranked = rank_candidates(generate_candidates(
+        n, target=target, inverse=inverse,
+        scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
+    ))
+    if not (0 <= plan_index < len(ranked)):
+        raise ValueError(
+            f"plan_index={plan_index} out of range: generate_candidates(n={n}) "
+            f"produced {len(ranked)} candidate(s) (0..{len(ranked) - 1})"
+        )
+    return ranked[plan_index].plan
+
+
+def _ad_hoc_candidate(n: int, inverse: bool, plan: RecursiveFFTPlan) -> FFTPlanCandidate:
+    """Wrap an already-built plan (e.g. `--dump-plan` without `--plan-index`,
+    built via explicit `--cooperative-workers`/`--tile-rows`/`--tile-cols`
+    overrides `generate_candidates`'s own sweep never produces) for
+    `format_plan_summary` -- metrics only, no ranked-candidate index since
+    this plan was never part of a `generate_candidates` call."""
+    metrics = estimate_metrics(plan, DEFAULT_TARGET_PROFILE)
+    metrics = dataclasses.replace(metrics, estimated_cost=estimate_cost(metrics))
+    return FFTPlanCandidate(
+        n=n, inverse=inverse, plan=plan,
+        choices=PlanChoices(split_near_length=None, radix_tier_name="n/a (explicit overrides)",
+                             workers_per_fft=None, tile=None),
+        metrics=metrics,
+    )
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -178,6 +240,25 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tile-rows", type=int, default=None, help="transpose tile rows (default: planner's own choice)")
     parser.add_argument("--tile-cols", type=int, default=None, help="transpose tile cols (default: planner's own choice)")
     parser.add_argument("-o", "--output", type=str, default=None, help="output .mojo path")
+    parser.add_argument(
+        "--dump-candidates", action="store_true",
+        help="print every candidate plan planning.fft_plan_search.generate_candidates "
+        "finds for N (ranked by estimated cost, see format_plan_summary) and exit "
+        "without writing a .mojo file",
+    )
+    parser.add_argument(
+        "--dump-plan", action="store_true",
+        help="print the plan that would be built (today's default heuristic, or "
+        "--plan-index's pick) and exit without writing a .mojo file",
+    )
+    parser.add_argument(
+        "--plan-index", type=int, default=None,
+        help="build candidate K from generate_candidates's ranked list (0 = lowest "
+        "estimated cost) instead of the default single-heuristic plan -- see "
+        "--dump-candidates to see what each index is first. Ignores "
+        "--cooperative-workers/--tile-rows/--tile-cols: the chosen candidate's own "
+        "choices already determine those",
+    )
     return parser.parse_args(argv)
 
 
@@ -186,6 +267,42 @@ def main() -> None:
     cooperative_workers: int | str | None = args.cooperative_workers
     if cooperative_workers is not None and cooperative_workers != "auto":
         cooperative_workers = int(cooperative_workers)
+    scratchpad_byte_budget = args.scratchpad_byte_budget if args.scratchpad_byte_budget is not None else 4096
+
+    if args.dump_candidates:
+        ranked = rank_candidates(generate_candidates(
+            args.n, inverse=args.inverse,
+            scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=args.simd_lanes,
+        ))
+        for i, candidate in enumerate(ranked):
+            print(format_plan_summary(candidate, index=i))
+            print()
+        return
+
+    if args.dump_plan:
+        if args.plan_index is not None:
+            ranked = rank_candidates(generate_candidates(
+                args.n, inverse=args.inverse,
+                scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=args.simd_lanes,
+            ))
+            if not (0 <= args.plan_index < len(ranked)):
+                raise ValueError(
+                    f"--plan-index={args.plan_index} out of range: "
+                    f"generate_candidates produced {len(ranked)} candidate(s)"
+                )
+            print(format_plan_summary(ranked[args.plan_index], index=args.plan_index))
+        else:
+            plan = make_recursive_transpose_plan(
+                args.n, scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=args.simd_lanes,
+                tile_rows=args.tile_rows, tile_cols=args.tile_cols, inverse=args.inverse,
+                spad_capacity_bytes=DEFAULT_TARGET_PROFILE.spad_capacity_bytes,
+                max_concurrent_scratchpad_bytes=DEFAULT_TARGET_PROFILE.max_concurrent_scratchpad_bytes,
+                cooperative_workers=cooperative_workers,
+                interleave_chunk_uthreads=DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
+            )
+            print(format_plan_summary(_ad_hoc_candidate(args.n, args.inverse, plan)))
+        return
+
     path = make_fft_kernel(
         args.n,
         inverse=args.inverse,
@@ -196,6 +313,7 @@ def main() -> None:
         tile_cols=args.tile_cols,
         cooperative_workers=cooperative_workers,
         output_path=args.output,
+        plan_index=args.plan_index,
     )
     print(f"generated: {path}")
 
