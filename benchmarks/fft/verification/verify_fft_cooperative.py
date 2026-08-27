@@ -60,7 +60,10 @@ def run_cooperative_kernel(
     current = {"global_id": 0, "local_id": 0}
 
     for stage in plan.stages:
-        src = stage_sources[stage.stage_id]
+        # _translate_stage returns (source, has_tail); a cooperative stage
+        # never renders loop_stages (see _emit_stage's own early raise), so
+        # has_tail is always False here -- nothing to launch beyond src.
+        src, _has_tail = stage_sources[stage.stage_id]
         namespace = {
             "Float32": float,
             "SIMD": _simd,

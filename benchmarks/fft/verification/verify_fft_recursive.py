@@ -204,12 +204,20 @@ def verify_recursive_tree_index_only(node: FFTLeafPlan | FFTRecursiveNodePlan) -
 
 
 def run_recursive_plan(
-    plan: RecursiveFFTPlan, x: np.ndarray, *, loop_stages: bool = True
+    plan: RecursiveFFTPlan, x: np.ndarray, *,
+    compute_lanes: int | None = None, narrow_middle_stages: bool = False,
+    loop_stages: bool = True,
 ) -> np.ndarray:
     """Full numeric chain: every stage's *actual emitted* text is
     translated and re-executed (run_kernel for FFT leaves,
     run_physical_transpose for PRE/MIDDLE/POST transposes) -- same
     discipline as every other run_* helper in this file.
+
+    `compute_lanes`: threaded straight through to `run_kernel` for every
+    FFT-leaf stage (`None`, the default, matches `run_kernel`'s own
+    default) -- see that function's own docstring. PhysicalTransposePlan
+    stages are untouched either way, matching generate_recursive_fft_
+    kernels's own scoping of this parameter to `_emit_kernel` only.
 
     `loop_stages` defaults to `True` to match
     generate_recursive_fft_kernels's own default (see
@@ -242,6 +250,7 @@ def run_recursive_plan(
             # identical per-stage decision (fft_transpose_codegen.py) for why.
             run_kernel(
                 stage, input_real=cur_r, input_imag=cur_i, output_real=next_r, output_imag=next_i,
+                compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
                 loop_stages=loop_stages and stage.cooperation is None,
             )
         cur_r, cur_i = next_r, next_i
@@ -251,12 +260,18 @@ def run_recursive_plan(
 def verify_recursive_plan(
     n: int, *, scratchpad_byte_budget: int, inverse: bool, seed: int,
     tile_rows: int | None = None, tile_cols: int | None = None,
+    compute_lanes: int | None = None, narrow_middle_stages: bool = False,
     loop_stages: bool = True,
     spad_capacity_bytes: int | None = None,
     max_concurrent_scratchpad_bytes: int | None = None,
     cooperative_workers: int | str | None = None,
 ) -> tuple[float, RecursiveFFTPlan]:
-    """`spad_capacity_bytes`/`max_concurrent_scratchpad_bytes`: both `None`
+    """`compute_lanes`/`narrow_middle_stages`: threaded straight through to
+    `run_recursive_plan` -- see that function's and `run_kernel`'s own
+    docstrings. `None`/`False` (the defaults) match their own defaults,
+    unchanged from before these parameters existed.
+
+    `spad_capacity_bytes`/`max_concurrent_scratchpad_bytes`: both `None`
     by default (unchanged from before either existed) -- pass a
     `max_concurrent_scratchpad_bytes` small enough to force some kernel's
     own `max_uthread < total_uthreads` to numerically exercise
@@ -284,7 +299,10 @@ def verify_recursive_plan(
     )
     rng = np.random.default_rng(seed)
     x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
-    got = run_recursive_plan(plan, x, loop_stages=loop_stages)
+    got = run_recursive_plan(
+        plan, x, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+        loop_stages=loop_stages,
+    )
     expected = np.fft.ifft(x) if inverse else np.fft.fft(x)
     return float(np.max(np.abs(got - expected))), plan
 

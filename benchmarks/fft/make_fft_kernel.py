@@ -58,6 +58,7 @@ def make_fft_kernel(
     scratchpad_byte_budget: int | None = None,
     simd_lanes: int = 8,
     compute_lanes: int | None = None,
+    narrow_middle_stages: bool = True,
     tile_rows: int | None = None,
     tile_cols: int | None = None,
     cooperative_workers: int | str | None = None,
@@ -157,6 +158,20 @@ def make_fft_kernel(
     forces a spill. Pass `compute_lanes=simd_lanes` to opt back into the
     old, unchunked (and, on any kernel large enough to spill, simulator-
     incompatible) code shape.
+
+    `narrow_middle_stages`: `True` (the default) halves `compute_lanes`
+    (floor 1) for a leaf/near-FFT stage that is neither its own kernel's
+    first nor last stage -- the one shape a real N=630 register-pressure
+    failure was isolated to (see generate_recursive_fft_kernels's own
+    docstring): even `compute_lanes=4` (this target's documented default)
+    still spilled there, via a `csrr ..., vlenb` dynamic spill-slot read
+    the simulator's `ReadCsr` silently answers `0` for, corrupting the
+    stack -- narrower `compute_lanes` alone happened to dodge it by
+    accident of which spill shape the compiler picked, not because the
+    spill was gone. This targets the actual liability directly, at no
+    correctness cost (every `verify_fft_*.py` case already covers every
+    `compute_lanes` this can produce) -- pass `False` to compare against
+    the old flat-`compute_lanes` shape.
     """
     if n < 2:
         # A length-1 "FFT" needs zero radix stages, which _build_plan/
@@ -189,7 +204,8 @@ def make_fft_kernel(
             scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
         )
     source = generate_recursive_fft_kernels(
-        plan, compute_lanes=compute_lanes, reference_check=reference_check,
+        plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+        reference_check=reference_check,
     )
 
     if output_path is None:
@@ -273,6 +289,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "Pass --compute-lanes matching --simd-lanes to opt back into the old, "
         "unchunked code shape.",
     )
+    parser.add_argument(
+        "--no-narrow-middle-stages", action="store_true",
+        help="disable halving --compute-lanes (floor 1) for a stage that is "
+        "neither its own kernel's first nor last -- default: on, since this "
+        "is the one shape a real N=630 register-pressure failure was isolated "
+        "to (see make_fft_kernel's own narrow_middle_stages docstring); pass "
+        "this to compare against the old flat-compute_lanes code shape",
+    )
     parser.add_argument("--tile-rows", type=int, default=None, help="transpose tile rows (default: planner's own choice)")
     parser.add_argument("--tile-cols", type=int, default=None, help="transpose tile cols (default: planner's own choice)")
     parser.add_argument("-o", "--output", type=str, default=None, help="output .mojo path")
@@ -354,6 +378,7 @@ def main() -> None:
         scratchpad_byte_budget=args.scratchpad_byte_budget,
         simd_lanes=args.simd_lanes,
         compute_lanes=args.compute_lanes,
+        narrow_middle_stages=not args.no_narrow_middle_stages,
         tile_rows=args.tile_rows,
         tile_cols=args.tile_cols,
         cooperative_workers=cooperative_workers,

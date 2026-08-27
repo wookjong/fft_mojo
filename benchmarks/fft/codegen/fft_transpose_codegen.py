@@ -610,7 +610,8 @@ def _emit_physical_transpose_twiddle_table_precompute(
 
 
 def generate_recursive_fft_kernels(
-    plan: RecursiveFFTPlan, *, compute_lanes: int | None = None, loop_stages: bool = True,
+    plan: RecursiveFFTPlan, *, compute_lanes: int | None = None,
+    narrow_middle_stages: bool = False, loop_stages: bool = True,
     reference_check: bool = True,
 ) -> str:
     """Render a full make_recursive_transpose_plan tree as a flat, ordered
@@ -634,6 +635,19 @@ def generate_recursive_fft_kernels(
     kernels (_emit_physical_transpose_kernel) have their own separate
     width story (ki_near/ki_far, see this module's own docstring) that
     this does not touch.
+
+    `narrow_middle_stages`: see `fft_codegen._stage_compute_lanes`. `False`
+    (the default) leaves every leaf/near-FFT stage at `compute_lanes`
+    unchanged. `True` halves it (floor 1) for a stage that is neither its
+    own kernel's first nor last -- the one shape a real N=630 register-
+    pressure failure was isolated to this session (a `csrr ..., vlenb`
+    dynamic spill-slot read the M2NDP-Detour simulator's `ReadCsr` silently
+    answers `0` for, corrupting the stack) even at `compute_lanes=4`, this
+    target's documented "safe" default; narrower `compute_lanes` alone
+    (2 or 1) also happened to avoid it, but only by accident of which
+    spill *shape* the compiler picked, not because the underlying spill
+    was gone. This targets the actual liability directly instead of
+    hoping a narrower global width dodges it.
 
     `reference_check`: `True` (the default) keeps today's fully self-
     contained host check -- a direct O(N^2) DFT computed right here in the
@@ -703,7 +717,8 @@ def generate_recursive_fft_kernels(
             stage_loop_stages = loop_stages and stage.cooperation is None
             stage_loops[i] = stage_loop_stages
             loop_twiddle_tables[i] = _emit_kernel(
-                e, plan=stage, compute_lanes=compute_lanes, loop_stages=stage_loop_stages
+                e, plan=stage, compute_lanes=compute_lanes,
+                narrow_middle_stages=narrow_middle_stages, loop_stages=stage_loop_stages,
             )
 
     e.add("# " + "=" * 76)

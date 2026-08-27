@@ -558,12 +558,49 @@ def _emit_batch(
     e.add()
 
 
+def _stage_compute_lanes(
+    *, compute_lanes: int | None, is_first: bool, is_last: bool, narrow_middle_stages: bool
+) -> int | None:
+    """`narrow_middle_stages`'s own per-stage policy: a *middle* stage
+    (neither first nor last) is the one shape every confirmed register-
+    pressure failure on this target actually shares -- it both reads its
+    operands out of scratchpad (like any non-first stage) AND writes its
+    own twiddled output back to scratchpad in the same pass (like any
+    non-last stage), so it carries the load+twiddle+store state of both at
+    once. `fft_plan_core._prime_factors_supported`'s own N=54=(6,9) note
+    and this project's own N=630 real-hardware isolation (FFTRecNear0's
+    radix-5 stage_1, itself neither first nor last) are two independent
+    confirmed cases of exactly this shape spilling -- a first or last
+    stage never has both halves of that liability (a first stage's own
+    input is DRAM, not scratchpad; a last stage never has a twiddled
+    scratchpad store, see `layouts_for_radices`), so this only ever
+    narrows where the actual liability lives, not uniformly across a
+    whole kernel the way a caller picking one global `compute_lanes` for
+    everything has to.
+
+    Halves the caller's own already-decided `compute_lanes` (floor 1) --
+    a deliberately coarse, general reduction (not a per-radix allowlist
+    like `fft_cost_model._NON_FIRST_STAGE_RISKY_RADICES`, since this
+    project only has two confirmed data points, not a validated full
+    radix census) that trades a somewhat wider chunked loop for
+    materially less live register state at the exact point every known
+    failure sits. `None` (no explicit compute_lanes -- "render at
+    plan.simd_lanes", today's oldest behavior) is left alone: there is no
+    already-decided width to halve, and a caller passing `None` has
+    already opted out of every compute_lanes-driven safety choice.
+    """
+    if not narrow_middle_stages or compute_lanes is None or is_first or is_last:
+        return compute_lanes
+    return max(1, compute_lanes // 2)
+
+
 def _emit_stage(
     e: Emitter,
     *,
     plan: FFTCodegenPlan,
     stage: FFTStagePlan,
     compute_lanes: int | None = None,
+    narrow_middle_stages: bool = False,
     loop_stages: bool = False,
     min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
     twiddle_table: list[tuple[float, float]] | None = None,
@@ -575,6 +612,10 @@ def _emit_stage(
     code appended after the loop inside `stage_{id}` itself."""
     is_first = stage.stage_id == 0
     is_last = stage.stage_id == len(plan.stages) - 1
+    compute_lanes = _stage_compute_lanes(
+        compute_lanes=compute_lanes, is_first=is_first, is_last=is_last,
+        narrow_middle_stages=narrow_middle_stages,
+    )
 
     def emit_header(name: str) -> None:
         e.add("    @staticmethod")
@@ -744,6 +785,7 @@ def _emit_task_struct(
     *,
     plan: FFTCodegenPlan,
     compute_lanes: int | None = None,
+    narrow_middle_stages: bool = False,
     loop_stages: bool = False,
     min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
 ) -> list[tuple[float, float]]:
@@ -756,6 +798,12 @@ def _emit_task_struct(
     arithmetic instructions use, independent of `plan.simd_lanes` (the
     launch granule). `None` (the default) keeps every stage emitted at
     `plan.simd_lanes`, unchanged from before this parameter existed.
+
+    `narrow_middle_stages`: see `_stage_compute_lanes` -- `False` (the
+    default) keeps every stage at the same `compute_lanes`, unchanged from
+    before this parameter existed. `True` halves it (floor 1) for this
+    kernel's own middle stages only (neither first nor last), the one
+    shape every confirmed register-pressure failure on this target shares.
 
     `loop_stages`: see the runtime-loop stage rendering note above
     _try_build_loop_stage. `False` (the default) keeps every stage's
@@ -785,6 +833,7 @@ def _emit_task_struct(
     for stage in plan.stages:
         has_tail = _emit_stage(
             e, plan=plan, stage=stage, compute_lanes=compute_lanes,
+            narrow_middle_stages=narrow_middle_stages,
             loop_stages=loop_stages, min_loop_batches=min_loop_batches,
             twiddle_table=twiddle_table,
         )
@@ -807,6 +856,7 @@ def emit_kernel(
     *,
     plan: FFTCodegenPlan,
     compute_lanes: int | None = None,
+    narrow_middle_stages: bool = False,
     loop_stages: bool = False,
     min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
 ) -> list[tuple[float, float]]:
@@ -814,12 +864,14 @@ def emit_kernel(
     e.add()
     _emit_params_struct(e, plan=plan, add_loop_twiddle=loop_stages)
     return _emit_task_struct(
-        e, plan=plan, compute_lanes=compute_lanes,
+        e, plan=plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         loop_stages=loop_stages, min_loop_batches=min_loop_batches,
     )
 
 
-def generate_fft_kernel(plan: FFTCodegenPlan, *, compute_lanes: int | None = None) -> str:
+def generate_fft_kernel(
+    plan: FFTCodegenPlan, *, compute_lanes: int | None = None, narrow_middle_stages: bool = False
+) -> str:
     """Render a single-kernel plan: the whole FFT in one NDPTask, one
     launch. This function performs no FFT planning. `compute_lanes`: see
     `_chunk_batch`; `None` (the default) keeps today's output unchanged.
@@ -830,7 +882,7 @@ def generate_fft_kernel(plan: FFTCodegenPlan, *, compute_lanes: int | None = Non
     e.add(f"comptime MAX_UTHREAD_{plan.kernel_name} = {plan.max_uthread}")
     e.add()
     _emit_params_struct(e, plan=plan)
-    _emit_task_struct(e, plan=plan, compute_lanes=compute_lanes)
+    _emit_task_struct(e, plan=plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages)
 
     host = plan.host
     e.add("def main() raises:")

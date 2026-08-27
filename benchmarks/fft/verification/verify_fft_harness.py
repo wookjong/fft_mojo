@@ -72,16 +72,32 @@ def _translate_stage(
     plan: FFTCodegenPlan,
     stage,
     *,
+    compute_lanes: int | None = None,
+    narrow_middle_stages: bool = False,
     loop_stages: bool = False,
     min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
     twiddle_table: list[tuple[float, float]] | None = None,
-) -> str:
+) -> tuple[str, bool]:
+    """Returns (translated source, has_tail) -- `has_tail` mirrors
+    `_emit_stage`'s own return value: whether it also rendered a separate
+    `stage_{id}_tail` staticmethod (the loop_stages tail-batch case -- see
+    that function's own docstring) that `device_main` launches with its
+    own `launch_parallel` call right after `stage_{id}`'s. `run_kernel`
+    needs this to also invoke `stage_{id}_tail`, mirroring that same
+    device_main sequencing -- forgetting it (as this function did until
+    the tail-as-separate-function rendering existed) leaves the tail
+    batch's own scratchpad writes never executed, silently corrupting
+    every later stage's read of that data even though the *emitted* code
+    is correct.
+    """
     e = Emitter()
-    _emit_stage(
-        e, plan=plan, stage=stage, loop_stages=loop_stages,
-        min_loop_batches=min_loop_batches, twiddle_table=twiddle_table,
+    has_tail = _emit_stage(
+        e, plan=plan, stage=stage, compute_lanes=compute_lanes,
+        narrow_middle_stages=narrow_middle_stages,
+        loop_stages=loop_stages, min_loop_batches=min_loop_batches,
+        twiddle_table=twiddle_table,
     )
-    return _translate_emitted_lines(e.lines)
+    return _translate_emitted_lines(e.lines), has_tail
 
 
 
@@ -158,6 +174,8 @@ def run_kernel(
     output_imag: Ptr,
     large_twiddle_real: Ptr | None = None,
     large_twiddle_imag: Ptr | None = None,
+    compute_lanes: int | None = None,
+    narrow_middle_stages: bool = False,
     loop_stages: bool = False,
     min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
 ) -> None:
@@ -173,6 +191,15 @@ def run_kernel(
     instance ("one instance per core," not one shared array for the whole
     launch -- docs/INTERFACE.md), and `local_uthread_id() = global_id %
     max_uthread` indexes within it.
+
+    `compute_lanes`: threaded straight through to `_emit_stage`
+    (`None`, the default, keeps every stage emitted at its own
+    `plan.simd_lanes`, unchanged from before this parameter existed) --
+    see `codegen.lowering._chunk_batch`. Without this, the whole verify_
+    fft_*.py suite re-executes only the `compute_lanes is None` code
+    shape and never the narrower-chunk path `make_fft_kernel.py` actually
+    renders by default on this target (see that module's own docstring)
+    -- passing the same value here as a real build closes that gap.
 
     `loop_stages`/`min_loop_batches`: mirrors the same-named
     `_emit_task_struct` parameters -- every stage is translated with these
@@ -204,8 +231,8 @@ def run_kernel(
     twiddle_table: list[tuple[float, float]] = []
     stage_sources = {
         stage.stage_id: _translate_stage(
-            plan, stage, loop_stages=loop_stages, min_loop_batches=min_loop_batches,
-            twiddle_table=twiddle_table,
+            plan, stage, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+            loop_stages=loop_stages, min_loop_batches=min_loop_batches, twiddle_table=twiddle_table,
         )
         for stage in plan.stages
     }
@@ -219,8 +246,15 @@ def run_kernel(
 
     current = {"global_id": 0, "local_id": 0}
 
+    def run_fn(fn) -> None:
+        for global_id in range(plan.total_uthreads):
+            current["global_id"] = global_id
+            current["local_id"] = global_id % plan.max_uthread
+            namespace[plan.kernel_name] = group_namespaces[global_id // plan.max_uthread]
+            fn()
+
     for stage in plan.stages:
-        src = stage_sources[stage.stage_id]
+        src, has_tail = stage_sources[stage.stage_id]
         namespace = {
             "Float32": float,
             "SIMD": _simd,
@@ -233,12 +267,14 @@ def run_kernel(
         }
         code = compile(src, f"<{plan.kernel_name} stage {stage.stage_id}>", "exec")
         exec(code, namespace)
-        stage_fn = namespace[f"stage_{stage.stage_id}"]
-        for global_id in range(plan.total_uthreads):
-            current["global_id"] = global_id
-            current["local_id"] = global_id % plan.max_uthread
-            namespace[plan.kernel_name] = group_namespaces[global_id // plan.max_uthread]
-            stage_fn()
+        # device_main launches stage_{id} then, if _emit_stage rendered a
+        # separate tail (loop_stages with a trailing partial batch -- see
+        # _translate_stage's own docstring), stage_{id}_tail right after
+        # it -- one full launch_parallel barrier between the two, so every
+        # uthread finishes the looped body before any starts the tail.
+        run_fn(namespace[f"stage_{stage.stage_id}"])
+        if has_tail:
+            run_fn(namespace[f"stage_{stage.stage_id}_tail"])
 
 
 

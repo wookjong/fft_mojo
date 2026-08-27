@@ -625,6 +625,95 @@ def main() -> None:
                 failures.append(tag)
 
     print()
+    print("  compute_lanes-narrowed rendering (real emitted code vs. numpy.fft/ifft):")
+    # compute_lanes controls only how wide a vector *instruction* each
+    # stage's arithmetic emits (codegen.lowering._chunk_batch) --
+    # completely separate from simd_lanes (the launch granule). Every
+    # verify_recursive_plan case above leaves it at the default `None`
+    # ("render at simd_lanes"), never the narrower width make_fft_kernel.py
+    # actually renders by default on this target (min(simd_lanes,
+    # target.lmul1_float32_lanes), 4 here -- see that module's own
+    # docstring) -- so the whole chunking code path (codegen/lowering.py's
+    # chunk_batch/_chunk_load/_chunk_store) was completely unexercised by
+    # this suite, regardless of how many times it passed.
+    #
+    # N=630's default split (A=6/B=105, near leaf radices (3,5,7)) is a
+    # confirmed real-hardware regression: `make_fft_kernel.py 630` at
+    # compute_lanes=4 (this target's documented "safe" default) fails its
+    # own host reference check on the real M2NDP-Detour simulator, while
+    # compute_lanes=2/1 both pass -- isolated via a from-scratch harness
+    # calling _emit_stage directly (this suite couldn't see it before,
+    # since it never threaded compute_lanes through at all). These cases
+    # confirm what that isolation already found: the *source semantics*
+    # this harness can re-execute are correct at every width tested here
+    # too -- if this ever fails, the bug has moved into this layer; while
+    # it keeps passing, the still-unresolved N=630 mismatch is confirmed
+    # to live below Python (LLVM backend codegen or the simulator's own
+    # execution of spill code), not something this suite can catch.
+    #
+    # N=960's FFTRecNear0.stage_0 is the confirmed real tail-batch case
+    # (4 of 8 lanes valid at compute_lanes=4 -- see lowering.py's own
+    # comment on _chunk_load) that motivated the vectorized-tail-load fix;
+    # included here so its own narrower-chunk rendering has direct
+    # numeric coverage, not just the real-hardware spill/cycle-count check.
+    compute_lanes_cases: list[tuple[str, int, int, int | None]] = [
+        ("N=630 default split, compute_lanes=4 (target's documented default)", 630, 4096, 4),
+        ("N=630 default split, compute_lanes=2", 630, 4096, 2),
+        ("N=630 default split, compute_lanes=1", 630, 4096, 1),
+        ("N=960 tail-batch leaf (FFTRecNear0.stage_0), compute_lanes=4", 960, 32 * 16, 4),
+        ("N=960 tail-batch leaf, compute_lanes=2", 960, 32 * 16, 2),
+        ("N=960 tail-batch leaf, compute_lanes=1", 960, 32 * 16, 1),
+    ]
+    for label, n, budget, compute_lanes in compute_lanes_cases:
+        for inverse in (False, True):
+            err, plan = verify_recursive_plan(
+                n, scratchpad_byte_budget=budget, inverse=inverse, seed=71,
+                compute_lanes=compute_lanes,
+            )
+            ok = err <= tolerance
+            tag = f"{label} (n={n} budget={budget} compute_lanes={compute_lanes} inverse={inverse})"
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    print()
+    print("  narrow_middle_stages rendering (real emitted code vs. numpy.fft/ifft):")
+    # narrow_middle_stages (make_fft_kernel.py's own new default) halves
+    # compute_lanes (floor 1) for a stage that is neither its own kernel's
+    # first nor last -- see codegen.fft_codegen._stage_compute_lanes's own
+    # docstring for why: that's the one shape both the pre-existing N=54
+    # radix-9-after-6 spill and this session's real N=630 register-
+    # pressure isolation (FFTRecNear0's radix-5 stage_1) share. This only
+    # changes *which width* an already-verified code path (_chunk_batch)
+    # renders a middle stage at -- every compute_lanes value it can
+    # produce is already covered by the sweep above -- so these cases
+    # exist to confirm the *selection* itself (is_first/is_last, the
+    # halving arithmetic) never picks a width the rest of this suite
+    # hasn't already proven correct, at every compute_lanes value that
+    # matters in practice (including 1, where floor-1 halving is already
+    # a no-op, and the current make_fft_kernel.py default of 4).
+    narrow_cases: list[tuple[str, int, int, int | None]] = [
+        ("N=630 default split, compute_lanes=4 (make_fft_kernel.py's own default)", 630, 4096, 4),
+        ("N=630 default split, compute_lanes=2", 630, 4096, 2),
+        ("N=630 default split, compute_lanes=1", 630, 4096, 1),
+        ("N=960 tail-batch leaf, compute_lanes=4", 960, 32 * 16, 4),
+        ("N=960 tail-batch leaf, compute_lanes=2", 960, 32 * 16, 2),
+        ("N=210 2-level recursion, compute_lanes=4", 210, 336, 4),
+        ("N=105 single leaf radices (3,5,7), compute_lanes=4", 105, 9999999, 4),
+    ]
+    for label, n, budget, compute_lanes in narrow_cases:
+        for inverse in (False, True):
+            err, plan = verify_recursive_plan(
+                n, scratchpad_byte_budget=budget, inverse=inverse, seed=83,
+                compute_lanes=compute_lanes, narrow_middle_stages=True,
+            )
+            ok = err <= tolerance
+            tag = f"{label} (n={n} budget={budget} compute_lanes={compute_lanes} narrow_middle_stages=True inverse={inverse})"
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    print()
     print("  Store vectorization (_make_store, direct unit checks):")
 
     def _layout(*, radix: int, twiddle_lane_divisor: int) -> _StageLayout:
