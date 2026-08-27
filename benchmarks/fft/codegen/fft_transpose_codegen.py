@@ -51,11 +51,9 @@ from codegen.common import (
 from codegen.fft_codegen import emit_kernel as _emit_kernel
 from planning.fft_plan_balanced import BalancedTransposeFFTPlan, FFTTransposePlan
 from planning.fft_plan_recursive import (
-    FFTLeafPlan,
-    FFTNode,
-    FFTRecursiveNodePlan,
     PhysicalTransposePlan,
     RecursiveFFTPlan,
+    flatten_recursive_node,
 )
 
 
@@ -609,23 +607,6 @@ def _emit_physical_transpose_twiddle_table_precompute(
     e.add(f"            {c} += 1")
     e.add(f"        {r} += 1")
     e.add()
-
-
-def flatten_recursive_node(node: FFTNode) -> list:
-    """Flat, ordered stage list for a recursive FFTNode: leaf -> [kernel];
-    node -> [pre, near_fft.kernel, middle] + flatten(far_child) + [post].
-    Each element is either an FFTCodegenPlan (an ordinary FFT kernel) or a
-    PhysicalTransposePlan (a standalone transpose kernel) -- codegen
-    dispatches on type, never re-decides anything (see fft_plan_core.py's
-    own "planner decides everything" discipline)."""
-    if isinstance(node, FFTLeafPlan):
-        return [node.kernel]
-    assert isinstance(node, FFTRecursiveNodePlan)
-    return (
-        [node.pre_transpose, node.near_fft.kernel, node.middle_transpose]
-        + flatten_recursive_node(node.far_child)
-        + [node.post_transpose]
-    )
 
 
 def generate_recursive_fft_kernels(

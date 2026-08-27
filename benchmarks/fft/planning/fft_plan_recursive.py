@@ -153,6 +153,27 @@ class RecursiveFFTPlan:
     host: MultiKernelHostPlan
 
 
+def flatten_recursive_node(node: FFTNode) -> list:
+    """Flat, ordered stage list for a recursive FFTNode: leaf -> [kernel];
+    node -> [pre, near_fft.kernel, middle] + flatten(far_child) + [post].
+    Each element is either an FFTCodegenPlan (an ordinary FFT kernel) or a
+    PhysicalTransposePlan (a standalone transpose kernel) -- a pure tree
+    walk over already-decided plan data, no new decisions, so it lives in
+    the planning layer alongside FFTNode/RecursiveFFTPlan themselves rather
+    than in codegen (fft_transpose_codegen.generate_recursive_fft_kernels
+    and planning/fft_cost_model.py's own metrics both need this same flat
+    view -- one source, not a codegen-owned helper cost estimation would
+    otherwise have to import backwards for)."""
+    if isinstance(node, FFTLeafPlan):
+        return [node.kernel]
+    assert isinstance(node, FFTRecursiveNodePlan)
+    return (
+        [node.pre_transpose, node.near_fft.kernel, node.middle_transpose]
+        + flatten_recursive_node(node.far_child)
+        + [node.post_transpose]
+    )
+
+
 def _leaf_scratchpad_bytes(m: int) -> int:
     """Bytes a single leaf-uthread of length m actually needs for its own
     intermediate scratchpad buffer(s): 0 for a one-stage fused kernel (no

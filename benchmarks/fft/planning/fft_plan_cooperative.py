@@ -55,40 +55,39 @@ from planning.fft_plan_core import (
 from planning.target_profile import DEFAULT_TARGET_PROFILE
 
 
-def choose_workers_per_fft(
+def worker_candidates_per_fft(
     length: int,
     radices: tuple[int, ...],
     *,
     simd_lanes: int = 8,
     max_workers: int | None = None,
     interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
-) -> int:
-    """A leaf's own useful cooperative worker count.
+) -> list[int]:
+    """Every legal cooperative worker count for a leaf of this shape,
+    ascending -- every divisor of the hardware's own interleave chunk
+    (`interleave_chunk_uthreads`) that does not exceed this leaf's own
+    *busiest* stage's SIMD batch count (`max(ceil((length // radix) /
+    simd_lanes) for radix in radices)`): a worker beyond that count is
+    never active on *any* stage of this leaf -- pure launch overhead for
+    zero benefit. A worker beyond a *thinner* stage's own (smaller) batch
+    count but still within the busiest stage's is fine: it idles on the
+    thin stage and works on the busy one (see CooperationPlan /
+    `_partition_batches`'s own possibly-uneven, possibly-empty per-worker
+    split) -- only the bound above describes a worker with literally
+    nothing to do anywhere.
 
-    The largest divisor of the hardware's own interleave chunk
-    (`interleave_chunk_uthreads` -- see `TargetProfile.interleave_chunk_uthreads`'s
-    own comment for what this is and where it comes from) that does not
-    exceed this leaf's own *busiest* stage's SIMD batch count
-    (`max(ceil((length // radix) / simd_lanes) for radix in radices)`): a
-    worker beyond that count is never active on *any* stage of this leaf --
-    pure launch overhead for zero benefit. A worker beyond a *thinner*
-    stage's own (smaller) batch count but still within the busiest stage's
-    is fine: it idles on the thin stage and works on the busy one (see
-    CooperationPlan / `_partition_batches`'s own possibly-uneven,
-    possibly-empty per-worker split) -- only the bound above describes a
-    worker with literally nothing to do anywhere.
+    `choose_workers_per_fft` (below) is the single-answer caller every
+    existing leaf builder still uses (`candidates[-1]`, today's exact
+    "largest that's ever useful" heuristic, unchanged); `planning/
+    fft_plan_search.py`'s generate_worker_candidates is the multi-answer
+    caller that wants the whole list instead -- both go through this one
+    function, same discipline `_recursive_split_candidates` established
+    for split candidates.
 
     `max_workers`: an optional caller-side cap (e.g. a fixed
     `cooperative_workers` a caller passed through
     `fft_plan_recursive.make_recursive_transpose_plan`) -- `None` (the
     default) applies none beyond the reasoning above.
-
-    A heuristic, not a cost model: it says how many workers can ever be
-    useful for this leaf, not how many are *optimal* -- optimality needs
-    real cycle measurements across leaf shapes, deliberately left as
-    future work (see fft_plan_recursive._choose_recursive_split's own
-    docstring for the same "candidate generation stays swappable, a real
-    cost model comes later" discipline this follows).
     """
     if not radices:
         raise ValueError("radices must be non-empty")
@@ -98,7 +97,33 @@ def choose_workers_per_fft(
         d for d in range(1, interleave_chunk_uthreads + 1)
         if interleave_chunk_uthreads % d == 0
     ]
-    return max(d for d in divisors if d <= cap)
+    return [d for d in divisors if d <= cap]
+
+
+def choose_workers_per_fft(
+    length: int,
+    radices: tuple[int, ...],
+    *,
+    simd_lanes: int = 8,
+    max_workers: int | None = None,
+    interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
+) -> int:
+    """A leaf's own useful cooperative worker count -- the *largest* legal
+    candidate from `worker_candidates_per_fft` (see its own docstring for
+    the legality rule). A heuristic, not a cost model: it says how many
+    workers can ever be useful for this leaf, not how many are *optimal* --
+    optimality needs real cycle measurements across leaf shapes,
+    deliberately left as future work (see fft_plan_recursive.
+    _choose_recursive_split's own docstring for the same "candidate
+    generation stays swappable, a real cost model comes later" discipline
+    this follows; `planning/fft_plan_search.py` is where that search now
+    lives).
+    """
+    candidates = worker_candidates_per_fft(
+        length, radices, simd_lanes=simd_lanes, max_workers=max_workers,
+        interleave_chunk_uthreads=interleave_chunk_uthreads,
+    )
+    return candidates[-1]
 
 
 def default_cooperative_scratchpad_budget(n: int) -> int:

@@ -21,13 +21,11 @@ from planning.fft_plan_recursive import (
     FFTRecursiveNodePlan,
     PhysicalTransposePlan,
     RecursiveFFTPlan,
+    flatten_recursive_node,
     make_recursive_transpose_plan,
 )
 from codegen.fft_codegen import Emitter
-from codegen.fft_transpose_codegen import (
-    _emit_physical_transpose_stage,
-    flatten_recursive_node,
-)
+from codegen.fft_transpose_codegen import _emit_physical_transpose_stage
 from verification.verify_fft_harness import Ptr, _simd, _translate_emitted_lines, run_kernel
 
 
