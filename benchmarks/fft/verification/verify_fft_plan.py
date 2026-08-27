@@ -625,6 +625,38 @@ def main() -> None:
                 failures.append(tag)
 
     print()
+    print("  forced_worker_sequence (per-leaf cooperative workers, real emitted code vs. numpy.fft/ifft):")
+    # forced_worker_sequence (fft_plan_recursive._build_recursive_node) lets
+    # each leaf pick its own cooperative_workers instead of one uniform
+    # choice for the whole tree -- the per-leaf mixing an earlier session
+    # discussed but never implemented; fft_plan_search.
+    # generate_per_leaf_worker_candidates now builds these for the search.
+    # N=960 has exactly 2 leaves (FFTRecNear0 M=30, FFTRecLeaf1 M=32, see
+    # this file's own "Debug/summary output (N=960...)" case below) -- both
+    # single-leaf-cooperative combinations (only the near leaf, only the
+    # far leaf) plus both-cooperative are covered, so this exercises a
+    # cooperative leaf sitting next to a plain (one-uthread-per-sub-FFT)
+    # one in the very same tree, not just cooperative-vs-not across two
+    # entirely separate plans.
+    worker_seq_cases: list[tuple[str, int, int, tuple[int | str | None, ...]]] = [
+        ("N=960 only the near leaf cooperative", 960, 512, (2, None)),
+        ("N=960 only the far leaf cooperative", 960, 512, (None, 2)),
+        ("N=960 both leaves cooperative (different worker counts)", 960, 512, (2, 4)),
+        ("N=960 near leaf auto, far leaf plain", 960, 512, ("auto", None)),
+    ]
+    for label, n, budget, seq in worker_seq_cases:
+        for inverse in (False, True):
+            err, plan = verify_recursive_plan(
+                n, scratchpad_byte_budget=budget, inverse=inverse, seed=97,
+                forced_worker_sequence=seq,
+            )
+            ok = err <= tolerance
+            tag = f"{label} (n={n} budget={budget} worker_sequence={seq} inverse={inverse})"
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    print()
     print("  compute_lanes-narrowed rendering (real emitted code vs. numpy.fft/ifft):")
     # compute_lanes controls only how wide a vector *instruction* each
     # stage's arithmetic emits (codegen.lowering._chunk_batch) --

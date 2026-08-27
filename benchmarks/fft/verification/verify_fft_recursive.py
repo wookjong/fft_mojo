@@ -265,11 +265,17 @@ def verify_recursive_plan(
     spad_capacity_bytes: int | None = None,
     max_concurrent_scratchpad_bytes: int | None = None,
     cooperative_workers: int | str | None = None,
+    forced_worker_sequence: tuple[int | str | None, ...] | None = None,
 ) -> tuple[float, RecursiveFFTPlan]:
     """`compute_lanes`/`narrow_middle_stages`: threaded straight through to
     `run_recursive_plan` -- see that function's and `run_kernel`'s own
     docstrings. `None`/`False` (the defaults) match their own defaults,
     unchanged from before these parameters existed.
+
+    `forced_worker_sequence`: threaded straight through to
+    `make_recursive_transpose_plan` -- see `_build_recursive_node`'s own
+    docstring (mutually exclusive with `cooperative_workers`). `None` (the
+    default) is unchanged from before this parameter existed.
 
     `spad_capacity_bytes`/`max_concurrent_scratchpad_bytes`: both `None`
     by default (unchanged from before either existed) -- pass a
@@ -296,6 +302,7 @@ def verify_recursive_plan(
         spad_capacity_bytes=spad_capacity_bytes,
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
         cooperative_workers=cooperative_workers,
+        forced_worker_sequence=forced_worker_sequence,
     )
     rng = np.random.default_rng(seed)
     x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)

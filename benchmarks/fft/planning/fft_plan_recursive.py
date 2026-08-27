@@ -256,9 +256,9 @@ def _choose_recursive_split(
     separate from candidate generation itself so a benchmark-driven search
     can consider the other candidates too, see fft_plan_search.py).
     """
+    if scratchpad_byte_budget <= 0:
+        raise ValueError("scratchpad_byte_budget must be positive")
     if _leaf_scratchpad_bytes(m) <= scratchpad_byte_budget:
-        if scratchpad_byte_budget <= 0:
-            raise ValueError("scratchpad_byte_budget must be positive")
         return None
     return _recursive_split_candidates(m, scratchpad_byte_budget=scratchpad_byte_budget)[0]
 
@@ -506,6 +506,7 @@ def _build_recursive_node(
     allowed_radix_composites: frozenset[int] | None = None,
     forced_split_near_length: int | None = None,
     forced_split_sequence: tuple[int, ...] | None = None,
+    forced_worker_sequence: tuple[int | str | None, ...] | None = None,
 ) -> FFTNode:
     """`allowed_radix_composites`: `None` (the default) keeps every leaf's
     radix tier exactly `coalesce_radices`'s own default
@@ -537,6 +538,25 @@ def _build_recursive_node(
     `forced_split_near_length` (the caller picks one or the other, never
     both, since one forces a single level and the other forces all of
     them).
+
+    `forced_worker_sequence`: like `forced_split_sequence`, but for each
+    *leaf's own* `cooperative_workers` instead of each level's own split
+    -- one entry per leaf this tree actually builds, near_fft-first, in
+    the exact same visitation order `forced_split_sequence` already
+    walks: this call consumes its own first entry for whichever leaf it
+    builds (the near_fft leaf if `m` splits, the terminal leaf if it
+    doesn't), then passes the rest to `far_child` below if it split.
+    Independent of whether the split itself came from the heuristic,
+    `forced_split_near_length`, or `forced_split_sequence` -- it only
+    tracks how many leaves get built, not how the tree got that shape, so
+    a caller can vary per-leaf worker counts against *any* split choice.
+    Mutually exclusive with `cooperative_workers` (the caller picks a
+    single uniform choice for every leaf, or a per-leaf sequence, never
+    both -- asserted below). A terminal leaf (no further split) requires
+    the sequence be down to exactly its own one entry, since nothing
+    would consume the rest; built by `fft_plan_search.
+    generate_per_leaf_worker_candidates` for one-leaf-at-a-time search,
+    mirroring `_enumerate_leaf_segmentations`'s own role for splits.
     """
     idx = node_id[0]
     node_id[0] += 1
@@ -573,7 +593,32 @@ def _build_recursive_node(
         split_b = forced_split_near_length
     else:
         split_b = _choose_recursive_split(m, scratchpad_byte_budget=scratchpad_byte_budget)
+
+    if forced_worker_sequence is not None:
+        assert cooperative_workers is None, (
+            "forced_worker_sequence and cooperative_workers are mutually "
+            "exclusive -- the former already picks every leaf's own choice, "
+            "including this one"
+        )
+        if not forced_worker_sequence:
+            raise ValueError(
+                "forced_worker_sequence ran out of entries before every leaf "
+                "was built -- it needs exactly one entry per leaf this tree "
+                "actually builds, near_fft-first"
+            )
+        this_leaf_workers = forced_worker_sequence[0]
+        rest_worker_sequence: tuple[int | str | None, ...] | None = forced_worker_sequence[1:]
+    else:
+        this_leaf_workers = cooperative_workers
+        rest_worker_sequence = None
+
     if split_b is None:
+        if forced_worker_sequence is not None and rest_worker_sequence:
+            raise ValueError(
+                f"forced_worker_sequence has {len(rest_worker_sequence)} "
+                f"entries left after this terminal leaf (m={m}) -- it must "
+                f"have exactly one entry per leaf, and this is the last one"
+            )
         radices = coalesce_radices(_prime_factors_supported(m), allowed=allowed_radix_composites)
         inverse_scale = (1.0 / m) if (inverse and is_root) else None
         kernel = _build_leaf_kernel(
@@ -586,7 +631,7 @@ def _build_recursive_node(
             kernel_name=f"FFTRecLeaf{idx}",
             spad_capacity_bytes=spad_capacity_bytes,
             max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
-            cooperative_workers=cooperative_workers,
+            cooperative_workers=this_leaf_workers,
             interleave_chunk_uthreads=interleave_chunk_uthreads,
         )
         return FFTLeafPlan(m=m, r=r, kernel=kernel)
@@ -616,7 +661,7 @@ def _build_recursive_node(
         kernel_name=f"FFTRecNear{idx}",
         spad_capacity_bytes=spad_capacity_bytes,
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
-        cooperative_workers=cooperative_workers,
+        cooperative_workers=this_leaf_workers,
         interleave_chunk_uthreads=interleave_chunk_uthreads,
     )
     near_fft = FFTLeafPlan(m=b, r=r * a, kernel=near_kernel)
@@ -641,8 +686,13 @@ def _build_recursive_node(
         # outermost (root) split is ever forced, see this function's own
         # docstring. forced_split_sequence, by contrast, IS propagated
         # (minus the entry this call already consumed) -- it forces every
-        # level, not just the root.
+        # level, not just the root. forced_worker_sequence follows the same
+        # "propagate the rest" rule as forced_split_sequence, independent of
+        # it (see this function's own docstring) -- cooperative_workers
+        # itself is passed through unchanged (still None whenever
+        # forced_worker_sequence is in use, per the assertion above).
         forced_split_sequence=forced_split_sequence[1:] if forced_split_sequence is not None else None,
+        forced_worker_sequence=rest_worker_sequence,
     )
 
     post = _build_physical_transpose(
@@ -674,6 +724,7 @@ def make_recursive_transpose_plan(
     allowed_radix_composites: frozenset[int] | None = None,
     forced_split_near_length: int | None = None,
     forced_split_sequence: tuple[int, ...] | None = None,
+    forced_worker_sequence: tuple[int | str | None, ...] | None = None,
 ) -> RecursiveFFTPlan:
     """N decomposed recursively (six-step-FFT style): each node either
     fuses into one multi-radix leaf kernel (see FFTLeafPlan) or splits
@@ -699,11 +750,13 @@ def make_recursive_transpose_plan(
     docstring scopes it.
 
     `allowed_radix_composites`/`forced_split_near_length`/
-    `forced_split_sequence`: all `None` by default (today's exact
-    single-heuristic behavior, unchanged) -- see `_build_recursive_node`'s
-    own docstring. Exist so `fft_plan_search.py` can build a specific
-    candidate plan instead of only "the one plan this budget/heuristic
-    combination implies".
+    `forced_split_sequence`/`forced_worker_sequence`: all `None` by
+    default (today's exact single-heuristic behavior, unchanged) -- see
+    `_build_recursive_node`'s own docstring. Exist so `fft_plan_search.py`
+    can build a specific candidate plan instead of only "the one plan this
+    budget/heuristic combination implies". `forced_worker_sequence` is
+    mutually exclusive with `cooperative_workers` (asserted in
+    `_build_recursive_node`) -- pass one or the other, never both.
 
     `batch`: how many independent length-`n` transforms to run in one
     launch, `1` by default (today's exact prior behavior, a single
@@ -730,6 +783,7 @@ def make_recursive_transpose_plan(
         allowed_radix_composites=allowed_radix_composites,
         forced_split_near_length=forced_split_near_length,
         forced_split_sequence=forced_split_sequence,
+        forced_worker_sequence=forced_worker_sequence,
     )
     host = MultiKernelHostPlan(n=n, inverse=inverse, tolerance=1.0e-3)
     return RecursiveFFTPlan(n=n, inverse=inverse, root=root, host=host, batch=batch)
