@@ -171,44 +171,64 @@ def _leaf_scratchpad_bytes(m: int) -> int:
     return buffers * 2 * m * 4
 
 
-def _choose_recursive_split(
+def _recursive_split_candidates(
     m: int, *, scratchpad_byte_budget: int
-) -> int | None:
-    """Returns b (the near_fft's own length) if m needs splitting, or None
-    if m already fits one fused leaf kernel outright. b is chosen as the
-    *largest* suffix-factor-product of m's own supported prime
-    factorization whose actual scratchpad footprint (_leaf_scratchpad_bytes)
-    still fits scratchpad_byte_budget as a single leaf -- larger b means
-    fewer recursion levels, fewer transpose kernels, and a leaf that fuses
-    as many radix stages as it can (see the module design writeup's own
-    reasoning for this heuristic; candidate generation is kept in this one
-    function so a benchmark-driven cost model can replace just this later,
-    same discipline factor_into_kernel_chunks's own docstring already
-    established).
+) -> list[int]:
+    """Every legal near_fft length b for a split of m -- every suffix-
+    factor-product of m's own supported prime factorization whose actual
+    scratchpad footprint (_leaf_scratchpad_bytes) fits scratchpad_byte_
+    budget as a single leaf, largest first. `_choose_recursive_split`
+    (below) is the single-answer caller every existing recursive-node
+    builder still uses (candidates[0], today's exact "largest that fits"
+    heuristic, unchanged); `planning/fft_plan_search.py`'s
+    generate_split_candidates is the multi-answer caller that wants the
+    whole list instead of just the first -- both go through this one
+    function so there is exactly one source of legal-split logic, per
+    factor_into_kernel_chunks's own docstring established discipline.
+
+    Raises if not even the smallest candidate fits scratchpad_byte_budget
+    (mirrors _choose_recursive_split's own prior error, since a caller with
+    an empty list otherwise has to invent this diagnosis on its own).
     """
     if scratchpad_byte_budget <= 0:
         raise ValueError("scratchpad_byte_budget must be positive")
-    if _leaf_scratchpad_bytes(m) <= scratchpad_byte_budget:
-        return None
 
     factors = _prime_factors_supported(m)
     suffix = [1] * (len(factors) + 1)
     for i in range(len(factors) - 1, -1, -1):
         suffix[i] = suffix[i + 1] * factors[i]
 
-    for i in range(1, len(factors) + 1):
-        if _leaf_scratchpad_bytes(suffix[i]) <= scratchpad_byte_budget:
-            if suffix[i] <= 1:
-                raise ValueError(
-                    f"scratchpad_byte_budget={scratchpad_byte_budget} is too "
-                    f"small to make progress on m={m} (factors={factors}: "
-                    f"not even the smallest one fits)"
-                )
-            return suffix[i]
-    raise ValueError(
-        f"scratchpad_byte_budget={scratchpad_byte_budget} is too small "
-        f"for m={m} (factors={factors})"
-    )
+    candidates = [
+        suffix[i]
+        for i in range(1, len(factors) + 1)
+        if suffix[i] > 1 and _leaf_scratchpad_bytes(suffix[i]) <= scratchpad_byte_budget
+    ]
+    if not candidates:
+        raise ValueError(
+            f"scratchpad_byte_budget={scratchpad_byte_budget} is too "
+            f"small to make progress on m={m} (factors={factors}: "
+            f"not even the smallest one fits)"
+        )
+    return candidates
+
+
+def _choose_recursive_split(
+    m: int, *, scratchpad_byte_budget: int
+) -> int | None:
+    """Returns b (the near_fft's own length) if m needs splitting, or None
+    if m already fits one fused leaf kernel outright. b is chosen as the
+    *largest* legal candidate from _recursive_split_candidates -- larger b
+    means fewer recursion levels, fewer transpose kernels, and a leaf that
+    fuses as many radix stages as it can (see the module design writeup's
+    own reasoning for this heuristic; this one heuristic pick is kept
+    separate from candidate generation itself so a benchmark-driven search
+    can consider the other candidates too, see fft_plan_search.py).
+    """
+    if _leaf_scratchpad_bytes(m) <= scratchpad_byte_budget:
+        if scratchpad_byte_budget <= 0:
+            raise ValueError("scratchpad_byte_budget must be positive")
+        return None
+    return _recursive_split_candidates(m, scratchpad_byte_budget=scratchpad_byte_budget)[0]
 
 
 def _build_leaf_kernel(
@@ -353,13 +373,42 @@ def _build_recursive_node(
     max_concurrent_scratchpad_bytes: int | None = None,
     cooperative_workers: int | str | None = None,
     interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
+    allowed_radix_composites: frozenset[int] | None = None,
+    forced_split_near_length: int | None = None,
 ) -> FFTNode:
+    """`allowed_radix_composites`: `None` (the default) keeps every leaf's
+    radix tier exactly `coalesce_radices`'s own default
+    (`_DEFAULT_COALESCE_ALLOWED`, radix-4-only, the one confirmed safe on
+    real hardware) -- passed explicitly, applies at *every* recursion
+    level (a target-capability statement, not a one-shot override), see
+    fft_plan_search.py's radix-tier candidates.
+
+    `forced_split_near_length`: `None` (the default) keeps today's exact
+    `_choose_recursive_split` heuristic (largest legal candidate). A given
+    value skips that heuristic *once*, at this call only -- the recursive
+    `far_child` call below always passes `forced_split_near_length=None`,
+    so only the outermost (root) split is ever forced; every level below
+    still picks its own best split normally. Must be a member of
+    `_recursive_split_candidates(m, scratchpad_byte_budget=...)` (asserted
+    below) -- this function never invents a split value a real budget
+    wouldn't also allow.
+    """
     idx = node_id[0]
     node_id[0] += 1
 
-    split_b = _choose_recursive_split(m, scratchpad_byte_budget=scratchpad_byte_budget)
+    if forced_split_near_length is not None:
+        legal = _recursive_split_candidates(m, scratchpad_byte_budget=scratchpad_byte_budget)
+        if forced_split_near_length not in legal:
+            raise ValueError(
+                f"forced_split_near_length={forced_split_near_length} is not a "
+                f"legal split of m={m} under scratchpad_byte_budget="
+                f"{scratchpad_byte_budget} (legal candidates: {legal})"
+            )
+        split_b = forced_split_near_length
+    else:
+        split_b = _choose_recursive_split(m, scratchpad_byte_budget=scratchpad_byte_budget)
     if split_b is None:
-        radices = coalesce_radices(_prime_factors_supported(m))
+        radices = coalesce_radices(_prime_factors_supported(m), allowed=allowed_radix_composites)
         inverse_scale = (1.0 / m) if (inverse and is_root) else None
         kernel = _build_leaf_kernel(
             length=m,
@@ -390,7 +439,7 @@ def _build_recursive_node(
         apply_inverse_scale=False, max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )
 
-    near_radices = coalesce_radices(_prime_factors_supported(b))
+    near_radices = coalesce_radices(_prime_factors_supported(b), allowed=allowed_radix_composites)
     near_kernel = _build_leaf_kernel(
         length=b,
         radices=near_radices,
@@ -421,6 +470,10 @@ def _build_recursive_node(
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
         cooperative_workers=cooperative_workers,
         interleave_chunk_uthreads=interleave_chunk_uthreads,
+        allowed_radix_composites=allowed_radix_composites,
+        # forced_split_near_length intentionally NOT propagated -- only the
+        # outermost (root) split is ever forced, see this function's own
+        # docstring.
     )
 
     post = _build_physical_transpose(
@@ -448,6 +501,8 @@ def make_recursive_transpose_plan(
     max_concurrent_scratchpad_bytes: int | None = None,
     cooperative_workers: int | str | None = None,
     interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
+    allowed_radix_composites: frozenset[int] | None = None,
+    forced_split_near_length: int | None = None,
 ) -> RecursiveFFTPlan:
     """N decomposed recursively (six-step-FFT style): each node either
     fuses into one multi-radix leaf kernel (see FFTLeafPlan) or splits
@@ -471,6 +526,12 @@ def make_recursive_transpose_plan(
     affected -- this only changes FFTLeafPlan's own internal execution
     granularity, per-node, exactly as fft_plan_cooperative.py's module
     docstring scopes it.
+
+    `allowed_radix_composites`/`forced_split_near_length`: both `None` by
+    default (today's exact single-heuristic behavior, unchanged) -- see
+    `_build_recursive_node`'s own docstring. Exists so `fft_plan_search.py`
+    can build a specific candidate plan instead of only "the one plan this
+    budget/heuristic combination implies".
     """
     node_id = [0]
     root = _build_recursive_node(
@@ -481,6 +542,8 @@ def make_recursive_transpose_plan(
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
         cooperative_workers=cooperative_workers,
         interleave_chunk_uthreads=interleave_chunk_uthreads,
+        allowed_radix_composites=allowed_radix_composites,
+        forced_split_near_length=forced_split_near_length,
     )
     host = MultiKernelHostPlan(n=n, inverse=inverse, tolerance=1.0e-3)
     return RecursiveFFTPlan(n=n, inverse=inverse, root=root, host=host)

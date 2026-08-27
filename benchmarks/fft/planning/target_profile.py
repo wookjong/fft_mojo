@@ -18,6 +18,7 @@ class TargetProfile:
     spad_capacity_bytes: int
     max_concurrent_scratchpad_bytes: int
     interleave_chunk_uthreads: int
+    supports_vector_spill: bool = False
 
 
 DEFAULT_TARGET_PROFILE = TargetProfile(
@@ -67,4 +68,15 @@ DEFAULT_TARGET_PROFILE = TargetProfile(
     # fft_codegen._emit_cooperative_stage's own docstring for the concrete
     # trace (against this exact config) that found this the hard way.
     interleave_chunk_uthreads=8,
+    # Whether this target's toolchain can run a register-spill vector store
+    # (`vs1r.v`) without panicking -- `False` here since M2NDP-Detour's
+    # decoder does not implement it (see make_fft_kernel's own
+    # `compute_lanes` discussion). Used only to gate which radix-coalescing
+    # tiers a candidate search offers at all (planning/fft_plan_search.py):
+    # a wider tier than `coalesce_radices`'s own confirmed-safe default
+    # (radix-4-only) risks exactly this spill, so it's only worth
+    # generating as a candidate when the target could actually run it.
+    # Never threaded into codegen itself -- the default tier stays the
+    # unconditional default regardless of this flag.
+    supports_vector_spill=False,
 )
