@@ -92,6 +92,24 @@ class CostWeights:
     idle_worker_penalty: float = 200.0
     radix_risk_penalty: float = 5000.0
     recursion_depth_penalty: float = 100.0
+    # Real M2NDP runs (this project's own benchmark_fft_candidates.sh
+    # sweeps at N=1024/960/630) show MORE, SMALLER transpose tiles usually
+    # finishing in *fewer* ndp cycles, not more -- e.g. N=1024: 192 tiles
+    # -> 2111 cycles vs. 48 tiles -> 7421-7871 cycles; N=630: 210 tiles ->
+    # 1867 cycles (the fastest of 6 real candidates) vs. the 54-tile
+    # baseline's 4426. The opposite of the usual "more kernel launches =
+    # more overhead" assumption, plausibly because a smaller tile fits
+    # this target's own SIMD/register width more cleanly -- but NOT
+    # cleanly monotonic (N=630's own 46-tile candidate ran *slower*, 5561
+    # cycles, than its 54-tile baseline), so this weight is deliberately
+    # small: before it existed, every split/tile candidate for one N was
+    # an exact estimated_cost tie (total_transpose_tiles was computed in
+    # PlanMetrics but never read here), so ranking among them fell back to
+    # generation-order luck. This only needs to break that exact tie in
+    # the right direction, not carry serious absolute weight -- treat any
+    # single ranking decision it flips as a hint to verify with
+    # benchmark_fft_candidates.sh, not a settled answer.
+    transpose_tile_count: float = -2.0
 
 
 DEFAULT_COST_WEIGHTS = CostWeights()
@@ -184,4 +202,5 @@ def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIG
         + weights.idle_worker_penalty * (1.0 - metrics.worst_worker_utilization)
         + weights.radix_risk_penalty * metrics.radix_risk_score
         + weights.recursion_depth_penalty * metrics.recursion_depth
+        + weights.transpose_tile_count * metrics.total_transpose_tiles
     )

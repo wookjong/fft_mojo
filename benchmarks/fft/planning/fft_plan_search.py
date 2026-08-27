@@ -14,10 +14,12 @@ combinatorial explosion): generate_candidates builds one baseline (today's
 exact single-heuristic plan) and then varies one axis at a time around it
 -- a split sweep, then a worker sweep, a radix-tier sweep, and a tile
 sweep, each holding the other axes at the baseline's own choice. This is a
-staged/"star" search, not a joint one; a real joint or recursive-descent
-search over the whole tree is future work this module's own function
-boundaries (one generator per axis) are meant to make easy to build later
-without changing FFTPlanCandidate's own shape.
+staged/"star" search, not a joint one over the split axis alone --
+generate_joint_split_candidates (below) is that joint search: every level
+of the recursive split chosen together instead of one-at-a-time, via
+_enumerate_leaf_segmentations, still scored by the same cost model as
+everything else here. A true joint search across *all four* axes at once
+remains future work.
 """
 
 from dataclasses import dataclass, replace
@@ -29,6 +31,7 @@ from planning.fft_plan_recursive import (
     FFTNode,
     FFTRecursiveNodePlan,
     RecursiveFFTPlan,
+    _enumerate_leaf_segmentations,
     _leaf_scratchpad_bytes,
     _recursive_split_candidates,
     make_recursive_transpose_plan,
@@ -56,6 +59,13 @@ class PlanChoices:
     radix_tier_name: str
     workers_per_fft: int | None
     tile: tuple[int, int] | None
+    # Only set for generate_joint_split_candidates's own entries (every
+    # other generator leaves this None): the full per-level near_fft chain
+    # forced via make_recursive_transpose_plan's forced_split_sequence --
+    # see _enumerate_leaf_segmentations' own docstring for why this can't
+    # be summarized as a single split_near_length the way the one-level
+    # split sweep's own candidates can.
+    split_sequence: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -150,7 +160,8 @@ def generate_candidates(
     inverse: bool = False,
     scratchpad_byte_budget: int = 4096,
     simd_lanes: int = 8,
-    max_candidates: int = 24,
+    max_candidates: int = 40,
+    max_joint_split_candidates: int = 16,
 ) -> list[FFTPlanCandidate]:
     """Baseline (today's exact default plan) plus one axis varied at a time
     around it -- see the module docstring for why this is a staged sweep,
@@ -241,6 +252,33 @@ def generate_candidates(
             )
             add(plan, PlanChoices(split_near_length=baseline_split, radix_tier_name="default", workers_per_fft=None, tile=tile))
 
+    # 6. joint split-sequence sweep -- every level of the recursive split
+    # chosen together (_enumerate_leaf_segmentations), not just the root
+    # (step 2 only ever varies the outermost split, leaving every deeper
+    # level at whatever _choose_recursive_split's own greedy pick is).
+    # _enumerate_leaf_segmentations already orders its own results
+    # largest-segment-first, so its own first entries resemble the
+    # baseline most closely; skip that one exact duplicate, same as the
+    # split sweep above.
+    segmentations = _enumerate_leaf_segmentations(n, scratchpad_byte_budget=scratchpad_byte_budget)
+    for seq in segmentations[:max_joint_split_candidates]:
+        if seq and seq[0] == baseline_split and len(seq) == 1:
+            continue  # byte-for-byte the baseline (single-level split, same b)
+        plan = make_recursive_transpose_plan(
+            n,
+            scratchpad_byte_budget=scratchpad_byte_budget,
+            simd_lanes=simd_lanes,
+            inverse=inverse,
+            spad_capacity_bytes=target.spad_capacity_bytes,
+            max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
+            interleave_chunk_uthreads=target.interleave_chunk_uthreads,
+            forced_split_sequence=seq,
+        )
+        add(plan, PlanChoices(
+            split_near_length=None, radix_tier_name="default", workers_per_fft=None,
+            tile=None, split_sequence=seq,
+        ))
+
     return candidates[:max_candidates]
 
 
@@ -282,6 +320,7 @@ def format_plan_summary(candidate: FFTPlanCandidate, *, index: int | None = None
     lines.append(
         f"  choices: split_near_length={c.split_near_length} "
         f"radix_tier={c.radix_tier_name} workers_per_fft={c.workers_per_fft} tile={c.tile}"
+        + (f" split_sequence={c.split_sequence}" if c.split_sequence is not None else "")
     )
     lines.append("")
     _describe_node(candidate.plan.root, 1, lines)
