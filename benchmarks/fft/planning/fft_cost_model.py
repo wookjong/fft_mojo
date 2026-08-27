@@ -24,13 +24,33 @@ from planning.fft_plan_recursive import (
 from planning.fft_plan_core import FFTCodegenPlan
 from planning.target_profile import TargetProfile
 
-# Composite radices `coalesce_radices` can produce that are confirmed clean
-# only as a leaf's *first* stage (reading straight from DRAM), not as a
-# later stage (reading its operands out of scratchpad instead) -- see
-# fft_plan_core._prime_factors_supported's own comment for the concrete
-# N=54 spill this is based on. `10` fails outright at *any* stage position
-# (N=160/320) -- see the same comment.
-_NON_FIRST_STAGE_RISKY_RADICES = frozenset({6, 9})
+# Composite/prime radices confirmed clean as a leaf's *first* stage
+# (reading straight from DRAM) but not as a later stage (reading its
+# operands out of scratchpad instead):
+#
+# * 6, 9: fft_plan_core._prime_factors_supported's own comment documents
+#   the concrete N=54=(6,9) spill this was originally based on (radix-9
+#   stage, preceded by radix-6). Note this isn't universal, though: a
+#   direct (4, 9) chain (N=36, forced via allowed_radix_composites) built
+#   and ran clean, zero spill -- so whatever makes radix-9 risky here
+#   depends on more than "radix 9 in a non-first position" alone (likely
+#   something about what precedes it, e.g. radix-6's own address/register
+#   shape specifically), which this per-stage-radix-only model has no way
+#   to represent. Kept flagged anyway since the known-bad N=54 combination
+#   is real and this heuristic can only be conservative, not precise.
+# * 11, 13, 17: confirmed by direct probe (each forced into a (4, r)
+#   chain -- N=44, N=52, N=68 respectively, r as the second/scratchpad-
+#   reading stage): all three spill *and* silently produce an all-zero
+#   (wrong, not just slow) result. Previously unflagged here entirely
+#   (radix_risk_score reported 0.0 for any N landing one of these in a
+#   non-first stage) -- a real correctness gap, not just a missed
+#   optimization.
+#
+# `10` fails outright at *any* stage position (N=160/320, and reconfirmed
+# by the same probe as (4, 10) = N=40 -- spills and mismatches even
+# directly after a radix-4 first stage, unlike 6/9's apparently
+# context-dependent failure) -- see the same fft_plan_core comment.
+_NON_FIRST_STAGE_RISKY_RADICES = frozenset({6, 9, 11, 13, 17})
 _ALWAYS_RISKY_RADICES = frozenset({10})
 
 
