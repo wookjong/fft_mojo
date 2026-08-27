@@ -121,16 +121,22 @@ def generate_tile_candidates(rows: int, cols: int, *, simd_lanes: int) -> list[t
     POST transpose of this matrix shape: the planner's own default (square,
     `min(simd_lanes, rows, cols)` -- see `_build_recursive_node`), the same
     bound applied *independently* per dimension instead of jointly (only
-    different from the default when rows != cols), and a half/double
-    variant of the default square size where that stays >= 1 and inside
-    the matrix -- 2-4 candidates, never more, per section 10's own "avoid
-    combinatorial explosion" instruction."""
+    different from the default when rows != cols), a doubled variant where
+    that stays inside the matrix, and every halving of the default square
+    size down to 1x1 -- not just one halving step. Real M2NDP runs (this
+    project's own benchmark_fft_candidates.sh at N=1024) show tile=(2,2)
+    beating the default (4,4)/(8,4), and 1x1 beating THAT again (1252
+    cycles vs. 1516) -- one halving step alone stopped short of the actual
+    optimum here, so this keeps going to the floor instead of guessing
+    where to stop. Still small (at most log2(default_dim) extra entries)
+    per section 10's own "avoid combinatorial explosion" instruction."""
     default_dim = max(1, min(simd_lanes, rows, cols))
     candidates = {(default_dim, default_dim)}
     candidates.add((max(1, min(simd_lanes, rows)), max(1, min(simd_lanes, cols))))
-    if default_dim >= 2:
-        half = max(1, default_dim // 2)
-        candidates.add((half, half))
+    dim = default_dim
+    while dim > 1:
+        dim = max(1, dim // 2)
+        candidates.add((dim, dim))
     doubled = min(default_dim * 2, rows, cols)
     if doubled > default_dim:
         candidates.add((doubled, doubled))
