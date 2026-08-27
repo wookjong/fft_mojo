@@ -26,7 +26,6 @@ inline inside fft_codegen.py's own emit functions do:
 from dataclasses import dataclass
 
 from planning.fft_plan_core import (
-    FFTStagePlan,
     LoadPlan,
     OutputPlan,
     SIMDBatchPlan,
@@ -329,14 +328,21 @@ class LoopStagePlan:
 
 
 def try_build_loop_stage(
-    stage: FFTStagePlan,
+    batches: tuple[SIMDBatchPlan, ...],
     *,
     simd_lanes: int,
     min_full_batches: int,
     twiddle_table: list[tuple[float, float]],
 ) -> "LoopStagePlan | None":
-    """Try to prove `stage.batches` is a uniform, loopable sequence (see the
-    module note above) and, if so, at what period.
+    """Try to prove `batches` (a stage's own `stage.batches` for the plain
+    per-uthread case, or one worker's own `stage.worker_batches[k]` for a
+    cooperative stage -- see fft_cooperative_codegen._emit_cooperative_
+    stage's own call site, the only caller that passes anything other than
+    a whole stage's `batches`) is a uniform, loopable sequence (see the
+    module note above) and, if so, at what period. Takes the batch tuple
+    directly rather than a whole `FFTStagePlan`: nothing below ever reads
+    any other field off one, so a caller with only a worker's own subset
+    in hand doesn't need to fabricate a fake stage to call this.
 
     A Stockham-autosort intermediate store's own per-batch destination
     offset (see fft_plan_core._make_store) is `n2*group_stride +
@@ -363,8 +369,8 @@ def try_build_loop_stage(
     `twiddle_table` (in place) only once every check has passed -- never
     leaves orphaned rows in it on a failed/aborted attempt.
     """
-    full = [b for b in stage.batches if b.valid_lanes == simd_lanes]
-    tail = [b for b in stage.batches if b.valid_lanes != simd_lanes]
+    full = [b for b in batches if b.valid_lanes == simd_lanes]
+    tail = [b for b in batches if b.valid_lanes != simd_lanes]
     n_full = len(full)
     if n_full < min_full_batches or len(tail) > 1:
         return None

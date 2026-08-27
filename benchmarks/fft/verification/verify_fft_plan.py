@@ -657,6 +657,41 @@ def main() -> None:
                 failures.append(tag)
 
     print()
+    print("  cooperative loop_stages (per-worker runtime loop, real emitted code vs. numpy.fft/ifft):")
+    # A cooperative stage looping per-worker (fft_cooperative_codegen.
+    # _emit_cooperative_stage's own loop_stages support) is new as of
+    # 2026-08-27, added after rendering every worker's own batches fully
+    # unrolled into one shared function produced a real N=1024 register-
+    # pressure failure on the actual M2NDP-Detour toolchain (7576-line
+    # stage_1(), workers_per_fft=8, scratchpad_byte_budget=16384 -- no
+    # split at all, so this exact case) -- Python-level correctness alone
+    # never could have caught the original bug (it's a real-hardware-only
+    # register allocator failure, see docs/STATUS.md), but this closes the
+    # coverage gap for the *rendering itself* (the loop/tail selection,
+    # residue math, per-worker twiddle-table offsets) all the same, and
+    # pins the exact regression case for whoever re-runs run_fft_test.sh
+    # against it. N=1024 budget=16384 is a single 5-stage (4,4,4,4,4)
+    # cooperative leaf, no split/transpose at all -- every one of its 3
+    # middle stages (1,2,3) is exactly what needed to loop to fix the real
+    # spill.
+    coop_loop_cases: list[tuple[str, int, int, int | str | None]] = [
+        ("N=1024 single cooperative leaf, workers=auto (the real regression case)", 1024, 16384, "auto"),
+        ("N=1024 single cooperative leaf, workers=4", 1024, 16384, 4),
+        ("N=1024 single cooperative leaf, workers=2", 1024, 16384, 2),
+    ]
+    for label, n, budget, workers in coop_loop_cases:
+        for inverse in (False, True):
+            err, plan = verify_recursive_plan(
+                n, scratchpad_byte_budget=budget, inverse=inverse, seed=101,
+                cooperative_workers=workers, compute_lanes=4, narrow_middle_stages=True,
+            )
+            ok = err <= tolerance
+            tag = f"{label} (n={n} budget={budget} workers={workers} inverse={inverse})"
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
+            if not ok:
+                failures.append(tag)
+
+    print()
     print("  compute_lanes-narrowed rendering (real emitted code vs. numpy.fft/ifft):")
     # compute_lanes controls only how wide a vector *instruction* each
     # stage's arithmetic emits (codegen.lowering._chunk_batch) --

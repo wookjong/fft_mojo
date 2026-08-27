@@ -117,10 +117,15 @@ class PlanMetrics:
     # Detour build+run, tens of seconds to minutes, not something
     # estimate_metrics can afford to do for every candidate). A caller who
     # wants this signal calls spill_probe.probe_spill_free explicitly and
-    # folds the result in via apply_spill_probe (below) -- estimate_cost
+    # folds the result in via spill_probe.apply_spill_probe -- estimate_cost
     # then only applies spill_penalty once this is actually `True`/`False`,
     # never for the untouched `None` default, so every existing caller's
-    # ranking is bit-for-bit unchanged unless it opts in.
+    # ranking is bit-for-bit unchanged unless it opts in. See CostWeights.
+    # spill_penalty's own comment and [[fft-spill-hard-filter]] for why
+    # this soft weighting is a diagnostic signal only, never the actual
+    # mechanism that keeps a confirmed-spilling candidate out of a final
+    # pick -- planning.spill_probe.probe_and_rerank_candidates' own hard
+    # exclusion is.
     spill_free: bool | None = None
     estimated_cost: float = 0.0      # filled in by estimate_cost, 0.0 until then
 
@@ -148,19 +153,23 @@ class CostWeights:
     # every other term whenever radix_risk_score is nonzero.
     idle_worker_penalty: float = 200.0
     radix_risk_penalty: float = 5000.0
-    # Only applied when PlanMetrics.spill_free has actually been probed
-    # (see that field's own docstring -- estimate_cost skips this entirely
-    # for the untouched `None` default). Smaller than radix_risk_penalty
-    # deliberately: a radix flagged there is a *confirmed-wrong-answer*
-    # risk (see _NON_FIRST_STAGE_RISKY_RADICES's own comment), while a
-    # spill is not inherently wrong -- this session's own N=630 isolation
-    # found compute_lanes=2 spilling the exact same stage, byte-for-byte,
-    # and still passing; only compute_lanes=4's own spill *shape* (a
-    # dynamically vlenb-sized stack slot M2NDP-Detour's ReadCsr answers
-    # wrong) was the actual liability. Still large enough to dominate
-    # every non-risk term for one spilling candidate against an otherwise-
-    # similar spill-free one, since a spill is still real DRAM-spill cost
-    # on top of whatever correctness risk it may or may not carry.
+    # NOT the authoritative spill policy -- see [[fft-spill-hard-filter]]
+    # (a confirmed real spill must disqualify a candidate outright, never
+    # just adjust a score) -- that's enforced by planning.spill_probe.
+    # probe_and_rerank_candidates hard-excluding any candidate whose
+    # PlanMetrics.spill_free a real probe confirmed False, before this
+    # weight ever gets a chance to matter for it. This term only fires
+    # once spill_free has actually been probed (see that field's own
+    # docstring -- estimate_cost skips it entirely for the untouched
+    # `None` default) and exists purely as a *diagnostic* signal for a
+    # caller reading estimated_cost directly (format_plan_summary, ad hoc
+    # debugging) without going through the hard-exclusion path -- e.g. so
+    # a spilling candidate's own cost still visibly reflects that DRAM-
+    # spill traffic is real cost on top of whatever else is wrong with it,
+    # rather than looking identical to a spill-free sibling. Never rely on
+    # this weight alone to keep a confirmed-spilling candidate out of a
+    # final recommendation; only probe_and_rerank_candidates' own hard
+    # exclusion does that reliably.
     spill_penalty: float = 2000.0
     recursion_depth_penalty: float = 100.0
     # Real M2NDP runs (this project's own benchmark_fft_candidates.sh

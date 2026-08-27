@@ -677,27 +677,23 @@ def _emit_stage(
     emit_header(f"stage_{stage.stage_id}")
 
     if plan.cooperation is not None:
-        # loop_stages (the runtime-loop renderer) reasons about `stage.batches`
-        # as a whole, not per-worker -- combining it with cooperation is not
-        # supported yet (see fft_plan_cooperative.py's own docstring on what
-        # this first cut defers); fail loudly rather than silently render
-        # every worker's copy of the full batch set.
-        if loop_stages:
-            raise NotImplementedError(
-                "loop_stages is not yet supported for a cooperative FFTCodegenPlan"
-            )
-        # Local import, not a module-level one: fft_cooperative_codegen.py
-        # itself imports _emit_stage_batches/_emit_params_struct/
-        # _emit_task_struct back from this module (see its own docstring),
-        # so a module-level import here would be circular. This is the one
-        # call site that needs to cross that boundary.
+        # loop_stages now applies per-worker for a cooperative stage too --
+        # see fft_cooperative_codegen._emit_cooperative_stage's own
+        # docstring for why this stopped being optional (a real N=1024
+        # register-pressure failure, confirmed 2026-08-27, from rendering
+        # every worker's own batches fully unrolled into one shared
+        # function). Local import, not a module-level one: fft_cooperative_
+        # codegen.py itself imports _emit_stage_batches/_emit_params_struct/
+        # _emit_task_struct/_emit_loop_stage back from this module (see its
+        # own docstring), so a module-level import here would be circular.
+        # This is the one call site that needs to cross that boundary.
         from codegen.fft_cooperative_codegen import _emit_cooperative_stage
 
-        _emit_cooperative_stage(
+        return _emit_cooperative_stage(
             e, plan=plan, stage=stage, is_first=is_first, is_last=is_last,
-            compute_lanes=compute_lanes,
+            compute_lanes=compute_lanes, loop_stages=loop_stages,
+            min_loop_batches=min_loop_batches, twiddle_table=twiddle_table,
         )
-        return False
 
     def emit_prelude() -> None:
         e.add("        var local_id = local_uthread_id()")
@@ -732,7 +728,7 @@ def _emit_stage(
     if loop_stages:
         assert twiddle_table is not None
         loop_plan = _try_build_loop_stage(
-            stage, simd_lanes=plan.simd_lanes, min_full_batches=min_loop_batches,
+            stage.batches, simd_lanes=plan.simd_lanes, min_full_batches=min_loop_batches,
             twiddle_table=twiddle_table,
         )
         if loop_plan is not None:

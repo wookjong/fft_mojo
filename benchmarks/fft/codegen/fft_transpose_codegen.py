@@ -705,13 +705,13 @@ def generate_recursive_fft_kernels(
     # False or nothing in that particular kernel qualified to loop.
     #
     # A cooperative stage (stage.cooperation is not None -- see
-    # fft_plan_cooperative.py) never loops regardless of the caller's own
-    # `loop_stages`: fft_codegen._emit_stage raises rather than render a
-    # runtime loop over `stage.batches` as a whole when cooperative worker
-    # partitioning (`stage.worker_batches`) is what actually needs looping,
-    # not yet supported (see that function's own docstring) -- decided per
-    # stage, so a recursive tree mixing cooperative and plain leaves renders
-    # each correctly instead of the whole file inheriting one kernel's answer.
+    # fft_plan_cooperative.py) loops too, per worker (see fft_cooperative_
+    # codegen._emit_cooperative_stage's own docstring) -- confirmed
+    # necessary rather than optional by a real N=1024 register-pressure
+    # failure (2026-08-27) from rendering every worker's own batches fully
+    # unrolled into one shared function. Still decided per stage (not a
+    # single blanket toggle for the whole tree), so a recursive tree mixing
+    # cooperative and plain leaves renders each correctly either way.
     loop_twiddle_tables: dict[int, list[tuple[float, float]]] = {}
     # This stage's own resolved loop_stages (see the comment above) -- the
     # launch site below needs this per-stage answer too, to know whether
@@ -724,7 +724,7 @@ def generate_recursive_fft_kernels(
         if isinstance(stage, PhysicalTransposePlan):
             _emit_physical_transpose_kernel(e, plan=stage)
         else:
-            stage_loop_stages = loop_stages and stage.cooperation is None
+            stage_loop_stages = loop_stages
             stage_loops[i] = stage_loop_stages
             loop_twiddle_tables[i] = _emit_kernel(
                 e, plan=stage, compute_lanes=compute_lanes,
