@@ -567,16 +567,24 @@ def _emit_stage(
     loop_stages: bool = False,
     min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
     twiddle_table: list[tuple[float, float]] | None = None,
-) -> None:
+) -> bool:
+    """Returns True if this stage also emitted a separate `stage_{id}_tail`
+    static method the caller (`_emit_task_struct`) needs its own
+    `launch_parallel` call for -- see the loop_stages tail_batch branch
+    below for why that tail is its own device function instead of more
+    code appended after the loop inside `stage_{id}` itself."""
     is_first = stage.stage_id == 0
     is_last = stage.stage_id == len(plan.stages) - 1
 
-    e.add("    @staticmethod")
-    e.add(f"    def stage_{stage.stage_id}():")
-    e.add(f"        ref p = {plan.kernel_name}.params[]")
-    e.add(f"        comptime RADIX = {stage.radix}")
-    e.add(f"        comptime SIMD_ITERS = {stage.simd_iteration_count}")
-    e.add()
+    def emit_header(name: str) -> None:
+        e.add("    @staticmethod")
+        e.add(f"    def {name}():")
+        e.add(f"        ref p = {plan.kernel_name}.params[]")
+        e.add(f"        comptime RADIX = {stage.radix}")
+        e.add(f"        comptime SIMD_ITERS = {stage.simd_iteration_count}")
+        e.add()
+
+    emit_header(f"stage_{stage.stage_id}")
 
     if plan.cooperation is not None:
         # loop_stages (the runtime-loop renderer) reasons about `stage.batches`
@@ -599,33 +607,37 @@ def _emit_stage(
             e, plan=plan, stage=stage, is_first=is_first, is_last=is_last,
             compute_lanes=compute_lanes,
         )
-        return
+        return False
 
-    e.add("        var local_id = local_uthread_id()")
-    e.add(f"        if local_id >= MAX_UTHREAD_{plan.kernel_name}:")
-    e.add("            return")
-    # A single-stage kernel (this kernel's own length == its one radix, as
-    # every decomposed sub-FFT kernel is) never reads or writes its own
-    # scratchpad -- first_stage and last_stage are the same stage, so every
-    # load/store is DRAM-side. Only declare spad_base where something uses it.
-    if plan.scratchpad_buffers:
-        e.add(f"        var spad_base = local_id * {plan.scratchpad_uthread_stride}")
-    # Each kernel's own AddressMapping settles this in one runtime multiply
-    # (plus, only where the mapping isn't the origin, one add) -- except
-    # SPLIT, a middle kernel's output in an M>=3 chain, which costs one %
-    # and one // (see _mapping_base_expr). Declared only on the stage that
-    # actually reads/writes DRAM through it.
-    if is_first:
-        e.add(
-            f"        var in_batch_base = "
-            f"{_mapping_base_expr(plan.input_mapping, plan.length)}"
-        )
-    if is_last:
-        e.add(
-            f"        var out_batch_base = "
-            f"{_mapping_base_expr(plan.output_mapping, plan.length)}"
-        )
-    e.add()
+    def emit_prelude() -> None:
+        e.add("        var local_id = local_uthread_id()")
+        e.add(f"        if local_id >= MAX_UTHREAD_{plan.kernel_name}:")
+        e.add("            return")
+        # A single-stage kernel (this kernel's own length == its one radix,
+        # as every decomposed sub-FFT kernel is) never reads or writes its
+        # own scratchpad -- first_stage and last_stage are the same stage,
+        # so every load/store is DRAM-side. Only declare spad_base where
+        # something uses it.
+        if plan.scratchpad_buffers:
+            e.add(f"        var spad_base = local_id * {plan.scratchpad_uthread_stride}")
+        # Each kernel's own AddressMapping settles this in one runtime
+        # multiply (plus, only where the mapping isn't the origin, one add)
+        # -- except SPLIT, a middle kernel's output in an M>=3 chain, which
+        # costs one % and one // (see _mapping_base_expr). Declared only on
+        # the stage that actually reads/writes DRAM through it.
+        if is_first:
+            e.add(
+                f"        var in_batch_base = "
+                f"{_mapping_base_expr(plan.input_mapping, plan.length)}"
+            )
+        if is_last:
+            e.add(
+                f"        var out_batch_base = "
+                f"{_mapping_base_expr(plan.output_mapping, plan.length)}"
+            )
+        e.add()
+
+    emit_prelude()
 
     if loop_stages:
         assert twiddle_table is not None
@@ -636,8 +648,24 @@ def _emit_stage(
         if loop_plan is not None:
             _emit_loop_stage(e, plan=plan, stage=stage, loop_plan=loop_plan, compute_lanes=compute_lanes)
             if loop_plan.tail_batch is not None:
+                # A separate @staticmethod (its own launch_parallel call,
+                # see _emit_task_struct's device_main), not more code
+                # appended here after the loop: confirmed by direct
+                # A/B measurement (N=960's FFTRecNear0 stage_0) that
+                # appending the tail inline -- even after trimming it down
+                # to just the one real chunk of work, dead padding chunks
+                # already dropped -- left an unchanged 128-byte register
+                # spill; moving it to its own function is the next thing
+                # to try, on the theory that this target's register
+                # allocator scopes per compiled function, not per block,
+                # so a tail sharing stage_{id}()'s own function forces one
+                # spill budget across both regardless of the tail's own
+                # size.
+                emit_header(f"stage_{stage.stage_id}_tail")
+                emit_prelude()
                 _emit_stage_batches(e, plan=plan, stage=stage, batches=(loop_plan.tail_batch,), compute_lanes=compute_lanes)
-            return
+                return True
+            return False
 
     # Each batch's rr{k}/ii{k}/or{k}/oi{k} (and friends) are local to that
     # batch's own butterfly, not threads carried across batches -- but
@@ -647,6 +675,7 @@ def _emit_stage(
     # piece in its own block scope or the next one's `var rr0` redefines
     # the previous.
     _emit_stage_batches(e, plan=plan, stage=stage, batches=stage.batches, compute_lanes=compute_lanes)
+    return False
 
 
 def _emit_stage_batches(
@@ -752,17 +781,22 @@ def _emit_task_struct(
         e.add()
 
     twiddle_table: list[tuple[float, float]] = []
+    tail_stage_ids: set[int] = set()
     for stage in plan.stages:
-        _emit_stage(
+        has_tail = _emit_stage(
             e, plan=plan, stage=stage, compute_lanes=compute_lanes,
             loop_stages=loop_stages, min_loop_batches=min_loop_batches,
             twiddle_table=twiddle_table,
         )
+        if has_tail:
+            tail_stage_ids.add(stage.stage_id)
 
     e.add("    @staticmethod")
     e.add("    def device_main():")
     for stage in plan.stages:
         e.add(f"        launch_parallel[{plan.kernel_name}.stage_{stage.stage_id}]()")
+        if stage.stage_id in tail_stage_ids:
+            e.add(f"        launch_parallel[{plan.kernel_name}.stage_{stage.stage_id}_tail]()")
     e.add()
     e.add()
     return twiddle_table
