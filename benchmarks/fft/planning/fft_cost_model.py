@@ -30,28 +30,45 @@ from planning.target_profile import TargetProfile
 #
 # * 6, 9: fft_plan_core._prime_factors_supported's own comment documents
 #   the concrete N=54=(6,9) spill this was originally based on (radix-9
-#   stage, preceded by radix-6). Note this isn't universal, though: a
-#   direct (4, 9) chain (N=36, forced via allowed_radix_composites) built
-#   and ran clean, zero spill -- so whatever makes radix-9 risky here
-#   depends on more than "radix 9 in a non-first position" alone (likely
-#   something about what precedes it, e.g. radix-6's own address/register
-#   shape specifically), which this per-stage-radix-only model has no way
-#   to represent. Kept flagged anyway since the known-bad N=54 combination
-#   is real and this heuristic can only be conservative, not precise.
+#   stage, preceded by radix-6). Not universal: a direct (4, 9) chain
+#   (N=36, forced via allowed_radix_composites) built and ran clean, zero
+#   spill, and 6/9 standalone (N=6, N=9) are clean too -- so whatever
+#   makes this pairing risky depends on the specific (6, 9) sequence, not
+#   "radix 6 or 9 in a non-first position" alone, which this per-stage-
+#   radix-only model has no way to represent. Kept flagged anyway since
+#   the known-bad N=54 combination is real. Root cause confirmed 2026-08-27
+#   (see codegen.fft_codegen._ALWAYS_NARROW_RADICES's own comment): the
+#   same M2NDP-Detour `ReadCsr` vlenb gap as 10/11/13/17 below --
+#   compute_lanes=1 (not codegen's own narrow_middle_stages default, which
+#   only halves, and only for a genuine middle stage; N=54=(6,9) is a
+#   2-stage kernel, so its radix-9 stage is technically "last") confirmed
+#   clean by direct probe. Not added to _ALWAYS_NARROW_RADICES itself,
+#   since that would also floor the confirmed-clean standalone/first-stage
+#   uses of 6 and 9 to compute_lanes=1 for no benefit -- a caller who
+#   explicitly reaches for the wide radix tier (fft_plan_search.py's
+#   _WIDE_RADIX_TIER) and lands on this exact (6, 9) sequence should pass
+#   --compute-lanes 1 explicitly until this gets its own narrower,
+#   sequence-aware fix.
 # * 11, 13, 17: confirmed by direct probe (each forced into a (4, r)
 #   chain -- N=44, N=52, N=68 respectively, r as the second/scratchpad-
 #   reading stage): all three spill *and* silently produce an all-zero
-#   (wrong, not just slow) result. Previously unflagged here entirely
-#   (radix_risk_score reported 0.0 for any N landing one of these in a
-#   non-first stage) -- a real correctness gap, not just a missed
-#   optimization.
+#   (wrong, not just slow) result -- and, unlike 6/9, confirmed risky even
+#   completely alone (N=11/13/17 as a standalone single-stage kernel,
+#   2026-08-27), so reclassified here from _NON_FIRST_STAGE_RISKY_RADICES
+#   to _ALWAYS_RISKY_RADICES: the earlier classification undersold the
+#   real risk, since it was only ever probed embedded in a (4, r) chain.
+#   Fixed at the codegen level by `narrow_middle_stages`'s own unconditional
+#   floor-to-1 for these radices (see codegen.fft_codegen.
+#   _ALWAYS_NARROW_RADICES) -- this risk_score term stays anyway as a
+#   cost-model-visible signal independent of whether that codegen fix is
+#   in effect for a given render.
 #
 # `10` fails outright at *any* stage position (N=160/320, and reconfirmed
 # by the same probe as (4, 10) = N=40 -- spills and mismatches even
-# directly after a radix-4 first stage, unlike 6/9's apparently
-# context-dependent failure) -- see the same fft_plan_core comment.
-_NON_FIRST_STAGE_RISKY_RADICES = frozenset({6, 9, 11, 13, 17})
-_ALWAYS_RISKY_RADICES = frozenset({10})
+# directly after a radix-4 first stage) -- see the same fft_plan_core
+# comment. Same fix and same root cause as 11/13/17 above.
+_NON_FIRST_STAGE_RISKY_RADICES = frozenset({6, 9})
+_ALWAYS_RISKY_RADICES = frozenset({10, 11, 13, 17})
 
 # Real M2NDP runs (benchmark_fft_candidates.sh, --batch sweep at N=1024 plus
 # one N=16384 point) of a transpose stage's own total_uthreads vs. whether a

@@ -161,7 +161,7 @@ def make_fft_kernel(
 
     `narrow_middle_stages`: `True` (the default) halves `compute_lanes`
     (floor 1) for a leaf/near-FFT stage that is neither its own kernel's
-    first nor last stage -- the one shape a real N=630 register-pressure
+    first nor last stage -- the shape a real N=630 register-pressure
     failure was isolated to (see generate_recursive_fft_kernels's own
     docstring): even `compute_lanes=4` (this target's documented default)
     still spilled there, via a `csrr ..., vlenb` dynamic spill-slot read
@@ -171,7 +171,15 @@ def make_fft_kernel(
     spill was gone. This targets the actual liability directly, at no
     correctness cost (every `verify_fft_*.py` case already covers every
     `compute_lanes` this can produce) -- pass `False` to compare against
-    the old flat-`compute_lanes` shape.
+    the old flat-`compute_lanes` shape for this liability specifically.
+
+    A *second*, unconditional liability -- radix 10/11/13/17's own operand
+    count alone spills the same way regardless of stage position
+    (N=11/13/17 confirmed MISMATCH standalone, no middle stage involved at
+    all) -- is not controlled by this flag at all (see fft_codegen.
+    _ALWAYS_NARROW_RADICES's own comment): this project has never confirmed
+    those radices clean at compute_lanes=4 in any configuration, so
+    `narrow_middle_stages=False` still narrows a stage using one of them.
     """
     if n < 2:
         # A length-1 "FFT" needs zero radix stages, which _build_plan/
@@ -293,9 +301,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--no-narrow-middle-stages", action="store_true",
         help="disable halving --compute-lanes (floor 1) for a stage that is "
         "neither its own kernel's first nor last -- default: on, since this "
-        "is the one shape a real N=630 register-pressure failure was isolated "
+        "is the shape a real N=630 register-pressure failure was isolated "
         "to (see make_fft_kernel's own narrow_middle_stages docstring); pass "
-        "this to compare against the old flat-compute_lanes code shape",
+        "this to compare against the old flat-compute_lanes code shape. Does "
+        "NOT affect radix 10/11/13/17, which are always narrowed regardless "
+        "of stage position -- see the same docstring",
     )
     parser.add_argument("--tile-rows", type=int, default=None, help="transpose tile rows (default: planner's own choice)")
     parser.add_argument("--tile-cols", type=int, default=None, help="transpose tile cols (default: planner's own choice)")

@@ -558,40 +558,89 @@ def _emit_batch(
     e.add()
 
 
-def _stage_compute_lanes(
-    *, compute_lanes: int | None, is_first: bool, is_last: bool, narrow_middle_stages: bool
-) -> int | None:
-    """`narrow_middle_stages`'s own per-stage policy: a *middle* stage
-    (neither first nor last) is the one shape every confirmed register-
-    pressure failure on this target actually shares -- it both reads its
-    operands out of scratchpad (like any non-first stage) AND writes its
-    own twiddled output back to scratchpad in the same pass (like any
-    non-last stage), so it carries the load+twiddle+store state of both at
-    once. `fft_plan_core._prime_factors_supported`'s own N=54=(6,9) note
-    and this project's own N=630 real-hardware isolation (FFTRecNear0's
-    radix-5 stage_1, itself neither first nor last) are two independent
-    confirmed cases of exactly this shape spilling -- a first or last
-    stage never has both halves of that liability (a first stage's own
-    input is DRAM, not scratchpad; a last stage never has a twiddled
-    scratchpad store, see `layouts_for_radices`), so this only ever
-    narrows where the actual liability lives, not uniformly across a
-    whole kernel the way a caller picking one global `compute_lanes` for
-    everything has to.
+# A big radix's own butterfly needs roughly one pair of SIMD registers per
+# operand loaded (real+imag) before it can compute a single output -- for
+# a fully unrolled O(radix) DFT-matrix butterfly (see fft_butterflies.py),
+# that liability is in the *operand count itself*, not the SIMD width of
+# any one register, so it exists regardless of stage position (unlike the
+# middle-stage-only liability `narrow_middle_stages` targets below) *and*
+# doesn't respond to a simple halving the way that liability does.
+# Confirmed by direct real-hardware probe, each as a **standalone,
+# single-stage kernel** (first and last stage at once, no scratchpad
+# involved at all -- the narrowest possible context, ruling out every
+# other explanation): N=11/13/17 alone all MISMATCH at compute_lanes=4
+# with the exact same `csrr ..., vlenb` dynamic-spill-slot shape as
+# FFTRecNear0's radix-5 stage_1 (N=630) -- the same M2NDP-Detour `ReadCsr`
+# gap (see generate_recursive_fft_kernels' own narrow_middle_stages
+# docstring), reached by a different route. Critically, *halving*
+# compute_lanes (4->2) does NOT fix this the way it fixed the middle-stage
+# case: N=11 at compute_lanes=2 still MISMATCHES, byte-for-byte the same
+# failure as compute_lanes=4 -- only compute_lanes=1 (fully scalar, no
+# SIMD width left to reduce) passes. So these radices are floored to `1`
+# outright below, not merely halved. `10` was already known always-risky
+# (fft_plan_core._prime_factors_supported's own comment, N=160/320);
+# 11/13/17 were previously only flagged as risky *as a non-first stage*
+# (fft_cost_model._NON_FIRST_STAGE_RISKY_RADICES, now corrected to
+# fft_cost_model._ALWAYS_RISKY_RADICES to match this) -- that
+# classification undersold the actual risk, since it was only ever probed
+# embedded in a (4, r) chain, never standing completely alone. radix 5/7
+# (also multi-operand, but smaller) are NOT here: N=15/21/35/45 etc. all
+# ran clean standalone or as a first/last stage (see verify_fft_plan.py's
+# own recursive_cases and this session's real-hardware N=630 isolation)
+# -- their own risk is confirmed only in the middle-stage shape
+# `narrow_middle_stages` already covers (and a halving is enough there),
+# so adding them here would floor real N's that have never actually
+# failed all the way to fully scalar for no benefit.
+_ALWAYS_NARROW_RADICES = frozenset({10, 11, 13, 17})
 
-    Halves the caller's own already-decided `compute_lanes` (floor 1) --
-    a deliberately coarse, general reduction (not a per-radix allowlist
-    like `fft_cost_model._NON_FIRST_STAGE_RISKY_RADICES`, since this
-    project only has two confirmed data points, not a validated full
-    radix census) that trades a somewhat wider chunked loop for
-    materially less live register state at the exact point every known
-    failure sits. `None` (no explicit compute_lanes -- "render at
-    plan.simd_lanes", today's oldest behavior) is left alone: there is no
-    already-decided width to halve, and a caller passing `None` has
-    already opted out of every compute_lanes-driven safety choice.
+
+def _stage_compute_lanes(
+    *, compute_lanes: int | None, is_first: bool, is_last: bool, radix: int,
+    narrow_middle_stages: bool,
+) -> int | None:
+    """Two independent reasons to narrow the caller's own already-decided
+    `compute_lanes`, each with its own confirmed-sufficient reduction --
+    both can apply at once (e.g. a radix-11 middle stage), in which case
+    the floor-to-1 wins since it's the stronger of the two:
+
+    1. `narrow_middle_stages` and this is a *middle* stage (neither first
+       nor last): the one shape every confirmed register-pressure failure
+       driven by *stage position* shares -- it both reads its operands
+       out of scratchpad (like any non-first stage) AND writes its own
+       twiddled output back to scratchpad in the same pass (like any
+       non-last stage), so it carries the load+twiddle+store state of
+       both at once. `fft_plan_core._prime_factors_supported`'s own
+       N=54=(6,9) note and this project's own N=630 real-hardware
+       isolation (FFTRecNear0's radix-5 stage_1) are two independent
+       confirmed cases, and a plain *halving* (floor 1) was confirmed
+       sufficient there (N=630 passes real hardware at the halved width).
+       A first or last stage never has both halves of this liability (a
+       first stage's own input is DRAM, not scratchpad; a last stage
+       never has a twiddled scratchpad store, see `layouts_for_radices`)
+       -- gated by `narrow_middle_stages` since a caller may want to
+       compare against the old flat-compute_lanes shape.
+    2. `stage.radix in _ALWAYS_NARROW_RADICES` (see that set's own
+       comment): a register-pressure failure driven by *operand count
+       alone*, confirmed even at a stage that is neither non-first nor
+       non-last -- unconditional, not gated by `narrow_middle_stages`.
+       Unlike reason 1, a halving is *not* enough here (N=11 still
+       MISMATCHES at compute_lanes=2) -- only `compute_lanes=1` was
+       confirmed clean, so this floors outright rather than halving.
+
+    `None` (no explicit compute_lanes -- "render at plan.simd_lanes",
+    today's oldest behavior) is left alone regardless of either reason:
+    there is no already-decided width to narrow, and a caller passing
+    `None` has already opted out of every compute_lanes-driven safety
+    choice.
     """
-    if not narrow_middle_stages or compute_lanes is None or is_first or is_last:
+    if compute_lanes is None:
         return compute_lanes
-    return max(1, compute_lanes // 2)
+    if radix in _ALWAYS_NARROW_RADICES:
+        return 1
+    is_middle = not is_first and not is_last
+    if narrow_middle_stages and is_middle:
+        return max(1, compute_lanes // 2)
+    return compute_lanes
 
 
 def _emit_stage(
@@ -613,7 +662,7 @@ def _emit_stage(
     is_first = stage.stage_id == 0
     is_last = stage.stage_id == len(plan.stages) - 1
     compute_lanes = _stage_compute_lanes(
-        compute_lanes=compute_lanes, is_first=is_first, is_last=is_last,
+        compute_lanes=compute_lanes, is_first=is_first, is_last=is_last, radix=stage.radix,
         narrow_middle_stages=narrow_middle_stages,
     )
 

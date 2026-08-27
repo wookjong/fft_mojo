@@ -636,18 +636,28 @@ def generate_recursive_fft_kernels(
     width story (ki_near/ki_far, see this module's own docstring) that
     this does not touch.
 
-    `narrow_middle_stages`: see `fft_codegen._stage_compute_lanes`. `False`
-    (the default) leaves every leaf/near-FFT stage at `compute_lanes`
-    unchanged. `True` halves it (floor 1) for a stage that is neither its
-    own kernel's first nor last -- the one shape a real N=630 register-
-    pressure failure was isolated to this session (a `csrr ..., vlenb`
-    dynamic spill-slot read the M2NDP-Detour simulator's `ReadCsr` silently
-    answers `0` for, corrupting the stack) even at `compute_lanes=4`, this
-    target's documented "safe" default; narrower `compute_lanes` alone
-    (2 or 1) also happened to avoid it, but only by accident of which
-    spill *shape* the compiler picked, not because the underlying spill
-    was gone. This targets the actual liability directly instead of
-    hoping a narrower global width dodges it.
+    `narrow_middle_stages`: see `fft_codegen._stage_compute_lanes` -- two
+    independent reasons to halve `compute_lanes` (floor 1) live there, and
+    only one is gated by this flag. `False` (the default here; `True` in
+    make_fft_kernel.py) leaves a stage that is neither its own kernel's
+    first nor last at the caller's own `compute_lanes` -- the shape a real
+    N=630 register-pressure failure was isolated to this session (a
+    `csrr ..., vlenb` dynamic spill-slot read the M2NDP-Detour simulator's
+    `ReadCsr` silently answers `0` for, corrupting the stack) even at
+    `compute_lanes=4`, this target's documented "safe" default; narrower
+    `compute_lanes` alone (2 or 1) also happened to avoid it, but only by
+    accident of which spill *shape* the compiler picked, not because the
+    underlying spill was gone.
+
+    The *other* reason -- `stage.radix in fft_codegen._ALWAYS_NARROW_
+    RADICES` (the same `vlenb` gap, reached by a big radix's own operand
+    count instead of stage position: N=11/13/17 standalone all confirmed
+    MISMATCH at compute_lanes=4, no scratchpad/middle-stage involvement at
+    all) -- is unconditional, regardless of this flag's own value: this
+    project has no configuration where that radix's own compute_lanes=4
+    rendering has ever been confirmed to run clean, so there is no "old
+    shape" for a caller to opt back into for it the way there is for the
+    middle-stage liability.
 
     `reference_check`: `True` (the default) keeps today's fully self-
     contained host check -- a direct O(N^2) DFT computed right here in the
