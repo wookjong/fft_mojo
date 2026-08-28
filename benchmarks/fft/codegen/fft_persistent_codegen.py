@@ -24,6 +24,49 @@ What is genuinely new here, not reused from anywhere else:
   `launch_parallel` phases -- see docs/persistent_leaf_design.md's
   "Exactly one host .launch()" section),
 * 256B-aligned launch-pool host allocation.
+
+## ROUND STATE IS RUNTIME, NOT A COMPILE-TIME CONSTANT PER ROUND
+
+The design doc's original text says `ROUND_BASE`/`ACTIVE_GROUPS` are
+"compile-time constants baked into each emitted round-specific phase
+function" -- i.e. one `preload_r0`/`preload_r1`/.../`stage_0_r0`/
+`stage_0_r1`/... function per (phase, round) pair. **This does not work**:
+the M2NDP-Detour simulator caps how many *distinct* kernel functions one
+`NDPTask` may register at all, ever, for the lifetime of one host
+`.launch()` -- `max_kernel_register=8` in
+third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config, enforced
+by `UThreadGenerator::can_register()` (third_party/m2ndp-detour/src/
+uthread_generator.cc) and asserted in `NdpUnit::register_ndp_kernel`
+(ndp_unit.cc:143). A task's own kernels are registered once, at
+`.launch()` time, and only unregistered when the *whole task* finishes
+(`M2NDP::unregister_task`, m2ndp.cc) -- never per `launch_parallel` call.
+Confirmed the hard way on real hardware: N=64 (3 stages) at 2 rounds
+needs `(2 + 3) * 2 = 10` distinct functions under the per-round-baked
+scheme, and the 9th registration attempt aborts the whole simulator
+(`Assertion 'can_register()' failed`), a toolchain-level crash, not a
+graceful error.
+
+**The fix, confirmed working on real hardware** (see
+`/tmp/.../round_tracker_experiment.py` in this session's own scratchpad,
+not kept in-repo): exactly one function per *phase* (`preload`,
+`stage_0`, ..., `stage_{k-1}`, `writeback` -- `2 + stage_count` distinct
+kernels total, independent of round count, comfortably under the cap for
+every N this design supports at all, since `stage_count` is small by
+construction -- see `make_persistent_leaf_plan`'s own scratchpad-capacity
+bound). Round state lives in a 1-element **scratchpad** counter
+(`round_tracker`, one independent instance per physical NDP unit, zero-
+initialized) that only `writeback` increments -- after every phase in
+that round has already read it, so within one round every phase sees the
+same `round_index`. `device_main` simply calls the *same* small function
+set `rounds` times in sequence; there is no way, and no need, for
+`device_main` itself to touch `Kernel.params[]` (a real attempt to do
+that failed with `"the M2NDP scratchpad is a kernel's, and this function
+is not launched"` -- `params[]` access appears to require the accessing
+function to itself be a `launch_parallel` target, which `device_main`
+is not). Confirmed on real hardware that repeated `launch_parallel[Kernel.
+same_fn]()` calls to the *same* target still fully barrier between calls
+(round N+1's read never races round N's write) -- this is what makes the
+whole scheme race-free.
 """
 
 from codegen.common import (
@@ -34,7 +77,7 @@ from codegen.common import (
 )
 from codegen.fft_codegen import _emit_stage_batches, _stage_compute_lanes
 from planning.fft_plan_core import FFTCodegenPlan, FFTStagePlan
-from planning.fft_plan_persistent import num_rounds, round_active_groups
+from planning.fft_plan_persistent import num_rounds
 
 
 def _worker_body(
@@ -95,13 +138,36 @@ def _emit_worker_dispatch(
             e.add("    " + line if line else "")
 
 
+def _round_tracker_name(plan: FFTCodegenPlan) -> str:
+    return _spad(plan.kernel_name, "round_tracker")
+
+
 def _emit_dispatch_prelude(
-    e: Emitter, *, workers_per_group: int, active_groups: int
+    e: Emitter, *, plan: FFTCodegenPlan, workers_per_group: int,
+    software_group_count: int, num_logical_blocks: int, bump_round: bool,
 ) -> None:
+    """Every phase function's shared entry sequence: derive `gid`/
+    `software_group_id`/`worker_id` (unchanged), then read this round's
+    own `round_base`/`active_groups` from the per-unit scratchpad
+    `round_tracker` instead of a compile-time-baked literal -- see this
+    module's own top-of-file docstring for why. `bump_round=True`
+    (writeback only) advances the tracker for the *next* round, gated the
+    same way every other worker-disjoint write in this design is (exactly
+    one worker per active group, after that group's own real work for
+    this round is done -- appended by the caller, not here; this only
+    emits the read side, common to every phase).
+    """
+    tracker = _round_tracker_name(plan)
     e.add("        var gid = global_uthread_id()")
     e.add(f"        var software_group_id = gid // {workers_per_group}")
     e.add(f"        var worker_id = gid % {workers_per_group}")
-    e.add(f"        if software_group_id >= {active_groups}:")
+    e.add(f"        var round_index = Int({tracker}.load[DType.float32, 1](0)[0])")
+    e.add(f"        var round_base = round_index * {software_group_count}")
+    e.add(f"        var active_groups = {software_group_count}")
+    e.add(f"        var remaining_blocks = {num_logical_blocks} - round_base")
+    e.add("        if remaining_blocks < active_groups:")
+    e.add("            active_groups = remaining_blocks")
+    e.add("        if software_group_id >= active_groups:")
     e.add("            return")
 
 
@@ -109,8 +175,8 @@ def emit_stage_phase(
     *,
     plan: FFTCodegenPlan,
     stage: FFTStagePlan,
-    round_index: int,
-    active_groups: int,
+    software_group_count: int,
+    num_logical_blocks: int,
     workers_per_group: int,
     compute_lanes: int | None = 4,
     narrow_middle_stages: bool = True,
@@ -119,7 +185,9 @@ def emit_stage_phase(
     -- the same "translate exactly what would be emitted, from a small
     self-contained snippet" shape verify_fft_harness._translate_stage
     already uses, so verification/verify_fft_persistent.py can translate
-    and exec these lines directly without re-deriving anything.
+    and exec these lines directly without re-deriving anything. One
+    function total per stage (not one per round) -- see this module's own
+    top docstring for why.
 
     `compute_lanes`/`narrow_middle_stages`: resolved through the *exact
     same* `_stage_compute_lanes` fft_codegen.py's plain/cooperative paths
@@ -143,12 +211,16 @@ def emit_stage_phase(
     )
 
     e = Emitter()
-    name = f"stage_{stage.stage_id}_r{round_index}"
+    name = f"stage_{stage.stage_id}"
     e.add("    @staticmethod")
     e.add(f"    def {name}():")
     e.add(f"        ref p = {plan.kernel_name}.params[]")
     e.add(f"        comptime RADIX = {stage.radix}")
-    _emit_dispatch_prelude(e, workers_per_group=workers_per_group, active_groups=active_groups)
+    _emit_dispatch_prelude(
+        e, plan=plan, workers_per_group=workers_per_group,
+        software_group_count=software_group_count, num_logical_blocks=num_logical_blocks,
+        bump_round=False,
+    )
     e.add("        var spad_base = 0")
     e.add()
     _emit_worker_dispatch(
@@ -164,11 +236,12 @@ def emit_bulk_copy_phase(
     *,
     plan: FFTCodegenPlan,
     name: str,
-    round_index: int,
-    active_groups: int,
+    software_group_count: int,
+    num_logical_blocks: int,
     workers_per_group: int,
     to_scratchpad: bool,
     buffer_name: str,
+    bump_round: bool,
 ) -> tuple[str, list[str]]:
     """Preload (`to_scratchpad=True`) or writeback (`False`): every worker
     in an active software group copies a disjoint, strided slice
@@ -180,14 +253,25 @@ def emit_bulk_copy_phase(
     first per docs/persistent_leaf_design.md's own priority order --
     vectorizing this loop is a real follow-up performance opportunity,
     not attempted here.
+
+    `bump_round`: writeback only -- after this group's own real copy work
+    is done, worker 0 advances the *this physical unit's own* round
+    tracker by one, so the next call to `preload`/`stage_*`/`writeback`
+    (device_main's next round in sequence) sees `round_index + 1`. Every
+    other phase in the *same* round already read the old value before
+    this runs (writeback is always last), so this is race-free -- see
+    this module's own top docstring.
     """
     e = Emitter()
-    full_name = f"{name}_r{round_index}"
     e.add("    @staticmethod")
-    e.add(f"    def {full_name}():")
+    e.add(f"    def {name}():")
     e.add(f"        ref p = {plan.kernel_name}.params[]")
-    _emit_dispatch_prelude(e, workers_per_group=workers_per_group, active_groups=active_groups)
-    e.add(f"        var logical_block = {round_index * plan.persistent.software_group_count} + software_group_id")
+    _emit_dispatch_prelude(
+        e, plan=plan, workers_per_group=workers_per_group,
+        software_group_count=software_group_count, num_logical_blocks=num_logical_blocks,
+        bump_round=bump_round,
+    )
+    e.add("        var logical_block = round_base + software_group_id")
     e.add(f"        var block_base = logical_block * {plan.length}")
     e.add("        var i = worker_id")
     e.add(f"        while i < {plan.length}:")
@@ -203,9 +287,13 @@ def emit_bulk_copy_phase(
         e.add("            p.output_real_base.store(block_base + i, vr)")
         e.add("            p.output_imag_base.store(block_base + i, vi)")
     e.add(f"            i += {workers_per_group}")
+    if bump_round:
+        tracker = _round_tracker_name(plan)
+        e.add("        if worker_id == 0:")
+        e.add(f"            {tracker}.store(0, Float32(round_index) + Float32(1))")
     e.add()
     e.add()
-    return full_name, e.lines
+    return name, e.lines
 
 
 def _emit_params_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
@@ -224,9 +312,11 @@ def generate_persistent_fft_kernel(
     compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
 ) -> str:
     """Render a full persistent-software-workgroup FFT: one `NDPTask`
-    struct, one host-level `.launch()`, `device_main` unrolling every
-    `preload_rX -> stage_*_rX -> writeback_rX` phase for every round
-    Python-side. `plan` must come from
+    struct, one host-level `.launch()`, exactly `2 + len(plan.stages)`
+    distinct kernel functions (`preload`, `stage_0`, ..., `writeback`;
+    see this module's own top docstring for why round-specific functions
+    don't work), `device_main` calling that same small function set once
+    per round in the right order. `plan` must come from
     `planning.fft_plan_persistent.make_persistent_leaf_plan` (i.e.
     `plan.persistent is not None`); `num_logical_blocks` must match what
     that call was given (checked below, not re-derived, since
@@ -250,6 +340,15 @@ def generate_persistent_fft_kernel(
     workers_per_group = pw.workers_per_group
     software_group_count = pw.software_group_count
     rounds = num_rounds(num_logical_blocks, software_group_count)
+    num_kernels = 2 + len(plan.stages)
+    if num_kernels > 8:
+        raise ValueError(
+            f"this plan needs {num_kernels} distinct kernel functions "
+            f"(preload + {len(plan.stages)} stages + writeback), but the M2NDP-"
+            f"Detour simulator's max_kernel_register=8 caps one task's total "
+            f"registered kernels regardless of round count -- see this module's "
+            f"own top-of-file docstring"
+        )
 
     buffer_names = tuple(b.name for b in plan.scratchpad_buffers)
     assert buffer_names == ("buf_a", "buf_b"), buffer_names
@@ -269,44 +368,48 @@ def generate_persistent_fft_kernel(
             f'    comptime {buffer.name} = scratchpad[{buffer.elements}, Float32, '
             f'name="{plan.kernel_name.lower()}_{buffer.name}"]()'
         )
+    # One instance per physical NDP unit (like buf_a/buf_b), zero-
+    # initialized -- confirmed real-hardware (a from-scratch experiment,
+    # not kept in this repo): every unit's own first read before any
+    # write returns 0, matching every other scratchpad buffer's own
+    # zero-init behavior in this codebase.
+    e.add(
+        f'    comptime round_tracker = scratchpad[1, Float32, '
+        f'name="{plan.kernel_name.lower()}_round_tracker"]()'
+    )
     e.add()
 
-    phase_names: list[list[str]] = []
-    for r in range(rounds):
-        active_groups = round_active_groups(r, num_logical_blocks, software_group_count)
-        this_round: list[str] = []
+    phase_names: list[str] = []
 
-        name, lines = emit_bulk_copy_phase(
-            plan=plan, name="preload", round_index=r, active_groups=active_groups,
-            workers_per_group=workers_per_group, to_scratchpad=True,
-            buffer_name=buffer_names[0],
+    name, lines = emit_bulk_copy_phase(
+        plan=plan, name="preload", software_group_count=software_group_count,
+        num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
+        to_scratchpad=True, buffer_name=buffer_names[0], bump_round=False,
+    )
+    e.lines.extend(lines)
+    phase_names.append(name)
+
+    for stage in plan.stages:
+        name, lines = emit_stage_phase(
+            plan=plan, stage=stage, software_group_count=software_group_count,
+            num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
+            compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         )
         e.lines.extend(lines)
-        this_round.append(name)
+        phase_names.append(name)
 
-        for stage in plan.stages:
-            name, lines = emit_stage_phase(
-                plan=plan, stage=stage, round_index=r, active_groups=active_groups,
-                workers_per_group=workers_per_group,
-                compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
-            )
-            e.lines.extend(lines)
-            this_round.append(name)
-
-        name, lines = emit_bulk_copy_phase(
-            plan=plan, name="writeback", round_index=r, active_groups=active_groups,
-            workers_per_group=workers_per_group, to_scratchpad=False,
-            buffer_name=final_buffer,
-        )
-        e.lines.extend(lines)
-        this_round.append(name)
-
-        phase_names.append(this_round)
+    name, lines = emit_bulk_copy_phase(
+        plan=plan, name="writeback", software_group_count=software_group_count,
+        num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
+        to_scratchpad=False, buffer_name=final_buffer, bump_round=True,
+    )
+    e.lines.extend(lines)
+    phase_names.append(name)
 
     e.add("    @staticmethod")
     e.add("    def device_main():")
-    for this_round in phase_names:
-        for phase in this_round:
+    for _ in range(rounds):
+        for phase in phase_names:
             e.add(f"        launch_parallel[{plan.kernel_name}.{phase}]()")
     e.add()
     e.add()

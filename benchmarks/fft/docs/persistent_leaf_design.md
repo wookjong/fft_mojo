@@ -1,5 +1,58 @@
 # Persistent Software-Workgroup FFT Leaf (standalone, opt-in)
 
+## POST-IMPLEMENTATION CORRECTION (2026-08-28) -- read this first
+
+This design was implemented, and the section below titled **"Exactly one
+host `.launch()`"** is **factually wrong about how to achieve that
+requirement**, discovered via a real-hardware crash, not a design review.
+
+The doc says `ROUND_BASE`/`ACTIVE_GROUPS` are "compile-time constants
+baked into each emitted round-specific phase function" -- i.e. one
+`preload_r0`/`preload_r1`/.../`stage_0_r0`/`stage_0_r1`/... function per
+(phase, round) pair. **This does not work on the real simulator.**
+M2NDP-Detour caps how many *distinct* kernel functions one `NDPTask` may
+register at all, for the lifetime of one host `.launch()`:
+`max_kernel_register=8` (third_party/m2ndp-detour/config/performance/
+M2NDP/m2ndp.config), enforced by `UThreadGenerator::can_register()` and
+asserted in `NdpUnit::register_ndp_kernel` (ndp_unit.cc:143). A task's
+kernels are registered once at `.launch()` time and unregistered only
+when the whole task finishes -- never per `launch_parallel` call.
+Confirmed real-hardware: N=64 (3 stages) at 2 rounds needs `(2+3)*2=10`
+distinct functions under the scheme this doc originally specified; the
+9th registration attempt aborts the entire simulator process
+(`Assertion 'can_register()' failed`, a toolchain-level crash, not a
+graceful error) -- this was not caught by Python-level numeric
+verification, only by an actual build+run.
+
+**The fix, confirmed working on real hardware**: exactly one function
+per *phase* (`preload`, `stage_0`, ..., `stage_{k-1}`, `writeback` --
+`2 + stage_count` total, independent of round count). Round state lives
+in a 1-element **scratchpad** counter (`round_tracker`, one instance per
+physical NDP unit, zero-initialized) that only `writeback` increments,
+after every phase in that round has already read it. `device_main` calls
+the same small function set `rounds` times in sequence. `device_main`
+itself cannot touch `Kernel.params[]` at all -- a real attempt produced
+`"the M2NDP scratchpad is a kernel's, and this function is not
+launched"`; `params[]` access requires the accessing function to itself
+be a `launch_parallel` target. Confirmed on real hardware that all
+workers within one `launch_parallel` call (even across 32 independent
+physical units) see the tracker's pre-call value uniformly, including
+the same call where worker 0 also writes it -- this is what makes the
+scheme race-free; a **from-scratch numeric verification harness must
+freeze reads of this tracker for the duration of one phase call**, since
+a naive sequential Python re-execution (unlike the real hardware) does
+not provide that ordering on its own and will otherwise show a spurious
+corruption purely from harness iteration order, not a real bug.
+
+The "Exactly one host `.launch()`"/"Proving 'one host `.launch()`'"
+sections below are otherwise still the correct *requirement* -- only the
+specific mechanism for satisfying it (compile-time-constant round state)
+is wrong. See `codegen/fft_persistent_codegen.py`'s own top-of-file
+docstring for the actual implemented mechanism, and
+[[fft-persistent-leaf-design]] (memory) for the fuller incident writeup.
+
+---
+
 ## Context
 
 `/root/fft_mojo/benchmarks/fft/` needs a new, standalone, opt-in FFT leaf execution model: a fixed number of **persistent software workgroups** (`workers_per_group=8` workers each, one workgroup per physical NDP unit) that each own one physical scratchpad region and process **many logical FFT blocks sequentially, across rounds, inside one host-level launch** — instead of today's pattern where physical launch width scales with logical demand.

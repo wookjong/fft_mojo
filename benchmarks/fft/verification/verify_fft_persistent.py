@@ -13,11 +13,19 @@ only re-executed from the real generator output.
 outright -- that function's own group/round model (`group = global_id //
 max_uthread`, one stage launched once total) doesn't match the persistent
 model (`software_group_id = global_id // workers_per_group`, many rounds,
-three phase kinds per round) -- but it reuses that same module's
-`_translate_emitted_lines`/`Ptr`/`SimdVec`/`_simd` outright, and mirrors
-its "rebind the kernel-name namespace entry per group before calling"
-idiom (see `run_kernel`'s own docstring) with `software_group_id` in
-place of `global_id // max_uthread`.
+each phase function called once per round) -- but it reuses that same
+module's `_translate_emitted_lines`/`Ptr`/`SimdVec`/`_simd` outright, and
+mirrors its "rebind the kernel-name namespace entry per group before
+calling" idiom (see `run_kernel`'s own docstring) with `software_group_id`
+in place of `global_id // max_uthread`.
+
+Each phase is translated/compiled *once* (not once per round -- see
+codegen.fft_persistent_codegen's own top docstring for why round-specific
+functions don't work on the real simulator) and called `rounds` times in
+a row, exactly mirroring device_main's own repeated `launch_parallel`
+calls to the same function; round state threads through the same
+per-physical-unit `round_tracker` scratchpad cell the real generated code
+uses, not a Python-level round counter this harness invents separately.
 """
 
 import sys
@@ -32,12 +40,45 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codegen.fft_persistent_codegen import emit_bulk_copy_phase, emit_stage_phase
 from planning.fft_plan_core import FFTCodegenPlan
-from planning.fft_plan_persistent import (
-    make_persistent_leaf_plan,
-    num_rounds,
-    round_active_groups,
-)
-from verification.verify_fft_harness import Ptr, _simd, _translate_emitted_lines
+from planning.fft_plan_persistent import make_persistent_leaf_plan, num_rounds
+from verification.verify_fft_harness import Ptr, SimdVec, _simd, _translate_emitted_lines
+
+
+class _FrozenReadPtr:
+    """Wraps one group's `round_tracker` for the duration of a single
+    phase's own `launch_parallel` call: every worker's `.load(...)` sees
+    the value as of the *start* of this call, regardless of the order
+    this harness happens to iterate workers in -- matching real
+    hardware's own apparent guarantee (confirmed via a from-scratch
+    real-hardware experiment this session, not kept in-repo: every one
+    of 256 workers across 32 independent physical units read the
+    identical tracker value within one `launch_parallel` call, even
+    though worker_id==0 of each group also writes that same tracker
+    within the same call). `.store(...)` writes straight through to the
+    real `Ptr`, so the write is visible starting the *next* phase call --
+    only same-call visibility is frozen. This harness runs workers in a
+    plain sequential Python loop (`run_kernel`'s own established
+    idiom -- see its docstring), which has no such same-call ordering
+    guarantee on its own; without this wrapper, worker 0's own bump
+    would leak into worker 1..7's reads later in the same loop, purely
+    an artifact of this harness's own execution order, not a real race.
+    Only `round_tracker` needs this: `buf_a`/`buf_b` are never read and
+    written by different workers within the same phase call (preload
+    writes buf_a but never reads it; a stage reads buf[i%2]/writes
+    buf[(i+1)%2], never the same bank in one call) -- see
+    codegen.fft_persistent_codegen's own top docstring.
+    """
+
+    def __init__(self, snapshot: "np.ndarray", real: Ptr) -> None:
+        self._snapshot = snapshot
+        self._real = real
+
+    def load(self, offset: int, width: int) -> SimdVec:
+        offset = int(offset)
+        return self._snapshot[offset : offset + int(width)].copy().view(SimdVec)
+
+    def store(self, offset: int, value) -> None:
+        self._real.store(offset, value)
 
 
 def run_persistent_kernel(
@@ -64,6 +105,11 @@ def run_persistent_kernel(
         ns = types.SimpleNamespace()
         for buf in plan.scratchpad_buffers:
             setattr(ns, buf.name, Ptr(buf.elements))
+        # One independent round_tracker per physical unit, zero-initialized
+        # -- matches codegen.fft_persistent_codegen's own scratchpad
+        # round_tracker exactly (see that module's own top docstring for
+        # why round state lives here instead of a compile-time constant).
+        ns.round_tracker = Ptr(1)
         group_namespaces.append(ns)
 
     p_ns = types.SimpleNamespace(
@@ -75,10 +121,11 @@ def run_persistent_kernel(
 
     current = {"global_id": 0}
 
-    def run_phase(name: str, lines: list[str]) -> None:
+    def compile_phase(name: str, lines: list[str]):
         src = _translate_emitted_lines(lines)
         namespace = {
             "Float32": float,
+            "Int": int,
             "SIMD": _simd,
             "global_uthread_id": lambda: current["global_id"],
             "N": plan.length,
@@ -87,41 +134,59 @@ def run_persistent_kernel(
         }
         code = compile(src, f"<{plan.kernel_name} {name}>", "exec")
         exec(code, namespace)
-        fn = namespace[name]
+        return namespace, namespace[name]
+
+    def run_phase(namespace: dict, fn) -> None:
+        # Fresh frozen round_tracker snapshot for THIS phase call only --
+        # see _FrozenReadPtr's own docstring. buf_a/buf_b pass straight
+        # through (same real Ptr every group already holds).
+        phase_views = [
+            types.SimpleNamespace(
+                round_tracker=_FrozenReadPtr(ns.round_tracker.arr.copy(), ns.round_tracker),
+                **{buf.name: getattr(ns, buf.name) for buf in plan.scratchpad_buffers},
+            )
+            for ns in group_namespaces
+        ]
         for global_id in range(launch_uthreads):
             current["global_id"] = global_id
             software_group_id = global_id // workers_per_group
-            namespace[plan.kernel_name] = group_namespaces[software_group_id]
+            namespace[plan.kernel_name] = phase_views[software_group_id]
             fn()
 
     buffer_names = tuple(b.name for b in plan.scratchpad_buffers)
     final_buffer = buffer_names[len(plan.stages) % 2]
     rounds = num_rounds(num_logical_blocks, software_group_count)
 
-    for r in range(rounds):
-        active_groups = round_active_groups(r, num_logical_blocks, software_group_count)
+    # Compile every phase exactly once -- mirrors the real generated
+    # device_main, which registers exactly 2+len(stages) kernel functions
+    # total and calls the *same* ones `rounds` times in sequence.
+    phases: list[tuple[dict, object]] = []
 
-        name, lines = emit_bulk_copy_phase(
-            plan=plan, name="preload", round_index=r, active_groups=active_groups,
-            workers_per_group=workers_per_group, to_scratchpad=True,
-            buffer_name=buffer_names[0],
+    name, lines = emit_bulk_copy_phase(
+        plan=plan, name="preload", software_group_count=software_group_count,
+        num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
+        to_scratchpad=True, buffer_name=buffer_names[0], bump_round=False,
+    )
+    phases.append(compile_phase(name, lines))
+
+    for stage in plan.stages:
+        name, lines = emit_stage_phase(
+            plan=plan, stage=stage, software_group_count=software_group_count,
+            num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
+            compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         )
-        run_phase(name, lines)
+        phases.append(compile_phase(name, lines))
 
-        for stage in plan.stages:
-            name, lines = emit_stage_phase(
-                plan=plan, stage=stage, round_index=r, active_groups=active_groups,
-                workers_per_group=workers_per_group,
-                compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
-            )
-            run_phase(name, lines)
+    name, lines = emit_bulk_copy_phase(
+        plan=plan, name="writeback", software_group_count=software_group_count,
+        num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
+        to_scratchpad=False, buffer_name=final_buffer, bump_round=True,
+    )
+    phases.append(compile_phase(name, lines))
 
-        name, lines = emit_bulk_copy_phase(
-            plan=plan, name="writeback", round_index=r, active_groups=active_groups,
-            workers_per_group=workers_per_group, to_scratchpad=False,
-            buffer_name=final_buffer,
-        )
-        run_phase(name, lines)
+    for _ in range(rounds):
+        for namespace, fn in phases:
+            run_phase(namespace, fn)
 
 
 def verify_persistent_leaf(
