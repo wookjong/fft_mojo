@@ -19,6 +19,8 @@ class TargetProfile:
     max_concurrent_scratchpad_bytes: int
     interleave_chunk_uthreads: int
     num_ndp_units: int = 32
+    uthread_bytes: int = 32
+    mapping_stride_bytes: int = 256
     supports_vector_spill: bool = False
 
 
@@ -87,6 +89,23 @@ DEFAULT_TARGET_PROFILE = TargetProfile(
     # its own scratchpad (`max_uthread`) was sized for. See
     # codegen.fft_transpose_codegen._safe_round_size.
     num_ndp_units=32,
+    # One microthread's own address span in the interleave-stride formula
+    # above -- `UTHREAD_SPAWN_UNIT` in the simulator / `VECTOR_WIDTH` in
+    # src/m2ndp.mojo, 32 bytes (8 Float32 lanes * 4 bytes). Was only
+    # implicit (hardcoded 32 in this comment and in downstream callers)
+    # until the persistent-workgroup-leaf design needed to state it as a
+    # real field rather than re-deriving it ad hoc -- see docs/
+    # persistent_leaf_design.md's own "Verified hardware facts" section.
+    uthread_bytes=32,
+    # `m_stride_size` in third_party/m2ndp-detour/src/m2ndp_config.h -- the
+    # real, independent config value `interleave_chunk_uthreads` above is
+    # itself derived from (`mapping_stride_bytes // uthread_bytes`). Kept
+    # as its own field (rather than only ever appearing as that derived
+    # ratio) so a caller can cross-check the two independently -- e.g.
+    # `make_persistent_leaf_plan`'s own target-mapping invariant checks
+    # (docs/persistent_leaf_design.md) -- instead of trusting they stay
+    # consistent by construction if either is ever edited alone.
+    mapping_stride_bytes=256,
     # Whether this target's toolchain can run a register-spill vector store
     # (`vs1r.v`) without panicking -- `False` here since M2NDP-Detour's
     # decoder does not implement it (see make_fft_kernel's own

@@ -196,11 +196,34 @@ def probe_spill_free(
     """
     if compute_lanes is None:
         compute_lanes = min(simd_lanes, target.lmul1_float32_lanes)
-    env = _toolchain_env(mojo_root=mojo_root, m2ndp_root=m2ndp_root)
     source = generate_recursive_fft_kernels(
         plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         reference_check=False, target=target, spread_across_units=spread_across_units,
     )
+    return probe_source_spill_free(
+        source, mojo_root=mojo_root, m2ndp_root=m2ndp_root,
+        build_timeout=build_timeout, run_timeout=run_timeout,
+    )
+
+
+def probe_source_spill_free(
+    source: str,
+    *,
+    mojo_root: str | None = None,
+    m2ndp_root: str | None = None,
+    build_timeout: float = 120.0,
+    run_timeout: float = 200.0,
+) -> SpillProbeResult:
+    """The real build+run+spill-scan core `probe_spill_free` uses,
+    factored out to accept already-generated Mojo source text directly --
+    for a caller whose plan doesn't come from `generate_recursive_fft_
+    kernels` at all (e.g. codegen.fft_persistent_codegen.
+    generate_persistent_fft_kernel's own persistent-workgroup source; see
+    docs/persistent_leaf_design.md's own "Spill/frame" testing section).
+    `probe_spill_free` itself is unchanged behaviorally -- it now just
+    calls this immediately after rendering its own source, instead of
+    duplicating the build/run/regex-scan steps inline."""
+    env = _toolchain_env(mojo_root=mojo_root, m2ndp_root=m2ndp_root)
 
     with tempfile.TemporaryDirectory(prefix="fft_spill_probe_") as work_str:
         work = Path(work_str)

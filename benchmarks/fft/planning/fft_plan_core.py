@@ -363,6 +363,22 @@ class FFTStagePlan:
     # (or whose own entry is empty) does nothing this stage.
     worker_batches: tuple[tuple[SIMDBatchPlan, ...], ...] | None = None
 
+    # Persistent-software-workgroup execution only (see PersistentWorkgroupPlan /
+    # fft_plan_persistent.py) -- a separate, non-overlapping partition from
+    # `worker_batches` above (never both set on the same plan). Full batches
+    # (`valid_lanes == simd_lanes`) assigned round-robin across vector
+    # workers; always length `workers_per_group`, indexed by worker id --
+    # a worker with an empty entry (including the scalar worker's own slot,
+    # when one exists this stage) does no vector arithmetic. `None`
+    # (every plan not built by make_persistent_leaf_plan): not a persistent
+    # plan, unchanged.
+    persistent_vector_batches: tuple[tuple[SIMDBatchPlan, ...], ...] | None = None
+    # Partial batches (`valid_lanes < simd_lanes`) assigned to this stage's
+    # own scalar worker (always the last worker, `workers_per_group - 1`)
+    # -- empty tuple if this stage has no tail batch at all. `None` together
+    # with `persistent_vector_batches is None`: not a persistent plan.
+    persistent_scalar_batches: tuple[SIMDBatchPlan, ...] | None = None
+
 
 @dataclass(frozen=True)
 class CooperationPlan:
@@ -393,6 +409,56 @@ class CooperationPlan:
 
     workers_per_fft: int
     fft_slots_per_group: int
+
+
+@dataclass(frozen=True)
+class PersistentWorkgroupPlan:
+    """Attached to a leaf `FFTCodegenPlan` (see `FFTCodegenPlan.persistent`)
+    when that leaf is executed by the persistent-software-workgroup model:
+    a fixed number of software groups, one per physical NDP unit, each
+    processing many logical FFT blocks sequentially across rounds inside
+    one host-level launch -- see fft_plan_persistent.py for the builder
+    and docs/persistent_leaf_design.md for the full design. Mirrors
+    `CooperationPlan`'s own pattern (a leaf-attached, opt-in execution-
+    model record) but is a wholly separate model: never combined with
+    `cooperation` on the same plan.
+
+    `stripes_per_group`/`workers_per_stripe`: the current implementation
+    only supports `stripes_per_group == 1` (one stripe covers the whole
+    group) -- kept as separate fields rather than collapsed into
+    `workers_per_group` so a future multi-stripe extension has somewhere
+    to land without reshaping this dataclass; any other value must be
+    rejected at plan-build time (see make_persistent_leaf_plan), never
+    silently accepted.
+
+    `workers_per_group`: must equal the target's own
+    `interleave_chunk_uthreads` -- the 8 consecutive global_uthread_id()s
+    making up one software group must exactly coincide with the 8
+    microthreads the hardware's own address interleaving places on one
+    physical NDP unit together (see docs/persistent_leaf_design.md's
+    "Worker / software-group / logical-block identity" section).
+
+    `software_group_count`: must equal the target's own `num_ndp_units`
+    -- one software group per physical unit, a permutation of units, not
+    necessarily group_id()-equal (see that same section).
+
+    `logical_block_stride`: the DRAM element stride between consecutive
+    logical FFT blocks -- always `length` for this design's natural
+    (unpermuted) preload/writeback order.
+
+    `scalar_worker_mode`: `"adaptive"` (a stage with no tail batch uses
+    every worker as a vector worker; a stage with a tail batch reserves
+    exactly the last worker as scalar) or `"reserved"` (the last worker
+    is always scalar-reserved, tail or not) -- see
+    docs/persistent_leaf_design.md's "Stage work partition" section.
+    """
+
+    stripes_per_group: int
+    workers_per_stripe: int
+    workers_per_group: int
+    software_group_count: int
+    logical_block_stride: int
+    scalar_worker_mode: Literal["adaptive", "reserved"]
 
 
 @dataclass(frozen=True)
@@ -481,6 +547,12 @@ class FFTCodegenPlan:
     # one uthread per whole sub-FFT, unchanged. See `CooperationPlan` /
     # fft_plan_cooperative.py.
     cooperation: CooperationPlan | None = None
+
+    # None (every plan not built by make_persistent_leaf_plan): not a
+    # persistent-software-workgroup plan, unchanged. See
+    # `PersistentWorkgroupPlan` / fft_plan_persistent.py. Never set
+    # together with `cooperation` -- separate execution models.
+    persistent: PersistentWorkgroupPlan | None = None
 
     def replicas_per_round(self) -> int:
         """How many *logical* replicas (independent sub-FFTs) one launch
@@ -688,9 +760,19 @@ def _make_load(
     valid_lanes: int,
     simd_lanes: int,
     dram_elem_stride: int = 1,
+    force_scratchpad: bool = False,
 ) -> LoadPlan:
-    source: LoadSource = "input" if first_stage else "scratchpad"
-    buffer_name = None if first_stage else read_buffer
+    """`force_scratchpad`: `False` (every existing caller) is exactly
+    today's behavior. `True` (the persistent-workgroup-leaf path only --
+    see planning/fft_plan_persistent.py) makes a `first_stage=True` load
+    read from scratchpad instead of DRAM input, preserving `base_offset`
+    and every other mathematical decision unchanged -- only `source`/
+    `buffer_name` move. See docs/persistent_leaf_design.md's own
+    "Fixed lowering approach -- force_scratchpad" section.
+    """
+    use_scratchpad = force_scratchpad or not first_stage
+    source: LoadSource = "scratchpad" if use_scratchpad else "input"
+    buffer_name = read_buffer if use_scratchpad else None
 
     if source == "scratchpad" and buffer_name is None:
         raise ValueError("scratchpad load requires a resolved buffer name")
@@ -767,23 +849,44 @@ def _make_store(
     valid_lanes: int,
     simd_lanes: int,
     dram_elem_stride: int = 1,
+    force_scratchpad: bool = False,
 ) -> StorePlan:
+    """`force_scratchpad`: `False` (every existing caller) is exactly
+    today's behavior. `True` (the persistent-workgroup-leaf path only --
+    see planning/fft_plan_persistent.py) makes a `last_stage=True` store
+    write scratchpad instead of DRAM output, preserving the natural-
+    final-order `base_offset` formula and every other mathematical
+    decision unchanged -- only `destination`/`buffer_name` move; the
+    intermediate-stage Stockham permutation formula below is untouched
+    and never used for a force_scratchpad last stage. Caller must pass
+    `dram_elem_stride=1` (the default) here -- a DRAM element stride is
+    meaningless once the destination is scratchpad. See
+    docs/persistent_leaf_design.md's own "Fixed lowering approach --
+    force_scratchpad" section.
+    """
     output_batch_base = simd_it * layout.output_batch_width
 
     if last_stage:
         base = (output_batch_base + output * layout.output_stride) * dram_elem_stride
+        destination: StoreDestination = "scratchpad" if force_scratchpad else "output"
+        buffer_name = write_buffer if force_scratchpad else None
+        if force_scratchpad and buffer_name is None:
+            raise ValueError(
+                "force_scratchpad last-stage store requires a resolved write buffer"
+            )
         # Symmetric with _make_load: a non-unit DRAM element stride (this
         # kernel's output_mapping is STRIDED) has no vector-store form.
-        if valid_lanes == simd_lanes and dram_elem_stride == 1:
+        # Irrelevant once force_scratchpad routes to scratchpad instead.
+        if valid_lanes == simd_lanes and (force_scratchpad or dram_elem_stride == 1):
             return StorePlan(
-                destination="output",
-                buffer_name=None,
+                destination=destination,
+                buffer_name=buffer_name,
                 mode="vector",
                 base_offset=base,
             )
         return StorePlan(
-            destination="output",
-            buffer_name=None,
+            destination=destination,
+            buffer_name=buffer_name,
             mode="scalar_lanes",
             lane_offsets=tuple(
                 base + lane * dram_elem_stride for lane in range(valid_lanes)
