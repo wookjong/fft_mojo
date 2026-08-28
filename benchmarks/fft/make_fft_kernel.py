@@ -40,7 +40,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
 from planning.fft_cost_model import estimate_cost, estimate_metrics
-from planning.fft_plan_recursive import RecursiveFFTPlan, make_recursive_transpose_plan
+from planning.fft_plan_recursive import (
+    PhysicalTransposePlan,
+    RecursiveFFTPlan,
+    flatten_recursive_node,
+    make_recursive_transpose_plan,
+)
 from planning.fft_plan_search import (
     FFTPlanCandidate,
     PlanChoices,
@@ -49,6 +54,44 @@ from planning.fft_plan_search import (
     rank_candidates,
 )
 from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+
+
+def _no_tail_tile_suggestions(plan: RecursiveFFTPlan) -> str:
+    """One line per distinct PRE/MIDDLE/POST transpose shape in `plan`,
+    listing every tile size that evenly divides both its `rows` and `cols`
+    (every divisor of `gcd(rows, cols)`, square only -- see fft_plan_search.
+    generate_tile_candidates' own comment for why exactly these tiles are
+    the only ones real hardware has confirmed structurally spill-free at
+    the tile level: no row/col tail means no LLVM tail-branch value
+    specialization, the mechanism 2026-08-27's N=630 disassembly traced
+    the actual spill to). Purely static -- no extra build+run -- so this
+    is always cheap to compute and offer, unlike actually probing more
+    candidates.
+
+    Returns "" if `plan` has no transpose stage at all (a single fused
+    leaf, nothing to tile).
+    """
+    import math
+
+    seen: set[tuple[int, int]] = set()
+    lines = []
+    for node in flatten_recursive_node(plan.root):
+        if not isinstance(node, PhysicalTransposePlan):
+            continue
+        shape = (node.rows, node.cols)
+        if shape in seen:
+            continue
+        seen.add(shape)
+        g = math.gcd(node.rows, node.cols)
+        divisors = [d for d in range(1, g + 1) if g % d == 0]
+        lines.append(
+            f"    rows={node.rows} cols={node.cols}: no-tail tile sizes "
+            f"{', '.join(f'{d}x{d}' for d in divisors)} (gcd={g}) -- confirmed "
+            f"structurally spill-free by construction, though not guaranteed "
+            f"fastest; still needs its own --verify-spill-free to confirm this "
+            f"exact N/compute_lanes combination"
+        )
+    return "\n".join(lines)
 
 
 def make_fft_kernel(
@@ -69,6 +112,7 @@ def make_fft_kernel(
     reference_check: bool = True,
     verify_spill_free: bool = False,
     spill_probe_top_k: int = 1,
+    rank_by_cycles: bool = False,
     mojo_root: str | None = None,
     m2ndp_root: str | None = None,
 ) -> Path:
@@ -221,11 +265,28 @@ def make_fft_kernel(
     something to enable for quick iteration. `spill_probe_top_k` (default
     1) caps how many candidates the search path probes before giving up;
     raise it to try harder before raising NoSpillFreeCandidateError, at
-    the cost of more build+run rounds. `mojo_root`/`m2ndp_root`: passed
-    straight through to spill_probe -- `None` picks the same defaults
-    `scripts/env.sh` does (see that function's own docstring); override
-    only to probe against a different toolchain build (e.g. a `git
-    worktree`).
+    the cost of more build+run rounds.
+
+    `rank_by_cycles`: `False` (the default) picks, among the confirmed
+    spill-free candidates the search path probed, the one `estimated_cost`
+    ranked cheapest -- with `spill_probe_top_k=1` this is the *only* one
+    probed, so it is whichever candidate the static cost model liked
+    first that also happened to pass, not necessarily the fastest one on
+    real hardware (estimated_cost is a cheap pre-filter, not a promise
+    its order matches measured cycles -- see planning.spill_probe.
+    probe_and_rerank_candidates' own `rank_by_cycles` docstring for the
+    concrete N=16384 mismatch this is based on). `True` instead picks
+    whichever of the probed candidates has the lowest real measured
+    `ndp_cycles` -- only actually compares more than one candidate when
+    `spill_probe_top_k > 1` (raise it together with this flag; at
+    `spill_probe_top_k=1` there's nothing to compare, same pick either
+    way). Only affects the search path (`explicit_choice` is always
+    exactly one plan, nothing to rank).
+
+    `mojo_root`/`m2ndp_root`: passed straight through to spill_probe --
+    `None` picks the same defaults `scripts/env.sh` does (see that
+    function's own docstring); override only to probe against a different
+    toolchain build (e.g. a `git worktree`).
     """
     if n < 2:
         # A length-1 "FFT" needs zero radix stages, which _build_plan/
@@ -283,14 +344,28 @@ def make_fft_kernel(
                     f"(build_ok={result.build_ok} run_ok={result.run_ok}) -- see its own log:\n{result.log}"
                 )
             if not result.spill_free:
+                tile_suggestions = _no_tail_tile_suggestions(plan)
+                suggestion_block = (
+                    f"\n\nStatically safe tile alternatives for this plan's own "
+                    f"transpose shape(s) (no real probe needed to know these have no "
+                    f"tail branch, though --verify-spill-free would still confirm this "
+                    f"exact combination):\n{tile_suggestions}"
+                    if tile_suggestions else ""
+                )
                 raise NoSpillFreeCandidateError(
                     f"verify_spill_free: the exact plan requested for n={n} "
                     f"(plan_index={plan_index} tile_rows={tile_rows} tile_cols={tile_cols} "
                     f"cooperative_workers={cooperative_workers}) spills "
                     f"({result.spilling_kernels}) -- refusing to write a kernel this "
-                    f"project's own architecture (docs/STATUS.md) says shouldn't spill at all. "
-                    f"Pick a different tile_rows/tile_cols/cooperative_workers/plan_index, or "
-                    f"drop verify_spill_free to accept it anyway.",
+                    f"project's own architecture (docs/STATUS.md) says shouldn't spill at all."
+                    f"{suggestion_block}\n\n"
+                    f"Or drop the explicit plan_index/tile_rows/tile_cols/cooperative_workers "
+                    f"override entirely and keep --verify-spill-free alone: that path searches "
+                    f"generate_candidates' own ranked candidates and returns the first one "
+                    f"actually confirmed spill-free (raise --spill-probe-top-k to try harder, "
+                    f"and add --rank-by-cycles to prefer the fastest *measured* one among "
+                    f"however many it probes, not just the cheapest by estimated_cost) -- or "
+                    f"drop verify_spill_free entirely to accept this exact plan as-is anyway.",
                     kept=[], excluded=[result], unresolved=[],
                 )
         else:
@@ -301,7 +376,8 @@ def make_fft_kernel(
             probed = probe_and_rerank_candidates(
                 ranked, compute_lanes=compute_lanes, simd_lanes=simd_lanes,
                 narrow_middle_stages=narrow_middle_stages, target=target,
-                top_k=spill_probe_top_k, mojo_root=mojo_root, m2ndp_root=m2ndp_root,
+                top_k=spill_probe_top_k, rank_by_cycles=rank_by_cycles,
+                mojo_root=mojo_root, m2ndp_root=m2ndp_root,
             )
             plan = probed.candidates[0].plan
 
@@ -416,6 +492,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--cooperative-workers override: how many confirmed spill-free candidates to "
         "search for before giving up (default: 1 -- just the cheapest one)",
     )
+    parser.add_argument(
+        "--rank-by-cycles", action="store_true",
+        help="with --verify-spill-free's search path: pick the probed candidate with "
+        "the lowest real measured ndp_cycles instead of the cheapest by estimated_cost "
+        "-- see make_fft_kernel's own rank_by_cycles docstring. Only compares more than "
+        "one candidate when --spill-probe-top-k > 1; raise that together with this. "
+        "Default: off (cheapest-by-estimated-cost, today's behavior).",
+    )
     parser.add_argument("-o", "--output", type=str, default=None, help="output .mojo path")
     parser.add_argument(
         "--dump-candidates", action="store_true",
@@ -505,6 +589,7 @@ def main() -> None:
         reference_check=not args.no_reference_check,
         verify_spill_free=args.verify_spill_free,
         spill_probe_top_k=args.spill_probe_top_k,
+        rank_by_cycles=args.rank_by_cycles,
     )
     print(f"generated: {path}")
 
