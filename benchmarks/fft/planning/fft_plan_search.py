@@ -69,7 +69,7 @@ from planning.fft_plan_recursive import (
 from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
 # Composite radices confirmed clean *as a leaf's own first stage only* (see
-# fft_cost_model._NON_FIRST_STAGE_RISKY_RADICES's own comment for the N=54
+# fft_cost_model._RISKY_RADIX_PAIRS's own comment for the N=54=(6,9)
 # spill this is based on) -- offered as a candidate tier only when the
 # target says it can tolerate the risk, and always scored non-zero risk by
 # the cost model regardless. `10` is never offered: fft_plan_core.

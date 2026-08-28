@@ -194,9 +194,52 @@ def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan, width: int) 
     )
 
 
+_TWIDDLE_EPS = 1.0e-6
+
+
 def _emit_twiddle(
     e: Emitter, *, output: int, twiddle: TwiddlePlan, width: int
 ) -> None:
+    """Every lane's twiddle constant is a plan-time-known float -- when
+    they all happen to equal the same one of the 4 rotations that need no
+    real multiply (1, -1, +/-j, mirroring _emit_complex_twiddle's own
+    scalar special-casing), skip the SIMD constant vectors and the
+    multiply entirely instead of emitting a full complex multiply by a
+    (1, 0) constant that is a no-op at runtime anyway. A uniform-across-
+    lanes twiddle is not rare: this batch's own lane values are usually a
+    slice of the same twiddle *row* for a fixed output, and W^0 = 1 for
+    every lane whenever that row's own group index is 0
+    (batch 0 of a stage very often is, per the Cooley-Tukey `n1*k2`
+    exponent formula) -- the exact shape seen live in N=105's own radix-5
+    middle stage (twr1 = SIMD(1, 1), twi1 = SIMD(0, 0), still spilling
+    every compute_lanes tried, see fft_cost_model._RISKY_AS_MIDDLE_RADICES's
+    own comment) that motivated adding this rather than just asserting it
+    would help from general principle.
+    """
+    real0, imag0 = twiddle.real[0], twiddle.imag[0]
+    uniform = all(abs(v - real0) < _TWIDDLE_EPS for v in twiddle.real) and all(
+        abs(v - imag0) < _TWIDDLE_EPS for v in twiddle.imag
+    )
+    if uniform:
+        if abs(real0 - 1.0) < _TWIDDLE_EPS and abs(imag0) < _TWIDDLE_EPS:
+            return
+        if abs(real0 + 1.0) < _TWIDDLE_EPS and abs(imag0) < _TWIDDLE_EPS:
+            e.add(f"        or{output} = -or{output}")
+            e.add(f"        oi{output} = -oi{output}")
+            return
+        if abs(real0) < _TWIDDLE_EPS and abs(imag0 - 1.0) < _TWIDDLE_EPS:
+            # +j * (r + ji) = -i + jr
+            e.add(f"        var tr{output} = -oi{output}")
+            e.add(f"        oi{output} = or{output}")
+            e.add(f"        or{output} = tr{output}")
+            return
+        if abs(real0) < _TWIDDLE_EPS and abs(imag0 + 1.0) < _TWIDDLE_EPS:
+            # -j * (r + ji) = i - jr
+            e.add(f"        var tr{output} = oi{output}")
+            e.add(f"        oi{output} = -or{output}")
+            e.add(f"        or{output} = tr{output}")
+            return
+
     e.add(
         f"        var twr{output} = SIMD[DType.float32, {width}]("
         + ", ".join(_f32(v) for v in twiddle.real)
@@ -593,15 +636,30 @@ def _emit_batch(
 # failed all the way to fully scalar for no benefit.
 _ALWAYS_NARROW_RADICES = frozenset({10, 11, 13, 17})
 
+# N=54=(6,9): a 2-stage leaf whose *second* stage (radix 9, reading its
+# operands out of scratchpad) is technically "last", not "middle" -- so
+# neither reason in `_stage_compute_lanes` below caught it before this set
+# existed, yet compute_lanes=1 was confirmed clean for exactly this stage
+# (fft_cost_model.py's own N=54 note). Deliberately keyed on the *adjacent
+# pair* (prev stage's radix, this stage's radix), not on radix 9 alone in
+# any non-first position: a direct (4, 9) chain (N=36, forced via
+# allowed_radix_composites) built and ran clean, zero spill -- so whatever
+# makes (6, 9) risky is specific to that sequence, and flagging radix 9
+# alone would also floor the confirmed-safe (4, 9) shape for no benefit.
+# Only the one real-hardware-confirmed pair is listed; do not add a
+# speculative reverse/repeated pair ((9, 6), (9, 9), (6, 6), ...) without
+# its own probe.
+_RISKY_RADIX_PAIRS = frozenset({(6, 9)})
+
 
 def _stage_compute_lanes(
     *, compute_lanes: int | None, is_first: bool, is_last: bool, radix: int,
-    narrow_middle_stages: bool,
+    narrow_middle_stages: bool, prev_radix: int | None = None,
 ) -> int | None:
-    """Two independent reasons to narrow the caller's own already-decided
+    """Three independent reasons to narrow the caller's own already-decided
     `compute_lanes`, each with its own confirmed-sufficient reduction --
-    both can apply at once (e.g. a radix-11 middle stage), in which case
-    the floor-to-1 wins since it's the stronger of the two:
+    more than one can apply at once (e.g. a radix-11 middle stage), in
+    which case the floor-to-1 wins since it's the strongest:
 
     1. `narrow_middle_stages` and this is a *middle* stage (neither first
        nor last): the one shape every confirmed register-pressure failure
@@ -626,16 +684,24 @@ def _stage_compute_lanes(
        Unlike reason 1, a halving is *not* enough here (N=11 still
        MISMATCHES at compute_lanes=2) -- only `compute_lanes=1` was
        confirmed clean, so this floors outright rather than halving.
+    3. `(prev_radix, radix) in _RISKY_RADIX_PAIRS` (see that set's own
+       comment): a register-pressure failure driven by a specific
+       *adjacent-stage sequence*, confirmed even though neither radix
+       alone (nor other pairings of either) is risky. Unconditional, not
+       gated by `narrow_middle_stages`, and floors outright like reason 2
+       (only `compute_lanes=1` was confirmed clean for the one real pair
+       this covers).
 
     `None` (no explicit compute_lanes -- "render at plan.simd_lanes",
-    today's oldest behavior) is left alone regardless of either reason:
-    there is no already-decided width to narrow, and a caller passing
-    `None` has already opted out of every compute_lanes-driven safety
-    choice.
+    today's oldest behavior) is left alone regardless of any reason: there
+    is no already-decided width to narrow, and a caller passing `None` has
+    already opted out of every compute_lanes-driven safety choice.
     """
     if compute_lanes is None:
         return compute_lanes
     if radix in _ALWAYS_NARROW_RADICES:
+        return 1
+    if prev_radix is not None and (prev_radix, radix) in _RISKY_RADIX_PAIRS:
         return 1
     is_middle = not is_first and not is_last
     if narrow_middle_stages and is_middle:
@@ -661,9 +727,10 @@ def _emit_stage(
     code appended after the loop inside `stage_{id}` itself."""
     is_first = stage.stage_id == 0
     is_last = stage.stage_id == len(plan.stages) - 1
+    prev_radix = plan.stages[stage.stage_id - 1].radix if not is_first else None
     compute_lanes = _stage_compute_lanes(
         compute_lanes=compute_lanes, is_first=is_first, is_last=is_last, radix=stage.radix,
-        narrow_middle_stages=narrow_middle_stages,
+        narrow_middle_stages=narrow_middle_stages, prev_radix=prev_radix,
     )
 
     def emit_header(name: str) -> None:
