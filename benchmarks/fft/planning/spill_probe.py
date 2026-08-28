@@ -50,6 +50,22 @@ _SPILL_RE = re.compile(
     r"M2NDP kernel spills to memory \((\d+)-byte frame\)"
 )
 
+# `[info] Gantt info: Host 0 finished NDP kernel gen::FFTRecLeaf0::stage_1()
+# launch id 1 at core cycle 0 ndp cycle 14659 at CXL 0` -- printed by the
+# M2NDP-Detour simulator itself (not the generated kernel), once per
+# `launch_parallel` call, so it appears regardless of `reference_check`.
+# Mirrors benchmark_fft_candidates.sh's own extraction exactly (`grep
+# "Gantt info:.*finished NDP kernel" | grep -oP 'ndp cycle \K[0-9]+' | tail
+# -1`): each kernel's own "ndp cycle" is that kernel's *completion* cycle on
+# a shared simulated timeline, so the *last* launch in a run is the whole
+# plan's own total cycle count, not any single kernel's individual cost.
+_NDP_CYCLE_RE = re.compile(r"Gantt info:.*finished NDP kernel.*\bndp cycle (\d+)")
+
+
+def _parse_ndp_cycles(log: str) -> int | None:
+    matches = _NDP_CYCLE_RE.findall(log)
+    return int(matches[-1]) if matches else None
+
 
 @dataclass(frozen=True)
 class SpillProbeResult:
@@ -63,6 +79,14 @@ class SpillProbeResult:
     itself so a caller can tell "this plan is clean" from "this probe
     could not answer," which `fft_cost_model.estimate_cost` must never
     conflate (a failed probe is not evidence of a spill-free plan).
+
+    `ndp_cycles`: this run's own total simulated cycle count (see
+    `_parse_ndp_cycles`), or `None` when `build_ok`/`run_ok` isn't both
+    `True` (nothing ran) or the log had no Gantt line for some other
+    reason -- a real measurement, not this module's own estimate, so a
+    caller ranking already-spill-free candidates by *actual* speed
+    (`probe_and_rerank_candidates`'s own `rank_by_cycles`) reads this
+    field rather than `fft_cost_model.estimate_cost`'s static heuristic.
     """
 
     spill_free: bool
@@ -70,6 +94,7 @@ class SpillProbeResult:
     build_ok: bool
     run_ok: bool
     log: str
+    ndp_cycles: int | None = None
 
 
 def _toolchain_env(*, mojo_root: str | None, m2ndp_root: str | None) -> dict[str, str]:
@@ -226,24 +251,31 @@ def probe_spill_free(
 
         return SpillProbeResult(
             spill_free=not spilling, spilling_kernels=tuple(spilling),
-            build_ok=True, run_ok=True, log=log,
+            build_ok=True, run_ok=True, log=log, ndp_cycles=_parse_ndp_cycles(log),
         )
 
 
 def apply_spill_probe(
     metrics: PlanMetrics, result: SpillProbeResult, *, weights: CostWeights = DEFAULT_COST_WEIGHTS
 ) -> PlanMetrics:
-    """`metrics` with `spill_free` set from `result` and `estimated_cost`
-    recomputed against it. `result.build_ok`/`run_ok` both `False` (a
-    toolchain-level failure, not an answer about the plan itself -- see
-    `SpillProbeResult`'s own docstring) leaves `spill_free` at `None`
-    rather than reading a failed probe as either "spill-free" or
-    "spills": `estimate_cost` already treats `None` as "not probed," so a
-    toolchain hiccup silently falls back to ranking this candidate on
-    every other term instead of misleading the search.
+    """`metrics` with `spill_free`/`ndp_cycles` set from `result` and
+    `estimated_cost` recomputed against the (still cost-model-driven, not
+    cycle-driven -- see `ndp_cycles`' own PlanMetrics comment) spill_free
+    signal. `result.build_ok`/`run_ok` both `False` (a toolchain-level
+    failure, not an answer about the plan itself -- see
+    `SpillProbeResult`'s own docstring) leaves both at `None` rather than
+    reading a failed probe as either "spill-free"/some cycle count or
+    "spills"/no measurement: `estimate_cost` already treats a `None`
+    spill_free as "not probed," so a toolchain hiccup silently falls back
+    to ranking this candidate on every other term instead of misleading
+    the search, and a `None` ndp_cycles correctly means "no real
+    measurement exists" to `probe_and_rerank_candidates`' own
+    `rank_by_cycles`.
     """
-    spill_free = result.spill_free if (result.build_ok and result.run_ok) else None
-    probed = replace(metrics, spill_free=spill_free)
+    build_run_ok = result.build_ok and result.run_ok
+    spill_free = result.spill_free if build_run_ok else None
+    ndp_cycles = result.ndp_cycles if build_run_ok else None
+    probed = replace(metrics, spill_free=spill_free, ndp_cycles=ndp_cycles)
     return replace(probed, estimated_cost=estimate_cost(probed, weights))
 
 
@@ -288,12 +320,20 @@ class ProbeAndRerankResult:
     `candidates` nor `excluded_for_spill`; a caller that wants to treat
     "couldn't tell" as acceptable can inspect this list and decide for
     itself, rather than this function silently picking a side.
+
+    `ranked_by_cycles`: `True` when `candidates` is ordered by each one's
+    own real measured `metrics.ndp_cycles` (fastest first) instead of
+    `estimated_cost` -- mirrors the `rank_by_cycles` argument that
+    produced this result, kept here so a caller (e.g. make_fft_kernel.py's
+    own summary) can say which ordering it is showing without holding
+    onto the original call's own arguments.
     """
 
     candidates: list
     excluded_for_spill: tuple
     unresolved: tuple
     probed_count: int
+    ranked_by_cycles: bool = False
 
 
 def probe_and_rerank_candidates(
@@ -304,6 +344,7 @@ def probe_and_rerank_candidates(
     narrow_middle_stages: bool = True,
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
     top_k: int = 5,
+    rank_by_cycles: bool = False,
     weights: CostWeights = DEFAULT_COST_WEIGHTS,
     mojo_root: str | None = None,
     m2ndp_root: str | None = None,
@@ -325,7 +366,7 @@ def probe_and_rerank_candidates(
     just a cost penalty (this project's own architecture assumes spill
     basically never happens -- no callee-saved registers -- and a real
     spill has previously produced a silently wrong answer on this
-    simulator, see fft_cost_model.py's own _NON_FIRST_STAGE_RISKY_RADICES
+    simulator, see fft_cost_model.py's own _RISKY_RADIX_PAIRS
     comment and this module's own N=630 reference above; "it happened to
     pass its reference check this time" is not a basis for recommending a
     plan). Unlike the version of this function that existed before this
@@ -341,6 +382,23 @@ def probe_and_rerank_candidates(
     remaining one actually spills," a materially different (and more
     urgent) fact for the caller. See that exception's own docstring for
     what it carries.
+
+    `rank_by_cycles`: `False` (the default) returns `kept` ordered by
+    `estimated_cost`, same as before this parameter existed -- with
+    `top_k=1` this means "the cheapest-by-static-cost candidate that
+    happens to be confirmed spill-free," which is not necessarily the
+    *fastest* one on real hardware among however many candidates exist
+    (estimated_cost is a cheap, deliberately approximate pre-filter for
+    which candidates are worth a real probe at all -- see fft_cost_model.
+    py's own module docstring -- not a promise that its order matches
+    measured cycles; e.g. this project's own N=16384 tile=(4,4) vs (2,2)
+    mismatch). Passing `True` instead reorders `kept` by each candidate's
+    own real `metrics.ndp_cycles` (fastest first) -- every candidate in
+    `kept` was already probed for spill above regardless, so this costs
+    nothing extra; it only changes which already-probed, already-safe
+    candidate ends up first. Only useful with `top_k > 1`: at `top_k=1`
+    there is nothing to reorder, since only one candidate was ever probed
+    before the loop stopped.
     """
     from planning.fft_plan_search import rank_candidates
 
@@ -382,7 +440,22 @@ def probe_and_rerank_candidates(
             kept=kept, excluded=excluded, unresolved=unresolved,
         )
 
+    if rank_by_cycles:
+        # `metrics.ndp_cycles` is `None` only when build_ok/run_ok were
+        # False -- impossible here, since `kept` only holds candidates
+        # whose probe returned `spill_free is True`, which apply_spill_probe
+        # only ever produces from a build_run_ok probe (see its own
+        # docstring) -- so this key is never actually exercised on `kept`,
+        # kept only so a future relaxation of that invariant fails soft
+        # (sorts last) instead of raising deep inside sorted().
+        ranked = sorted(
+            kept, key=lambda c: c.metrics.ndp_cycles if c.metrics.ndp_cycles is not None else float("inf")
+        )
+    else:
+        ranked = rank_candidates(kept)
+
     return ProbeAndRerankResult(
-        candidates=rank_candidates(kept), excluded_for_spill=tuple(excluded),
+        candidates=ranked, excluded_for_spill=tuple(excluded),
         unresolved=tuple(unresolved), probed_count=probed_count,
+        ranked_by_cycles=rank_by_cycles,
     )
