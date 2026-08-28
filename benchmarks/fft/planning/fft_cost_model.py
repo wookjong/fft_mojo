@@ -28,27 +28,29 @@ from planning.target_profile import TargetProfile
 # (reading straight from DRAM) but not as a later stage (reading its
 # operands out of scratchpad instead):
 #
-# * 6, 9: fft_plan_core._prime_factors_supported's own comment documents
-#   the concrete N=54=(6,9) spill this was originally based on (radix-9
-#   stage, preceded by radix-6). Not universal: a direct (4, 9) chain
-#   (N=36, forced via allowed_radix_composites) built and ran clean, zero
-#   spill, and 6/9 standalone (N=6, N=9) are clean too -- so whatever
-#   makes this pairing risky depends on the specific (6, 9) sequence, not
-#   "radix 6 or 9 in a non-first position" alone, which this per-stage-
-#   radix-only model has no way to represent. Kept flagged anyway since
-#   the known-bad N=54 combination is real. Root cause confirmed 2026-08-27
-#   (see codegen.fft_codegen._ALWAYS_NARROW_RADICES's own comment): the
-#   same M2NDP-Detour `ReadCsr` vlenb gap as 10/11/13/17 below --
-#   compute_lanes=1 (not codegen's own narrow_middle_stages default, which
-#   only halves, and only for a genuine middle stage; N=54=(6,9) is a
-#   2-stage kernel, so its radix-9 stage is technically "last") confirmed
-#   clean by direct probe. Not added to _ALWAYS_NARROW_RADICES itself,
-#   since that would also floor the confirmed-clean standalone/first-stage
-#   uses of 6 and 9 to compute_lanes=1 for no benefit -- a caller who
-#   explicitly reaches for the wide radix tier (fft_plan_search.py's
-#   _WIDE_RADIX_TIER) and lands on this exact (6, 9) sequence should pass
-#   --compute-lanes 1 explicitly until this gets its own narrower,
-#   sequence-aware fix.
+# * (6, 9) as an *adjacent stage pair*: fft_plan_core._prime_factors_
+#   supported's own comment documents the concrete N=54=(6,9) spill this
+#   was originally based on (radix-9 stage, immediately preceded by
+#   radix-6). Not universal: a direct (4, 9) chain (N=36, forced via
+#   allowed_radix_composites) built and ran clean, zero spill, and 6/9
+#   standalone (N=6, N=9) are clean too -- so whatever makes this pairing
+#   risky depends on the specific (6, 9) sequence, not "radix 6 or 9 in a
+#   non-first position" alone. Scored here by adjacent-pair membership in
+#   _RISKY_RADIX_PAIRS below, kept in sync by hand with codegen.fft_codegen.
+#   _RISKY_RADIX_PAIRS (not imported -- this module is deliberately
+#   toolchain/codegen-free, see this module's own docstring, and planning
+#   code does not import from codegen) -- the same set codegen's own
+#   _stage_compute_lanes floors to compute_lanes=1 for. This used to be a
+#   standalone-radix set (_NON_FIRST_STAGE_RISKY_RADICES
+#   = {6, 9}) that over-counted risk for the confirmed-safe (4, 9) shape;
+#   fixed 2026-08-27 alongside codegen's own sequence-aware fix so this
+#   score and the actual narrowing decision agree on what is risky.
+#   Root cause confirmed 2026-08-27 (see codegen.fft_codegen.
+#   _ALWAYS_NARROW_RADICES's own comment): the same M2NDP-Detour `ReadCsr`
+#   vlenb gap as 10/11/13/17 below -- compute_lanes=1 (not codegen's own
+#   narrow_middle_stages default, which only halves, and only for a
+#   genuine middle stage; N=54=(6,9) is a 2-stage kernel, so its radix-9
+#   stage is technically "last") confirmed clean by direct probe.
 # * 11, 13, 17: confirmed by direct probe (each forced into a (4, r)
 #   chain -- N=44, N=52, N=68 respectively, r as the second/scratchpad-
 #   reading stage): all three spill *and* silently produce an all-zero
@@ -67,8 +69,56 @@ from planning.target_profile import TargetProfile
 # by the same probe as (4, 10) = N=40 -- spills and mismatches even
 # directly after a radix-4 first stage) -- see the same fft_plan_core
 # comment. Same fix and same root cause as 11/13/17 above.
-_NON_FIRST_STAGE_RISKY_RADICES = frozenset({6, 9})
+_RISKY_RADIX_PAIRS = frozenset({(6, 9)})
 _ALWAYS_RISKY_RADICES = frozenset({10, 11, 13, 17})
+
+# Radix 5 as a *genuine* middle stage (neither first nor last -- has a
+# preceding stage AND a following one, e.g. the 5 in a 3-stage (3, 5, 7)
+# leaf) spills on real hardware in a way `narrow_middle_stages` cannot
+# fix, unlike every other middle-stage liability this module tracks.
+# Confirmed 2026-08-28 by direct probe of N=105 (a single fused (3, 5, 7)
+# leaf, isolated -- no transpose stage, no other kernel) at every
+# compute_lanes this project ships or could plausibly ship:
+#
+#   compute_lanes=4, narrow_middle_stages=False (no narrowing at all):
+#     stage_1 (radix 5) spills, 128-byte frame
+#   compute_lanes=4, narrow_middle_stages=True (stage_1 renders at
+#     narrowed width 2, this project's own real default combination):
+#     stage_1 spills, 128-byte frame -- identical to the unnarrowed case
+#   compute_lanes=2 (stage_1 narrows further to 1, the floor):
+#     stage_1 spills, 1296-byte frame -- WORSE, not better
+#   compute_lanes=1 (already at the floor, narrowing is a no-op):
+#     stage_1 AND stage_2 (radix 7, the *last* stage) both spill,
+#     1296- and 64-byte frames respectively
+#   loop_stages=True at compute_lanes=4/narrow_middle_stages=True:
+#     stage_1 still spills, same 128-byte frame -- rules out per-batch
+#     unrolling/function size as the mechanism too
+#
+# So compute_lanes narrowing -- the fix for every *other* middle-stage
+# liability this module and codegen.fft_codegen track -- does not apply
+# here at any width, and the one lever that does exist (narrower) makes
+# it worse past width 2. This also retroactively explains why N=630's own
+# FFTRecNear0::stage_1() (the exact case narrow_middle_stages was
+# originally built around) was previously reported "confirmed clean at
+# the halved width": that claim was checking run_fft_test.sh's PASS/FAIL
+# reference check, not the spill warning specifically -- and N=630's
+# default-tile plan does print `[PASS] (spill warning!)`, i.e. it was
+# never actually spill-free, just not (this time) numerically wrong,
+# exactly the "it happened to pass its reference check" case [[fft-spill-
+# hard-filter]] warns against trusting.
+#
+# No codegen-level fix exists yet (nothing here floors or gates
+# compute_lanes for this -- there is no width that helps), so this is a
+# *cost-model-only* signal for now: it steers estimated_cost away from
+# radix-5-as-middle and, more importantly, means planning.spill_probe.
+# probe_and_rerank_candidates' own hard exclusion actually has somewhere
+# else to fall back to (e.g. N=105's own (5, 7)+(3,) or (7,)+(3, 5) split
+# candidates, which put radix 5 first or last instead of in the middle --
+# both confirmed clean positions) rather than exhausting every candidate
+# and raising NoSpillFreeCandidateError. A plain default (no --verify-
+# spill-free) build of an N whose only decomposition has radix 5 in a
+# genuine middle position has no protection from this yet.
+_RISKY_AS_MIDDLE_RADICES = frozenset({5})
 
 # Real M2NDP runs (benchmark_fft_candidates.sh, --batch sweep at N=1024 plus
 # one N=16384 point) of a transpose stage's own total_uthreads vs. whether a
@@ -139,6 +189,21 @@ class PlanMetrics:
     # pick -- planning.spill_probe.probe_and_rerank_candidates' own hard
     # exclusion is.
     spill_free: bool | None = None
+    # `None` (the default) means "not probed," the same discipline as
+    # `spill_free` above and for the same reason -- a real measured cycle
+    # count (planning.spill_probe.SpillProbeResult.ndp_cycles, the
+    # simulator's own Gantt-log total, not an estimate) only exists once a
+    # caller has actually built+run this plan. Folded in by spill_probe.
+    # apply_spill_probe alongside spill_free, from the same probe -- no
+    # separate probe call needed. Used by planning.spill_probe.
+    # probe_and_rerank_candidates' own `rank_by_cycles` to pick the
+    # fastest *measured* candidate among several already-confirmed-
+    # spill-free ones, rather than trusting estimated_cost's static
+    # ranking to have picked the fastest one first (that ranking is a
+    # cheap pre-filter for which candidates are worth a real probe at
+    # all, not a claim that its own order matches real hardware speed --
+    # see this project's own N=16384 tile=(4,4) vs (2,2) mismatch).
+    ndp_cycles: int | None = None
     estimated_cost: float = 0.0      # filled in by estimate_cost, 0.0 until then
 
 
@@ -238,11 +303,17 @@ def _tree_depth(node: FFTNode) -> int:
 
 def _leaf_radix_risk(codegen_plan: FFTCodegenPlan) -> float:
     risk = 0.0
+    prev_radix: int | None = None
+    n_stages = len(codegen_plan.stages)
     for stage in codegen_plan.stages:
+        is_middle = 0 < stage.stage_id < n_stages - 1
         if stage.radix in _ALWAYS_RISKY_RADICES:
             risk += 1.0
-        elif stage.stage_id > 0 and stage.radix in _NON_FIRST_STAGE_RISKY_RADICES:
+        elif prev_radix is not None and (prev_radix, stage.radix) in _RISKY_RADIX_PAIRS:
             risk += 1.0
+        elif is_middle and stage.radix in _RISKY_AS_MIDDLE_RADICES:
+            risk += 1.0
+        prev_radix = stage.radix
     return risk
 
 
