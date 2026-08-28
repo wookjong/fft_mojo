@@ -28,6 +28,7 @@ per-physical-unit `round_tracker` scratchpad cell the real generated code
 uses, not a Python-level round counter this harness invents separately.
 """
 
+import re
 import sys
 import types
 from pathlib import Path
@@ -38,7 +39,11 @@ import numpy as np
 # directly (`python3 verification/verify_fft_persistent.py`) without `-m`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from codegen.fft_persistent_codegen import emit_bulk_copy_phase, emit_stage_phase
+from codegen.fft_persistent_codegen import (
+    emit_bulk_copy_phase,
+    emit_stage_phase,
+    generate_persistent_fft_kernel,
+)
 from planning.fft_plan_core import FFTCodegenPlan
 from planning.fft_plan_persistent import make_persistent_leaf_plan, num_rounds
 from verification.verify_fft_harness import Ptr, SimdVec, _simd, _translate_emitted_lines
@@ -348,9 +353,44 @@ def _check_target_invariant_rejections() -> None:
             raise AssertionError(f"expected NotImplementedError for: {label}")
 
 
+def _check_registered_kernel_count_stable_across_rounds() -> None:
+    """docs/persistent_leaf_design.md's own "POST-IMPLEMENTATION
+    CORRECTION" section, and Task 5 of docs/
+    persistent_vs_cooperative_comparison_task.md: 2, 8, and 32 rounds
+    must all register the *same* distinct phase-function set
+    (`preload`, `stage_0`, ..., `writeback`) -- round count must only
+    change how many times `device_main` calls them, never how many
+    distinct kernels exist. A regression back to one-function-per-round
+    would crash real hardware (`max_kernel_register=8`, see
+    target_profile.TargetProfile's own docstring) long before it showed
+    up here, so this test catches it structurally, in Python, without a
+    real build+run."""
+    length, radices = 64, (4, 4, 4)
+    software_group_count = make_persistent_leaf_plan(
+        length, radices, num_logical_blocks=1
+    ).persistent.software_group_count
+    expected = {"preload", "stage_0", "stage_1", "stage_2", "writeback"}
+    for blocks in (2 * software_group_count, 8 * software_group_count, 32 * software_group_count):
+        plan = make_persistent_leaf_plan(length, radices, num_logical_blocks=blocks)
+        src = generate_persistent_fft_kernel(plan, num_logical_blocks=blocks)
+        device_main = src.split("def device_main():")[1].split("def main() raises:")[0]
+        calls = re.findall(r"launch_parallel\[PersistentFFT\.(\w+)\]", device_main)
+        distinct = set(calls)
+        rounds = num_rounds(blocks, software_group_count)
+        assert distinct == expected, f"blocks={blocks}: got {distinct}, expected {expected}"
+        assert len(calls) == rounds * len(expected), (
+            f"blocks={blocks}: expected {rounds * len(expected)} launch_parallel calls "
+            f"({rounds} rounds x {len(expected)} phases), got {len(calls)}"
+        )
+        print(f"    OK   blocks={blocks} ({rounds} rounds): {len(distinct)} distinct "
+              f"kernel functions ({sorted(distinct)}), {len(calls)} launch_parallel calls")
+
+
 def main() -> None:
     print("  Persistent-workgroup leaf: target-invariant rejection checks:")
     _check_target_invariant_rejections()
+    print("  Persistent-workgroup leaf: registered-kernel-count stability across rounds:")
+    _check_registered_kernel_count_stable_across_rounds()
     print("  Persistent-workgroup leaf: plan-equivalence + numeric checks:")
     # No-tail-anywhere case (N=64 = 4*4*4, every stage's own butterfly_count
     # divides simd_lanes=8 evenly).

@@ -340,6 +340,11 @@ def generate_persistent_fft_kernel(
     workers_per_group = pw.workers_per_group
     software_group_count = pw.software_group_count
     rounds = num_rounds(num_logical_blocks, software_group_count)
+    # Defense in depth: `make_persistent_leaf_plan` already rejects this
+    # (target-aware, via `target.max_kernel_register`) before a plan ever
+    # reaches codegen; this hardcodes that field's own default (8) as a
+    # backstop for a plan constructed some other way, since this function
+    # takes no `target` of its own to check against.
     num_kernels = 2 + len(plan.stages)
     if num_kernels > 8:
         raise ValueError(

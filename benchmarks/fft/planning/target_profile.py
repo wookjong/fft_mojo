@@ -21,6 +21,7 @@ class TargetProfile:
     num_ndp_units: int = 32
     uthread_bytes: int = 32
     mapping_stride_bytes: int = 256
+    max_kernel_register: int = 8
     supports_vector_spill: bool = False
 
 
@@ -106,6 +107,25 @@ DEFAULT_TARGET_PROFILE = TargetProfile(
     # (docs/persistent_leaf_design.md) -- instead of trusting they stay
     # consistent by construction if either is ever edited alone.
     mapping_stride_bytes=256,
+    # `max_kernel_register` in third_party/m2ndp-detour/config/performance/
+    # M2NDP/m2ndp.config -- how many *distinct* kernel functions one NDPTask
+    # may ever register with one physical NDP unit, for the whole lifetime
+    # of one host `.launch()` (registered once at launch time, unregistered
+    # only when the whole task finishes -- never per `launch_parallel`
+    # call; see `UThreadGenerator::can_register()`/`NdpUnit::register_ndp_
+    # kernel` in the simulator source). Confirmed real-hardware 2026-08-28:
+    # the persistent-workgroup-leaf design's first implementation baked
+    # `ROUND_BASE`/`ACTIVE_GROUPS` into a *separate function per (phase,
+    # round)*, and the 9th registration attempt aborted the whole simulator
+    # process (`Assertion 'can_register()' failed`) for a plan needing only
+    # 10 -- not a graceful error, and not caught by Python-level numeric
+    # verification. `make_persistent_leaf_plan` now hard-rejects any plan
+    # needing more than this many distinct kernel functions
+    # (`2 + len(stages)` for that design, independent of round count after
+    # the fix -- see docs/persistent_leaf_design.md's own "POST-
+    # IMPLEMENTATION CORRECTION" section and codegen/fft_persistent_
+    # codegen.py's own top docstring).
+    max_kernel_register=8,
     # Whether this target's toolchain can run a register-spill vector store
     # (`vs1r.v`) without panicking -- `False` here since M2NDP-Detour's
     # decoder does not implement it (see make_fft_kernel's own

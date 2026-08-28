@@ -337,6 +337,23 @@ def make_persistent_leaf_plan(
             f"product of radices ({product}) must equal length ({length})"
         )
 
+    # Hard feasibility constraint, not a performance penalty -- see
+    # target.max_kernel_register's own docstring for the real-hardware
+    # crash this guards against. codegen.fft_persistent_codegen.
+    # generate_persistent_fft_kernel re-checks this too (defense in
+    # depth), but rejecting here means a caller building candidate plans
+    # (e.g. a future search/ranking layer) never even constructs codegen
+    # for an infeasible one.
+    registered_kernels = 2 + len(radices)
+    if registered_kernels > target.max_kernel_register:
+        raise ValueError(
+            f"radices={radices} needs {registered_kernels} distinct kernel "
+            f"functions (preload + {len(radices)} stages + writeback), but "
+            f"target.max_kernel_register={target.max_kernel_register} caps "
+            f"one task's total registered kernels regardless of round count "
+            f"-- see target.max_kernel_register's own docstring"
+        )
+
     layouts = layouts_for_radices(length, radices, simd_lanes)
     buffer_names: tuple[str, str] = ("buf_a", "buf_b")
     inverse_scale = (1.0 / length) if inverse else None
