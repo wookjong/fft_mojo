@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 """Generalizes make_balanced_transpose_plan's (fft_plan_balanced.py) single
 2-way split to a full recursive (six-step-FFT-style) decomposition: FFT
 chunk size and physical transpose tile size are two completely independent
@@ -439,6 +441,49 @@ def _is_pow2(x: int) -> bool:
     return x > 0 and (x & (x - 1)) == 0
 
 
+def _default_tile_size(rows: int, cols: int, simd_lanes: int) -> int:
+    """The square tile size `_build_recursive_node` uses for a PRE/MIDDLE/
+    POST transpose when the caller leaves `tile_rows`/`tile_cols` at their
+    default `None` -- i.e. every plain `make_recursive_transpose_plan(n,
+    ...)` call with no explicit tile override, which is most of them (a
+    bare `make_fft_kernel.py N` included).
+
+    Before this existed, that default was just `min(simd_lanes, rows,
+    cols)`, with no awareness of fft_plan_search.generate_tile_candidates'
+    own real-hardware finding: only a tile size that evenly divides both
+    `rows` and `cols` (a divisor of `gcd(rows, cols)`) is confirmed free
+    of the row/col tail branch 2026-08-27's N=630 disassembly traced an
+    LLVM tail-branch spill to (see that function's own comment for the
+    full real-hardware data). N=630's own PRE transpose (rows=105, cols=6,
+    gcd=3) is the concrete case this fixes: the naive default landed on
+    tile=6 -- one of the two sizes (4 and 6) that specific investigation
+    confirmed spills on real hardware -- purely by accident, since nothing
+    about picking `min(simd_lanes, rows, cols)` ever consulted which sizes
+    were safe. Confirmed by direct probe (planning.spill_probe.
+    probe_spill_free) that this same plain, no-flags N=630 plan spilled at
+    FFTRecPre0/FFTRecMid0/FFTRecPost0's own stage_0() before this fix.
+
+    Picks the *largest* divisor of `gcd(rows, cols)` that still fits under
+    the old `min(simd_lanes, rows, cols)` cap -- not always 1 (structurally
+    always safe, but real hardware also shows small tiles are not always
+    fastest, see generate_tile_candidates' own tile=1x1-losing-at-scale
+    data) and not always the biggest available divisor (could exceed the
+    SIMD/register-width budget the old cap was already protecting). When
+    `gcd(rows, cols) == 1` (no divisor above 1 exists, e.g. two coprime
+    dimensions), this falls back to `1` -- every transpose stage still
+    renders correctly at tile=1x1, just with more, smaller tiles than the
+    old default picked; there is no *safe* larger option to fall back to
+    instead in that shape.
+    """
+    cap = max(1, min(simd_lanes, rows, cols))
+    g = math.gcd(rows, cols)
+    best = 1
+    for d in range(1, g + 1):
+        if g % d == 0 and d <= cap:
+            best = d
+    return best
+
+
 def _build_physical_transpose(
     *,
     rows: int,
@@ -638,8 +683,8 @@ def _build_recursive_node(
 
     b = split_b
     a = m // b
-    tr = tile_rows if tile_rows is not None else min(simd_lanes, b, a)
-    tc = tile_cols if tile_cols is not None else min(simd_lanes, a, b)
+    tr = tile_rows if tile_rows is not None else _default_tile_size(b, a, simd_lanes)
+    tc = tile_cols if tile_cols is not None else _default_tile_size(a, b, simd_lanes)
     tr = max(tr, 1)
     tc = max(tc, 1)
 
@@ -731,9 +776,13 @@ def make_recursive_transpose_plan(
     M=A*B and emits PRE transpose -> B-point FFT -> MIDDLE transpose
     (W_M twiddle) -> recursive FFTNode(A, R*B) -> POST transpose (see
     FFTRecursiveNodePlan). Physical transpose tile size (tile_rows/
-    tile_cols, default min(simd_lanes, the matrix's own two dimensions))
-    is chosen completely independently of any FFT chunk length -- see the
-    module design writeup. Additive: make_multi_kernel_plan/
+    tile_cols, default `_default_tile_size` -- see its own docstring: the
+    largest divisor of `gcd(rows, cols)` that still fits under
+    `min(simd_lanes, rows, cols)`, so the default itself is always one of
+    the tail-branch-free sizes real hardware has confirmed safe, not just
+    whatever `min(simd_lanes, rows, cols)` happens to land on) is chosen
+    completely independently of any FFT chunk length -- see the module
+    design writeup. Additive: make_multi_kernel_plan/
     make_balanced_plan/make_balanced_transpose_plan are untouched.
 
     `max_concurrent_scratchpad_bytes`: see `_cap_max_uthread` -- caps `max_uthread`
