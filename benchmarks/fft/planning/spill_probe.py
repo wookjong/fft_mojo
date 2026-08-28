@@ -137,6 +137,7 @@ def probe_spill_free(
     simd_lanes: int = 8,
     narrow_middle_stages: bool = True,
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    spread_across_units: bool = True,
     mojo_root: str | None = None,
     m2ndp_root: str | None = None,
     build_timeout: float = 120.0,
@@ -183,13 +184,22 @@ def probe_spill_free(
     fft-benchmark-workflow memory / run_fft_test.sh) rather than shelling
     out to that script, so a caller only pays for one temp directory and
     one subprocess round trip per probe, not a second Python startup.
+
+    `spread_across_units`: forwarded straight to `generate_recursive_
+    fft_kernels` -- `True` (the default since 2026-08-28) matches
+    make_fft_kernel.py's own default; pass `False` to probe the old,
+    single-unit-only shape instead (see that function's own docstring
+    for the real-hardware evidence this default is based on). This is
+    the tool this repo's own multi-NDP-unit-parallelism plan used for
+    its own performance-investigation phase (real wall-clock/`ndp_
+    cycles` comparison, no new benchmarking infrastructure needed).
     """
     if compute_lanes is None:
         compute_lanes = min(simd_lanes, target.lmul1_float32_lanes)
     env = _toolchain_env(mojo_root=mojo_root, m2ndp_root=m2ndp_root)
     source = generate_recursive_fft_kernels(
         plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
-        reference_check=False,
+        reference_check=False, target=target, spread_across_units=spread_across_units,
     )
 
     with tempfile.TemporaryDirectory(prefix="fft_spill_probe_") as work_str:

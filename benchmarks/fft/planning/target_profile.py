@@ -18,6 +18,7 @@ class TargetProfile:
     spad_capacity_bytes: int
     max_concurrent_scratchpad_bytes: int
     interleave_chunk_uthreads: int
+    num_ndp_units: int = 32
     supports_vector_spill: bool = False
 
 
@@ -60,14 +61,32 @@ DEFAULT_TARGET_PROFILE = TargetProfile(
     # _cap_max_uthread's own docstring.
     max_concurrent_scratchpad_bytes=16 * 4096,
     # The M2NDP address decoder hands consecutive microthreads to the same
-    # NDP unit in blocks of this size before rotating to the next unit (the
-    # real config's `m2ndp_interleave_size / packet_size`). A cooperative
-    # leaf's `workers_per_fft` must divide this so that local_uthread_id()'s
+    # NDP unit in blocks of this size before rotating to the next unit --
+    # `NDP_STRIPE_BYTES // UTHREAD_BYTES = 256 // 32 = 8`, i.e. the real
+    # config's own 256-byte `m2ndp_interleave_size` divided by one mapped
+    # microthread's own 32-byte span (`UTHREAD_SPAWN_UNIT` in the simulator,
+    # `VECTOR_WIDTH` in src/m2ndp.mojo) -- confirmed 2026-08-28 by reading
+    # `M2NDPConfig::get_matched_unit_id` (third_party/m2ndp-detour/src/
+    # m2ndp_config.h) directly, not just inferred. A cooperative leaf's
+    # `workers_per_fft` must divide this so that local_uthread_id()'s
     # and global_uthread_id()'s own groupings of `workers_per_fft` partition
     # the same physical microthreads into the same groups -- see
     # fft_codegen._emit_cooperative_stage's own docstring for the concrete
-    # trace (against this exact config) that found this the hard way.
+    # trace (against this exact config) that found this the hard way. Also
+    # the basis for `num_ndp_units` below: address interleaving wraps back
+    # to unit 0 every `interleave_chunk_uthreads * num_ndp_units` (8*32=256)
+    # microthreads -- see codegen.fft_transpose_codegen._safe_round_size.
     interleave_chunk_uthreads=8,
+    # How many physical NDP units this config has -- matches `num_ndp_units`
+    # in third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config and
+    # `m_num_ndp_units` in m2ndp_config.h. Which unit a given microthread's
+    # own address lands on is `(addr // 256) % num_ndp_units` (see
+    # interleave_chunk_uthreads's own comment) -- this project's launch code
+    # has to know this count to safely spread a launch across more than one
+    # unit without any single unit silently receiving more microthreads than
+    # its own scratchpad (`max_uthread`) was sized for. See
+    # codegen.fft_transpose_codegen._safe_round_size.
+    num_ndp_units=32,
     # Whether this target's toolchain can run a register-spill vector store
     # (`vs1r.v`) without panicking -- `False` here since M2NDP-Detour's
     # decoder does not implement it (see make_fft_kernel's own

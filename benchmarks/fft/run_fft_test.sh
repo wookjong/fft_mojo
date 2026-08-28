@@ -70,6 +70,11 @@ Usage: $(basename "$0") N [N ...] [options]
                                 instead of the default single-heuristic
                                 plan -- see make_fft_kernel.py --dump-
                                 candidates to see what each index is first
+  --no-spread-across-units       disable widening eligible non-cooperative
+                                launch rounds across more than 1 physical
+                                NDP unit -- default: on since 2026-08-28
+                                (see make_fft_kernel.py's own
+                                --no-spread-across-units help)
   --no-reference-check          skip the O(N^2) host DFT check (needed for
                                 large N -- see make_fft_kernel.py --help);
                                 this script's own PASS/FAIL check then
@@ -95,6 +100,7 @@ TILE_ROWS=""
 TILE_COLS=""
 COOPERATIVE_WORKERS=""
 PLAN_INDEX=""
+NO_SPREAD_ACROSS_UNITS=0
 NO_REFERENCE_CHECK=0
 KEEP=0
 OUTDIR=""
@@ -110,6 +116,7 @@ while [ $# -gt 0 ]; do
         --tile-cols) TILE_COLS="$2"; shift 2 ;;
         --cooperative-workers) COOPERATIVE_WORKERS="$2"; shift 2 ;;
         --plan-index) PLAN_INDEX="$2"; shift 2 ;;
+        --no-spread-across-units) NO_SPREAD_ACROSS_UNITS=1; shift ;;
         --no-reference-check) NO_REFERENCE_CHECK=1; shift ;;
         --keep) KEEP=1; shift ;;
         -o|--outdir) OUTDIR="$2"; shift 2 ;;
@@ -167,6 +174,7 @@ for LEN in "${LENGTHS[@]}"; do
     [ -n "$TILE_COLS" ] && ARGS+=(--tile-cols "$TILE_COLS")
     [ -n "$COOPERATIVE_WORKERS" ] && ARGS+=(--cooperative-workers "$COOPERATIVE_WORKERS")
     [ -n "$PLAN_INDEX" ] && ARGS+=(--plan-index "$PLAN_INDEX")
+    [ "$NO_SPREAD_ACROSS_UNITS" = 1 ] && ARGS+=(--no-spread-across-units)
     [ "$NO_REFERENCE_CHECK" = 1 ] && ARGS+=(--no-reference-check)
 
     printf "${B}[fft-test]${N} N=%-8s${N} " "$LEN"

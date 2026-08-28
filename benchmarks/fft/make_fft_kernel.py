@@ -113,6 +113,7 @@ def make_fft_kernel(
     verify_spill_free: bool = False,
     spill_probe_top_k: int = 1,
     rank_by_cycles: bool = False,
+    spread_across_units: bool = True,
     mojo_root: str | None = None,
     m2ndp_root: str | None = None,
 ) -> Path:
@@ -296,6 +297,28 @@ def make_fft_kernel(
     way). Only affects the search path (`explicit_choice` is always
     exactly one plan, nothing to rank).
 
+    `spread_across_units`: `True` (the default since 2026-08-28) widens
+    eligible non-cooperative launch rounds so they genuinely spread
+    across more than one of the M2NDP config's own `num_ndp_units` (32)
+    physical NDP units, instead of every launch landing on just 1 (this
+    generator's own behavior before this flag existed). See
+    codegen.fft_transpose_codegen.generate_recursive_fft_kernels's own
+    `spread_across_units` docstring and `_safe_round_size`'s proof for
+    why widening a round this way never gives one physical unit more
+    microthreads than its own scratchpad (`max_uthread`) allows.
+    Confirmed real-hardware: a ~2.6x wall-clock speedup at N=256/batch=64
+    (238.95s -> 92.01s, 4 separate simulator sessions collapsed to 1 --
+    `ndp_cycles` alone reports these as ~equal, since it only reflects
+    the *last* session's own internal clock, not the real cost of
+    spinning up several; see the multi-NDP-unit-parallelism plan's own
+    N3 section), and correct output at 3 scales (small/multi-unit,
+    exactly at the interleave-wraparound boundary, well past it -- see
+    that plan's own N4 section) via real build+run+reference-check, not
+    just "didn't crash." Pass `False` (`--no-spread-across-units` on the
+    CLI) to compare against the old, pre-2026-08-28 single-unit shape.
+    Never affects cooperative-worker leaves (untouched, out of scope --
+    see that plan's own C-track, not yet investigated).
+
     `mojo_root`/`m2ndp_root`: passed straight through to spill_probe --
     `None` picks the same defaults `scripts/env.sh` does (see that
     function's own docstring); override only to probe against a different
@@ -396,7 +419,7 @@ def make_fft_kernel(
 
     source = generate_recursive_fft_kernels(
         plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
-        reference_check=reference_check,
+        reference_check=reference_check, target=target, spread_across_units=spread_across_units,
     )
 
     if output_path is None:
@@ -513,6 +536,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "one candidate when --spill-probe-top-k > 1; raise that together with this. "
         "Default: off (cheapest-by-estimated-cost, today's behavior).",
     )
+    parser.add_argument(
+        "--no-spread-across-units", action="store_true",
+        help="disable widening eligible non-cooperative launch rounds across more than one "
+        "physical NDP unit -- default: on since 2026-08-28 (confirmed ~2.6x real wall-clock "
+        "speedup, see make_fft_kernel's own spread_across_units docstring); pass this to "
+        "compare against the old, single-unit-only shape. Never affects cooperative-worker "
+        "leaves either way.",
+    )
     parser.add_argument("-o", "--output", type=str, default=None, help="output .mojo path")
     parser.add_argument(
         "--dump-candidates", action="store_true",
@@ -603,6 +634,7 @@ def main() -> None:
         verify_spill_free=args.verify_spill_free,
         spill_probe_top_k=args.spill_probe_top_k,
         rank_by_cycles=args.rank_by_cycles,
+        spread_across_units=not args.no_spread_across_units,
     )
     print(f"generated: {path}")
 

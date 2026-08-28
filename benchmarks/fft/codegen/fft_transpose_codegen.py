@@ -50,6 +50,7 @@ from codegen.common import (
 )
 from codegen.fft_codegen import emit_kernel as _emit_kernel
 from planning.fft_plan_balanced import BalancedTransposeFFTPlan, FFTTransposePlan
+from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 from planning.fft_plan_recursive import (
     PhysicalTransposePlan,
     RecursiveFFTPlan,
@@ -609,10 +610,103 @@ def _emit_physical_transpose_twiddle_table_precompute(
     e.add()
 
 
+def _safe_round_size(
+    max_uthread: int, *, num_ndp_units: int, interleave_chunk_uthreads: int
+) -> int:
+    """How many microthreads one host-side launch round may safely request
+    (in place of today's flat `max_uthread` cap) when a caller wants a
+    round to actually spread across more than one physical NDP unit,
+    without ever giving any single unit more microthreads than its own
+    scratchpad (`max_uthread`) was sized for.
+
+    Which physical unit a microthread lands on is address interleaving,
+    not launch size: confirmed 2026-08-28 by reading the real simulator
+    source (`M2NDPConfig::get_matched_unit_id`, third_party/m2ndp-detour/
+    src/m2ndp_config.h) -- `unit(addr) = (addr // 256) % num_ndp_units`.
+    One mapped microthread is `interleave_chunk_uthreads` apart in this
+    same unit-of-256-bytes terms (`interleave_chunk_uthreads = 256 //
+    32 = 8`, see TargetProfile's own comment) -- so consecutive
+    microthreads land on the same unit in blocks of `interleave_chunk_
+    uthreads`, rotating through all `num_ndp_units` units every
+    `interleave_chunk_uthreads * num_ndp_units` (256) microthreads, then
+    wrapping back to unit 0 for microthread 256, unit 1 for 264, etc.
+
+    A round of size `R <= safe_round_size` never gives one physical unit
+    more than `max_uthread` microthreads: the worst case for any single
+    unit is `interleave_chunk_uthreads * ceil(R / (num_ndp_units *
+    interleave_chunk_uthreads))`, which is `<= max_uthread` exactly when
+    `R <= (max_uthread // interleave_chunk_uthreads) * interleave_chunk_
+    uthreads * num_ndp_units` -- the formula below. Holds for a launch's
+    own tail round too (not just a "full" round), since the same bound
+    applies to any `R` up to this cap, not only exact multiples of
+    anything.
+
+    Below `interleave_chunk_uthreads`, a round can span at most 2
+    adjacent units (never a whole extra unit's worth) -- already safe
+    today under the plain `max_uthread` cap, so this returns `max_uthread`
+    unchanged in that case rather than a spurious 0 from the floor
+    division.
+
+    NOTE: this formula's own correctness rests on two claims this
+    project has NOT yet independently verified end to end (see
+    docs/DEV-plans or the FFT multi-unit-parallelism plan this session
+    produced): (1) that this count-based bound is what actually matters
+    -- i.e. that a physical unit's own `local_uthread_id()` values for
+    its assigned microthreads are dense, `{0, 1, ..., count-1}`, with no
+    gaps a plain count bound wouldn't catch; and (2) the simulator's own
+    per-launch overhead doesn't dominate at every scale this generator
+    can produce, which is a real open question, not assumed answered.
+    Both need a real build+run experiment before this helper is trusted
+    for anything beyond the pure address-interleaving arithmetic it
+    actually proves.
+    """
+    if max_uthread < interleave_chunk_uthreads:
+        return max_uthread
+    return (max_uthread // interleave_chunk_uthreads) * interleave_chunk_uthreads * num_ndp_units
+
+
+def _stage_round_size(
+    stage: PhysicalTransposePlan, *, spread_across_units: bool, target: TargetProfile
+) -> int:
+    """The number of microthreads one host-side launch round for `stage`
+    may safely request in a single `.launch()` call -- `stage.max_uthread`
+    (today's exact behavior) unless `spread_across_units` is on AND
+    `stage` is eligible: a `PhysicalTransposePlan` (no cooperative-worker
+    concept at all), or an `FFTCodegenPlan` with no cooperative workers
+    (`stage.cooperation is None`) -- a cooperative leaf has its own,
+    separate, not-yet-verified placement story (see fft_cooperative_
+    codegen.py and the C-track of this repo's own multi-NDP-unit plan)
+    and is never touched here.
+
+    Raises if `spread_across_units` is on for a stage whose own
+    `simd_lanes` isn't 8: `_safe_round_size`'s formula (and the address-
+    interleaving math it's built on) assumes one microthread is exactly
+    32 bytes (`simd_lanes * size_of[Float32]() == 32`) -- true at every
+    call site this project ships today (`simd_lanes` defaults to 8
+    everywhere), but `--simd-lanes` is a CLI override this function has
+    no other way to guard against silently mis-trusting.
+    """
+    if not spread_across_units:
+        return stage.max_uthread
+    if not isinstance(stage, PhysicalTransposePlan) and stage.cooperation is not None:
+        return stage.max_uthread
+    if stage.simd_lanes * 4 != 32:
+        raise ValueError(
+            f"spread_across_units requires simd_lanes=8 (one microthread must be "
+            f"exactly 32 bytes, the address-interleaving granule _safe_round_size "
+            f"relies on) -- got simd_lanes={stage.simd_lanes} for {stage.kernel_name}"
+        )
+    return _safe_round_size(
+        stage.max_uthread, num_ndp_units=target.num_ndp_units,
+        interleave_chunk_uthreads=target.interleave_chunk_uthreads,
+    )
+
+
 def generate_recursive_fft_kernels(
     plan: RecursiveFFTPlan, *, compute_lanes: int | None = None,
     narrow_middle_stages: bool = False, loop_stages: bool = True,
-    reference_check: bool = True,
+    reference_check: bool = True, target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    spread_across_units: bool = False,
 ) -> str:
     """Render a full make_recursive_transpose_plan tree as a flat, ordered
     Mojo-ish kernel sequence chained through DRAM from one host main().
@@ -673,6 +767,19 @@ def generate_recursive_fft_kernels(
     and in optimized C) instead. This changes nothing about the device
     kernels or their own correctness -- only how large-N runs verify the
     result without host-side O(N^2) dominating the wall-clock time.
+
+    `spread_across_units`: `False` (the default) keeps every host-side
+    launch round exactly `stage.max_uthread` microthreads wide -- today's
+    unchanged behavior, byte-identical output. `True` widens eligible
+    rounds (see `_stage_round_size`'s own docstring for exactly which
+    stages qualify) up to `_safe_round_size`'s own cap, so a round can
+    genuinely spread across more than one physical NDP unit instead of
+    every launch this generator has ever produced landing on unit 0
+    alone (confirmed 2026-08-28: `_cap_max_uthread` sizes `max_uthread`
+    for one unit's own scratchpad, and nothing before this flag existed
+    ever asked for more than that many microthreads in one `.launch()`
+    call). `target`: only consulted for `num_ndp_units`/
+    `interleave_chunk_uthreads` when this flag is on.
     """
     stages = flatten_recursive_node(plan.root)
     e = Emitter()
@@ -831,14 +938,24 @@ def generate_recursive_fft_kernels(
             e.add(f"    {imn}[{idx}] = {_f32(vi)}")
         e.add()
 
-    # A stage's pool only ever needs to be `max_uthread` microthreads wide,
-    # even when `total_uthreads` is bigger and this stage below launches in
-    # several rounds -- one round's worth of microthreads is all any single
-    # `.launch()` call ever covers, and the pool is reused across rounds
-    # (sequential launches, nothing live across them -- see the round loop
-    # below).
+    # A stage's pool only ever needs to be as wide as its own biggest
+    # round -- `max_uthread` microthreads by default (this stage's own
+    # scratchpad cap), or `_stage_round_size`'s wider cap when
+    # `spread_across_units` is on and this stage is eligible -- even when
+    # `total_uthreads` is bigger and this stage below launches in several
+    # rounds, since the pool is reused across rounds (sequential launches,
+    # nothing live across them -- see the round loop below). Must track
+    # whatever round size is actually used per stage below, or a launch
+    # ends up narrower than the round it claims to cover (see
+    # docs/SIMULATION.md's own "narrower than one stride spreads
+    # unevenly" note -- that's about correctness, not just a wasted
+    # allocation).
+    round_sizes = {
+        i: _stage_round_size(stage, spread_across_units=spread_across_units, target=target)
+        for i, stage in enumerate(stages)
+    }
     for i, stage in enumerate(stages):
-        e.add(f"    var pool{i}_elems = {stage.simd_lanes * stage.max_uthread}")
+        e.add(f"    var pool{i}_elems = {stage.simd_lanes * round_sizes[i]}")
         e.add(f"    var pool{i} = cxl_alloc[Float32](pool{i}_elems)")
     e.add()
 
@@ -872,15 +989,22 @@ def generate_recursive_fft_kernels(
             fixed_args = [rn for rn in twiddle_names.get(i, ()) if rn is not None]
             fixed_args += [n for n in tile_coord_names.get(i, ()) if n is not None]
 
-            rounds = -(-stage.total_uthreads // stage.max_uthread)
+            round_size = round_sizes[i]
+            rounds = -(-stage.total_uthreads // round_size)
+            # `stage.needs_round_split` (whether the `round_offset` Params
+            # field exists at all) is a plan-time decision against the old
+            # max_uthread-only cap -- with spread_across_units on, `rounds`
+            # can collapse to 1 here even when needs_round_split is True.
+            # Harmless: an always-0 round_offset just gets declared and
+            # passed once, never read past that.
             for r in range(rounds):
-                round_count = min(stage.max_uthread, stage.total_uthreads - r * stage.max_uthread)
+                round_count = min(round_size, stage.total_uthreads - r * round_size)
                 suffix = f"{i}" if rounds == 1 else f"{i}_{r}"
                 args = f"{in_r}, {in_i}, {out_r}, {out_i}"
                 if fixed_args:
                     args += ", " + ", ".join(fixed_args)
                 if stage.needs_round_split:
-                    args += f", {r * stage.max_uthread}"
+                    args += f", {r * round_size}"
 
                 e.add(f"    var rc{suffix} = {stage.kernel_name}.launch(")
                 e.add(f"        PooledRange.over(pool{i}, {stage.simd_lanes * round_count}),")
@@ -910,21 +1034,34 @@ def generate_recursive_fft_kernels(
         # covers it -- no different, in the DRAM buffers' own terms, from
         # this stage simply having been `rounds` separate, smaller stages.
         #
-        # This isn't an optimization: launching the *whole* total_uthreads
-        # in one go over a scratchpad sized for only max_uthread of them
-        # (local_uthread_id() cycles 0..max_uthread-1 per core, so anything
-        # that doesn't fit needs a fresh launch, not a bigger one) currently
-        # hangs the simulator rather than erroring -- confirmed by hand
-        # against this same codegen with total_uthreads=4, max_uthread=1.
+        # Launching the *whole* total_uthreads in one go over a scratchpad
+        # sized for only max_uthread of them (local_uthread_id() cycles
+        # 0..max_uthread-1 per physical unit, so anything that doesn't fit
+        # on one unit needs another launch) used to hang the simulator
+        # rather than error -- confirmed by hand with total_uthreads=4,
+        # max_uthread=1, *without* accounting for address-interleaving at
+        # all. `_stage_round_size` above (spread_across_units) is not that
+        # naive removal of the cap -- it's a real, proven-safe wider bound
+        # (see _safe_round_size's own docstring): no physical unit is ever
+        # asked for more than max_uthread microthreads even when a round
+        # spans several of them, so this doesn't reintroduce that hang.
         assert stage.large_twiddle is None
-        rounds = -(-stage.total_uthreads // stage.max_uthread)
-        # elem_off advances by this stage's own *logical* replicas per round,
-        # not physical microthreads once workers share one replica's
-        # scratchpad -- see FFTCodegenPlan.replicas_per_round's own
-        # docstring.
-        replicas_per_round = stage.replicas_per_round()
+        round_size = round_sizes[i]
+        rounds = -(-stage.total_uthreads // round_size)
+        # elem_off advances by this stage's own *logical* replicas per
+        # round, not physical microthreads once workers share one
+        # replica's scratchpad -- see FFTCodegenPlan.replicas_per_round's
+        # own docstring. That method's own value is plan-time-fixed
+        # against the old max_uthread cap, so it's only reused as-is for
+        # a cooperative stage (never widened by spread_across_units, see
+        # _stage_round_size); for a non-cooperative stage, one physical
+        # microthread is already one replica (replicas_per_round() ==
+        # max_uthread whenever cooperation is None -- see that method's
+        # own docstring), so round_size itself is the right value once a
+        # round can be wider than max_uthread.
+        replicas_per_round = round_size if stage.cooperation is None else stage.replicas_per_round()
         for r in range(rounds):
-            round_count = min(stage.max_uthread, stage.total_uthreads - r * stage.max_uthread)
+            round_count = min(round_size, stage.total_uthreads - r * round_size)
             elem_off = r * replicas_per_round * stage.length
             round_in_r = in_r if elem_off == 0 else f"({in_r} + {elem_off})"
             round_in_i = in_i if elem_off == 0 else f"({in_i} + {elem_off})"
