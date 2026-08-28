@@ -211,15 +211,28 @@ def make_fft_kernel(
     (floor 1) for a leaf/near-FFT stage that is neither its own kernel's
     first nor last stage -- the shape a real N=630 register-pressure
     failure was isolated to (see generate_recursive_fft_kernels's own
-    docstring): even `compute_lanes=4` (this target's documented default)
-    still spilled there, via a `csrr ..., vlenb` dynamic spill-slot read
-    the simulator's `ReadCsr` silently answers `0` for, corrupting the
-    stack -- narrower `compute_lanes` alone happened to dodge it by
-    accident of which spill shape the compiler picked, not because the
-    spill was gone. This targets the actual liability directly, at no
-    correctness cost (every `verify_fft_*.py` case already covers every
-    `compute_lanes` this can produce) -- pass `False` to compare against
-    the old flat-`compute_lanes` shape for this liability specifically.
+    docstring).
+
+    2026-08-28 update, important: this does *not* actually eliminate that
+    spill -- direct probing found N=630/N=105's own radix-5 middle stage
+    spills byte-for-byte identically (128-byte frame) whether this flag
+    is `True` or `False`. It was briefly flipped to `False` by default
+    that day on the theory that halving was neutral-to-harmful (it also
+    turned out to *introduce* a spill for a plain radix-(4,4,4) leaf,
+    e.g. N=64, that full width doesn't have) -- **and immediately
+    reverted** after real-hardware testing showed `False` produces a
+    silently WRONG answer for N=105/N=630 specifically, while `True`'s
+    own byte-identical spill there has never once produced a wrong
+    answer in any case tested. So: `True` is kept as the default not
+    because it fixes anything, but because every real-hardware case
+    tried so far (N=64, N=105, N=630) has been *correct* under it, and
+    one (N=105/N=630) is confirmed *wrong* under `False`. `False` is
+    kept as an override for exactly this reason -- comparing against it
+    is what surfaces cases like N=64 where it's a strict improvement --
+    but do not flip the default again without a real build+run
+    correctness check across a broad N sweep, not just a spill-presence
+    check (`spill_free` and "gives the right answer" are different
+    questions -- see [[fft-spill-hard-filter]]).
 
     A *second*, unconditional liability -- radix 10/11/13/17's own operand
     count alone spills the same way regardless of stage position
