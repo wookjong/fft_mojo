@@ -62,6 +62,7 @@ def worker_candidates_per_fft(
     simd_lanes: int = 8,
     max_workers: int | None = None,
     interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
+    exclude_full_interleave_chunk: bool = True,
 ) -> list[int]:
     """Every legal cooperative worker count for a leaf of this shape,
     ascending -- every divisor of the hardware's own interleave chunk
@@ -88,6 +89,29 @@ def worker_candidates_per_fft(
     `cooperative_workers` a caller passed through
     `fft_plan_recursive.make_recursive_transpose_plan`) -- `None` (the
     default) applies none beyond the reasoning above.
+
+    `exclude_full_interleave_chunk`: `True` (the default) drops
+    `workers_per_fft == interleave_chunk_uthreads` (8, on this project's
+    own target) from the candidate list even when it would otherwise
+    qualify -- confirmed real-hardware wrong (not merely spilling; the
+    Python-level numeric harness passes cleanly, so this is not a logic
+    bug in this module) at that exact worker count, independent of
+    `compute_lanes`/batch size/`loop_stages`: N=128 radices=(4,4,4,2)
+    2026-08-30 (mismatch at a fixed output index, every compute_lanes and
+    batch size tried), and matches this project's own earlier N=1024
+    finding (`fft_cooperative_codegen._emit_cooperative_stage`'s own
+    docstring, commit `d93a290`) that was believed fully fixed by making
+    `loop_stages` apply per-worker -- that fix was necessary but not
+    sufficient; something else, still unidentified at the instruction
+    level, breaks specifically when one cooperative group exactly fills
+    the hardware's own interleave chunk. `choose_workers_per_fft` falls
+    back to the next-largest divisor (4, on this target) automatically,
+    which real-hardware testing confirms correct at every compute_lanes/
+    batch size tried for the same N=128 case (still spills at some
+    compute_lanes -- a caller wanting a confirmed spill-free plan still
+    needs `--verify-spill-free`/`probe_spill_free`, unaffected by this
+    flag). Pass `False` only after separately confirming a specific case
+    doesn't hit this -- never as a blanket default.
     """
     if not radices:
         raise ValueError("radices must be non-empty")
@@ -96,6 +120,7 @@ def worker_candidates_per_fft(
     divisors = [
         d for d in range(1, interleave_chunk_uthreads + 1)
         if interleave_chunk_uthreads % d == 0
+        and not (exclude_full_interleave_chunk and d == interleave_chunk_uthreads)
     ]
     return [d for d in divisors if d <= cap]
 
@@ -107,21 +132,24 @@ def choose_workers_per_fft(
     simd_lanes: int = 8,
     max_workers: int | None = None,
     interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
+    exclude_full_interleave_chunk: bool = True,
 ) -> int:
     """A leaf's own useful cooperative worker count -- the *largest* legal
     candidate from `worker_candidates_per_fft` (see its own docstring for
-    the legality rule). A heuristic, not a cost model: it says how many
-    workers can ever be useful for this leaf, not how many are *optimal* --
-    optimality needs real cycle measurements across leaf shapes,
-    deliberately left as future work (see fft_plan_recursive.
-    _choose_recursive_split's own docstring for the same "candidate
-    generation stays swappable, a real cost model comes later" discipline
-    this follows; `planning/fft_plan_search.py` is where that search now
-    lives).
+    the legality rule, and for `exclude_full_interleave_chunk`'s own
+    real-hardware-confirmed-wrong-answer rationale). A heuristic, not a
+    cost model: it says how many workers can ever be useful for this
+    leaf, not how many are *optimal* -- optimality needs real cycle
+    measurements across leaf shapes, deliberately left as future work
+    (see fft_plan_recursive._choose_recursive_split's own docstring for
+    the same "candidate generation stays swappable, a real cost model
+    comes later" discipline this follows; `planning/fft_plan_search.py`
+    is where that search now lives).
     """
     candidates = worker_candidates_per_fft(
         length, radices, simd_lanes=simd_lanes, max_workers=max_workers,
         interleave_chunk_uthreads=interleave_chunk_uthreads,
+        exclude_full_interleave_chunk=exclude_full_interleave_chunk,
     )
     return candidates[-1]
 

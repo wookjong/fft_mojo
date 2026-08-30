@@ -115,15 +115,42 @@ item 9).
 
 ## 9. Best spill-free comparison, where different from "controlled"
 
-N=128: no "best cooperative" exists -- every cooperative candidate tried
-(cl=4/2/1) produced a wrong answer (`mismatch at 32`), independent of the
-spill question (cl=2 and cl=1 are both spill-free *and* wrong). This is a
-**separate, real correctness bug** in the existing (pre-this-session)
-cooperative codegen at `workers_per_fft=8`, not something this comparison
-task fixed or fully root-caused -- flagged, not chased further (out of
-scope: Task 1 asked for a fair *comparison*, not a full cooperative-codegen
-audit). Persistent's own N=128 numbers stand uncontested as the only
-verified-correct option in this sweep at that N.
+**UPDATE 2026-08-30 -- fixed, see below.** N=128 originally had no "best
+cooperative": every candidate tried (cl=4/2/1) produced a wrong answer
+(`mismatch at 32`), independent of spilling -- cl=2 and cl=1 were *both*
+spill-free (no warning) *and* wrong, a real blind spot in the existing
+spill-only safety net (spill-free is necessary evidence of safety here,
+not sufficient). Root-caused far enough to fix, not fully to the
+instruction level: confirmed real-hardware wrong at `workers_per_fft=8`
+(the full `interleave_chunk_uthreads`) across every `compute_lanes`/batch
+size tried, while the Python-level numeric harness (the *actual* emitted
+stage text, re-executed) passes cleanly at the same configuration --
+meaning the bug is below this codebase's own planning/codegen layer,
+matching this project's own established pattern for this class of issue
+(compare the N=630 `vlenb`-CSR and transpose-tile findings in
+[[fft-cost-model-session]]). It also matches an *already-documented* case
+in this same codebase: `fft_cooperative_codegen._emit_cooperative_stage`'s
+own docstring records a 2026-08-27 N=1024/`workers_per_fft=8` wrong-answer
+finding, believed fully fixed at the time by making `loop_stages` apply
+per-worker -- that fix was necessary but **not sufficient**; this session
+found the same worker-count/wrong-answer pattern persists independent of
+`loop_stages`/function size.
+
+**Fix landed** (`planning/fft_plan_cooperative.py`,
+`worker_candidates_per_fft`/`choose_workers_per_fft` gain
+`exclude_full_interleave_chunk: bool = True`): `workers_per_fft ==
+interleave_chunk_uthreads` (8) is no longer offered as an automatic
+candidate, by default -- both the `"auto"` path and an explicit
+`--cooperative-workers 8` (which was *already* only ever an upper bound
+for `choose_workers_per_fft`, never a raw override -- see
+`fft_plan_recursive.py`'s own docstring on this) now fall back to the
+next-largest safe divisor (4, on this target), confirmed real-hardware
+correct at every `compute_lanes`/batch size tried for N=128. Persistent's
+own N=128 numbers still stand as the only option confirmed *both*
+spill-free *and* correct at that N in this sweep -- cooperative's
+now-default `workers_per_fft=4` is correct but still spills (a separate,
+pre-existing, purely register-pressure issue, mitigable the same way as
+every other case in this doc: `--compute-lanes 2`).
 
 ## 10. Sensitivity
 
