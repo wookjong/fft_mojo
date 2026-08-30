@@ -854,6 +854,7 @@ def format_plan_summary(candidate: FFTPlanCandidate, *, index: int | None = None
     lines.append(f"    estimated_dram_bytes     = {m.estimated_dram_bytes}")
     lines.append(f"    max_scratchpad_bytes     = {m.max_scratchpad_bytes}")
     lines.append(f"    worst_worker_utilization = {m.worst_worker_utilization:.3f}")
+    lines.append(f"    total_worker_stage_batches = {m.total_worker_stage_batches}")
     lines.append(f"    radix_risk_score         = {m.radix_risk_score}")
     lines.append(f"    estimated_cost           = {m.estimated_cost:.1f}")
     return "\n".join(lines)

@@ -1,0 +1,134 @@
+# Execution cost model rework: validation (2026-08-30)
+
+Follow-up to `planner_joint_search_validation_task.md`'s own measurement-driven
+validation (14 N, 55 real measured candidates): that pass found `_execution_cost`
+(via `worst_worker_utilization = min(active_workers/workers_per_fft across
+cooperative stages)`) could not distinguish `workers_per_fft=2` from `=4` on
+N=216's default radix tier even though real cycles differ by ~35% (30205 vs.
+22316) -- every worker slot has >=1 batch in both configs, so `min(...)` is
+1.0 either way. This doc records the follow-up: exposing stage-level metrics,
+comparing 4 aggregation models against the same 55-candidate dataset, and the
+model actually adopted.
+
+## Phase 1/2: stage-level metrics and the reproduced information loss
+
+`planning/fft_cost_model.py` gained `StageExecutionMetrics`/
+`compute_stage_metrics(plan)` -- one entry per leaf stage, read straight off
+`FFTStagePlan`/`SIMDBatchPlan` (no new constant): `simd_iteration_count`
+(total SIMD-width batches for one logical FFT this stage), `max_batches_per_
+worker` (`_partition_batches`'s own round-robin busiest-worker batch count --
+`simd_iteration_count` itself when not cooperative), `worker_utilization`
+(the old metric, kept for direct comparison), `effective_parallelism`
+(`simd_iteration_count / max_batches_per_worker`).
+
+N=216, default tier, worker=2 vs. worker=4 (`compute_stage_metrics` output):
+
+| stage | radix | simd_iters | W=2 max/worker | W=2 util | W=2 eff.par | W=4 max/worker | W=4 util | W=4 eff.par |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 4 | 7 | 4 | 1.0 | 1.75 | 2 | 1.0 | 3.5 |
+| 1 | 2 | 14 | 7 | 1.0 | 2.0 | 4 | 1.0 | 3.5 |
+| 2 | 3 | 9 | 5 | 1.0 | 1.8 | 3 | 1.0 | 3.0 |
+| 3 | 3 | 9 | 5 | 1.0 | 1.8 | 3 | 1.0 | 3.0 |
+| 4 | 3 | 9 | 5 | 1.0 | 1.8 | 3 | 1.0 | 3.0 |
+
+`worker_utilization` (the production metric until this change) is **1.0 for
+every stage at both worker counts** -- proven, not assumed, why `min()`-based
+`worst_worker_utilization` scores W=2 and W=4 identically. `max_batches_per_
+worker` sums to 26 (W=2) vs. 15 (W=4) -- real cycles 30205 vs. 22316, same
+direction, comparable magnitude of improvement.
+
+N=512/1024 (lopsided multi-leaf, near-leaf big + far-leaf `butterfly_count=1`):
+the near-leaf's own `max_batches_per_worker` sum drops from 16 (W=2) to 8
+(W=4) -- genuinely and correctly detected -- but the far-leaf's own single
+stage is stuck at `max_batches_per_worker=1` regardless of worker count
+(nothing to divide), and **measured total cycles do not move at all**
+(1187/1195/1195 for N=512; 2111/2111/2111 for N=1024). This is not a stage-
+metric failure: `memory_cost` for these N is already 40000-82000 vs. an
+execution-cost delta in the single digits, i.e. the existing memory-traffic
+term already correctly predicts these lopsided plans are DRAM-bound, not
+leaf-compute-bound -- the near-leaf's real internal speedup exists but isn't
+on the critical path total cycle count reflects.
+
+## Phase 4: leaf/plan-level aggregation semantics
+
+`flatten_recursive_node`'s own docstring/ordering (PRE -> near_fft -> MIDDLE
+-> far_child -> POST) and `FFTCodegenPlan`'s own docstring ("chained through
+DRAM ... never through a shared scratchpad, since nothing is guaranteed still
+resident once a kernel launch returns") both describe kernels as separate,
+sequential launches -- not overlapping. The *existing* `_memory_cost` term
+already assumes this (`estimated_dram_bytes = len(stages) * plan.n * ...`,
+an unconditional sum across every stage in the flattened list) -- summing
+stage/leaf execution time the same way is not a new assumption, it is the
+same one the memory-cost model already relies on.
+
+## Phase 3/6: model comparison (55 real measured candidates, rebuilt +
+re-scored with each model)
+
+Four candidate aggregation formulas, all reading only `compute_stage_metrics`
+output (no fitted constant):
+
+- **A (current/rejected)**: `idle_worker_penalty * (1 - min(worker_utilization))`
+- **B (rejected)**: `idle_worker_penalty * (1 - mean(worker_utilization))`
+- **C (rejected)**: `idle_worker_penalty * (1 - work-weighted mean(worker_utilization))`
+- **D (adopted)**: `stage_work * sum(max_batches_per_worker across every stage)`
+  -- reuses `CostWeights.stage_work` (already-existing per-stage rate), not a
+  new constant.
+
+| model | mean Spearman (n cases) | top-1 exact | top-3 oracle | top-5 oracle | mean top-1 regret | worker-pair acc. | radix-pair acc. | joint-pair acc. |
+|---|---|---|---|---|---|---|---|---|
+| A current | -0.150 (8) | 4/14 | 12/14 | 13/14 | 0.376 | 65.2% (30/46) | 64.3% (9/14) | 48.5% (16/33) |
+| B simple avg | -0.214 (8) | 4/14 | 12/14 | 13/14 | 0.376 | 63.0% (29/46) | 64.3% (9/14) | 42.4% (14/33) |
+| C work-weighted | -0.214 (8) | 4/14 | 12/14 | 13/14 | 0.376 | 63.0% (29/46) | 64.3% (9/14) | 42.4% (14/33) |
+| **D stage-time (adopted)** | **+0.460 (13)** | **10/14** | 13/14 | **14/14** | **0.013** | **78.3% (36/46)** | **71.4% (10/14)** | **57.6% (19/33)** |
+
+B/C (utilization-fraction averaging) do not beat A -- both are *worse* on
+every metric. This matches the theoretical argument in Phase 3's own task
+spec: any `[0,1]`-normalized-by-`workers_per_fft` utilization fraction
+structurally cannot see the *absolute* benefit of more workers (a stage at
+"87.5% of its own max" looks the same whether that max is 2x or 4x), so
+averaging the same blind metric differently was never going to fix it. Only
+D, which sums the *unnormalized* `max_batches_per_worker`, captures the
+quantity that actually shrinks when `workers_per_fft` goes up.
+
+Policy-legal-only (spill-free candidates, N/A where <2 exist -- 9 of 14 N
+had 0-1 spill-free candidates and cannot support a ranking comparison at
+all, consistent with [[fft-spill-hard-filter]]'s own caution about trusting
+a spill-included ranking): of the 4 N with >=2
+spill-free candidates, A and D tie on 3 (N=30, N=144, N=960/split=30) and D
+strictly wins on N=256 (A picks the non-cooperative candidate at 38836
+cycles, 73.7% worse than the spill-free-and-faster worker=2 option at 22362;
+D picks correctly, 0% regret).
+
+## Phase 8: ResourceCost diagnosis only (no change made)
+
+Out of scope for this pass per the task's own instruction. Not touched:
+`_resource_cost`'s `radix_risk_penalty`/`spill_penalty` terms and their
+values are unchanged (see `verify_fft_execution_cost.check_spill_policy_
+unaffected`). Left for a dedicated follow-up.
+
+## Adopted change
+
+`planning/fft_cost_model.py`:
+- Added `StageExecutionMetrics` + `compute_stage_metrics(plan)`.
+- Added `PlanMetrics.total_worker_stage_batches` (kept `worst_worker_
+  utilization` as a diagnostic-only field, no longer read by `_execution_
+  cost`).
+- `_execution_cost` now returns `weights.stage_work * metrics.total_worker_
+  stage_batches`.
+- Removed `CostWeights.idle_worker_penalty` (nothing reads it anymore).
+
+`planning/fft_plan_search.py`: `format_plan_summary` prints `total_worker_
+stage_batches` alongside the existing (still-kept) `worst_worker_utilization`
+line.
+
+`verification/verify_fft_execution_cost.py` (new, wired into `verify_fft_
+plan.py`'s own `main()`): 8 checks -- stage metrics match plan structure,
+effective_parallelism is monotonic in worker count on a real regression
+case, a big leaf's own signal survives a tiny leaf sharing the same plan,
+determinism, non-cooperative baseline behavior preserved exactly, candidate
+*count* is proven independent of which cost function ranks them (an
+adversarial monkeypatched cost function), and the spill/resource-cost policy
+is untouched.
+
+Full existing suite (`python3 -m verification.verify_fft_plan`) passes
+unchanged after this edit.

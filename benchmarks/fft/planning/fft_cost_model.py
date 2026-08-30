@@ -158,7 +158,32 @@ class PlanMetrics:
     max_transpose_stage_uthreads: int
     estimated_dram_bytes: int
     max_scratchpad_bytes: int
-    worst_worker_utilization: float  # 1.0 = no cooperative leaf ever idles a worker
+    # 1.0 = no cooperative leaf ever idles a worker. Kept as a diagnostic
+    # field (format_plan_summary still prints it) but NO LONGER what
+    # `_execution_cost` uses -- see `total_worker_stage_batches` below and
+    # docs/execution_cost_model_validation.md for why: this can only see
+    # whether a worker slot is *occupied*, never how many batches the
+    # *busiest* one still has, so it is 1.0 (identical) for e.g.
+    # workers_per_fft=2 and =4 on the exact same stage whenever the
+    # round-robin split leaves no worker empty -- confirmed on real
+    # hardware (N=216) to hide a genuine ~35% cycle difference between
+    # those two worker counts.
+    worst_worker_utilization: float
+    # `sum(max_batches_per_worker across every leaf stage)` -- see
+    # `StageExecutionMetrics.max_batches_per_worker`'s own docstring. The
+    # busiest worker's own serial batch count, summed over every stage of
+    # every leaf kernel in this plan (stages run sequentially within a
+    # kernel; kernels run sequentially as separate launches -- see
+    # `flatten_recursive_node`'s own execution-order docstring) -- an
+    # absolute proxy for total serial SIMD-iteration time, not a [0,1]
+    # utilization fraction. This is what `_execution_cost` uses (chosen
+    # 2026-08-30 after comparing 4 aggregation models against 55 real
+    # measured candidates -- see docs/execution_cost_model_validation.md):
+    # unlike any utilization-fraction model (worst-case, simple-average,
+    # or work-weighted-average all tried and rejected), this is the one
+    # quantity that actually shrinks when workers_per_fft goes up on an
+    # already-evenly-split stage, which is the entire point.
+    total_worker_stage_batches: int
     radix_risk_score: float          # 0.0 = every leaf's radix sequence is the confirmed-safe kind
     # How many PRE/MIDDLE/POST transpose stages have a tile that does NOT
     # divide `rows`/`cols` exactly (`rows % tile_rows != 0 or cols %
@@ -224,11 +249,15 @@ class CostWeights:
     # what memory_traffic already counts per stage -- a per-kernel
     # fixed-overhead term on top of the raw byte count.
     transpose_passes: float = 50.0
+    # Also the per-serial-batch rate `_execution_cost` charges against
+    # `total_worker_stage_batches` (2026-08-30) -- see that function's
+    # own docstring for why it reuses this rate rather than introducing
+    # a new one (the old idle_worker_penalty weight this replaced is
+    # gone: nothing else read it).
     stage_work: float = 0.1
     # A spill on real hardware is a correctness failure (the kernel panics
     # or silently zeroes its output), not a slowdown -- this must dominate
     # every other term whenever radix_risk_score is nonzero.
-    idle_worker_penalty: float = 200.0
     radix_risk_penalty: float = 5000.0
     # NOT the authoritative spill policy -- see [[fft-spill-hard-filter]]
     # (a confirmed real spill must disqualify a candidate outright, never
@@ -292,6 +321,124 @@ class CostWeights:
 
 
 DEFAULT_COST_WEIGHTS = CostWeights()
+
+
+@dataclass(frozen=True)
+class StageExecutionMetrics:
+    """Per-computational-stage execution shape, one level more granular
+    than `PlanMetrics.worst_worker_utilization` -- exposed for offline
+    execution-model comparison (see docs/execution_cost_model_validation.md),
+    not consumed by `estimate_cost`/`PlanMetrics` itself. Every field is
+    read straight off the already-built plan (`FFTStagePlan`/
+    `SIMDBatchPlan`) -- no new constant, no per-radix instruction-count
+    guess.
+
+    Confirmed real-hardware finding this exists to make visible (N=216,
+    default radix tier): `worst_worker_utilization` is 1.0 for both
+    `workers_per_fft=2` and `workers_per_fft=4` (every worker has >=1
+    batch on every stage, so nothing here ever looks idle), yet measured
+    cycles are 30205 vs. 22316 -- a real ~35% difference `worst_worker_
+    utilization` cannot see, because it only asks "is every worker slot
+    occupied," never "how many batches does the *busiest* worker still
+    have to do." `max_batches_per_worker` (below) is that missing
+    quantity: `_partition_batches` (fft_plan_cooperative.py) round-robins
+    a stage's own `simd_iteration_count` batches across `workers_per_fft`
+    workers, so the busiest worker's own batch count -- not whether every
+    worker has *a* batch -- is what actually bounds this stage's parallel
+    completion time.
+    """
+
+    leaf_index: int
+    stage_id: int
+    radix: int
+    # Total butterflies this stage processes for one logical FFT replica --
+    # `sum(batch.valid_lanes for batch in stage.batches)`, the exact
+    # quantity `simd_iteration_count = ceil(butterfly_count / simd_lanes)`
+    # was itself derived from (see layouts_for_radices), read back out
+    # rather than re-derived from radix/length so this stays correct even
+    # for a tail (`valid_lanes < simd_lanes`) batch.
+    butterfly_count: int
+    # `len(stage.batches)` -- how many SIMD-width iterations one implicit
+    # (non-cooperative) worker would run serially for this stage.
+    simd_iteration_count: int
+    # `None` when this leaf is not cooperative (`stage.worker_batches is
+    # None`) -- the whole stage is one implicit worker's serial work.
+    workers_per_fft: int | None
+    # Workers with >=1 batch assigned this stage; `1` when not
+    # cooperative. This is the numerator `_leaf_worker_utilization`
+    # (the existing, coarser metric) uses.
+    active_workers: int
+    # The busiest worker's own batch count this stage -- `simd_iteration_
+    # count` itself when not cooperative (one implicit worker owns
+    # everything); `max(len(wb) for wb in stage.worker_batches)`
+    # otherwise. THE quantity worst_worker_utilization cannot see: this
+    # is what actually bounds a cooperative stage's parallel time, not
+    # whether every worker slot is merely non-empty.
+    max_batches_per_worker: int
+    # `active_workers / workers_per_fft` (1.0 when not cooperative) --
+    # kept for direct comparison against today's production metric; see
+    # this dataclass's own docstring for why it cannot distinguish
+    # workers_per_fft=2 from =4 on an evenly-divisible stage.
+    worker_utilization: float
+    # `simd_iteration_count / max_batches_per_worker` -- how many workers'
+    # worth of *real* speedup this stage actually realized (<= workers_
+    # per_fft always; == workers_per_fft exactly when the round-robin
+    # split divides evenly; == 1.0 when not cooperative).
+    effective_parallelism: float
+
+
+def compute_stage_metrics(plan: RecursiveFFTPlan) -> list[StageExecutionMetrics]:
+    """Every leaf kernel's own per-stage execution shape, flattened in
+    plan execution order (`flatten_recursive_node`'s own ordering: PRE ->
+    near_fft -> MIDDLE -> far_child -> POST) -- transpose stages carry no
+    per-worker-cooperation concept in this codebase, so only `FFTCodegenPlan`
+    (leaf kernel) entries contribute. `leaf_index` counts leaf kernels only
+    (0, 1, 2, ... in execution order), not the mixed leaf+transpose flat
+    index `flatten_recursive_node` itself returns.
+    """
+    result: list[StageExecutionMetrics] = []
+    leaf_index = 0
+    for node in flatten_recursive_node(plan.root):
+        if isinstance(node, PhysicalTransposePlan):
+            continue
+        for stage in node.stages:
+            simd_iteration_count = len(stage.batches)
+            butterfly_count = sum(b.valid_lanes for b in stage.batches)
+            if stage.worker_batches is None:
+                workers_per_fft = None
+                active_workers = 1
+                max_batches_per_worker = simd_iteration_count
+                worker_utilization = 1.0
+            else:
+                workers_per_fft = len(stage.worker_batches)
+                active_workers = sum(1 for wb in stage.worker_batches if wb)
+                max_batches_per_worker = max(
+                    (len(wb) for wb in stage.worker_batches), default=0
+                )
+                worker_utilization = (
+                    active_workers / workers_per_fft if workers_per_fft else 1.0
+                )
+            effective_parallelism = (
+                simd_iteration_count / max_batches_per_worker
+                if max_batches_per_worker
+                else 1.0
+            )
+            result.append(
+                StageExecutionMetrics(
+                    leaf_index=leaf_index,
+                    stage_id=stage.stage_id,
+                    radix=stage.radix,
+                    butterfly_count=butterfly_count,
+                    simd_iteration_count=simd_iteration_count,
+                    workers_per_fft=workers_per_fft,
+                    active_workers=active_workers,
+                    max_batches_per_worker=max_batches_per_worker,
+                    worker_utilization=worker_utilization,
+                    effective_parallelism=effective_parallelism,
+                )
+            )
+        leaf_index += 1
+    return result
 
 
 def _tree_depth(node: FFTNode) -> int:
@@ -374,6 +521,9 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
     # scales with it, so the DRAM traffic estimate must too or every batch
     # sweep would under-count it identically regardless of batch).
     estimated_dram_bytes = len(stages) * plan.n * plan.batch * 2 * 2 * 4
+    total_worker_stage_batches = sum(
+        sm.max_batches_per_worker for sm in compute_stage_metrics(plan)
+    )
 
     return PlanMetrics(
         recursion_depth=_tree_depth(plan.root),
@@ -385,6 +535,7 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
         estimated_dram_bytes=estimated_dram_bytes,
         max_scratchpad_bytes=max_scratchpad_bytes,
         worst_worker_utilization=min(utilizations) if utilizations else 1.0,
+        total_worker_stage_batches=total_worker_stage_batches,
         radix_risk_score=radix_risk_score,
         transpose_tail_tile_count=transpose_tail_tile_count,
     )
@@ -441,15 +592,30 @@ def _resource_cost(metrics: PlanMetrics, weights: CostWeights) -> float:
 
 
 def _execution_cost(metrics: PlanMetrics, weights: CostWeights) -> float:
-    """Execution-strategy terms: how well a chosen cooperative worker count
-    is actually utilized (`worst_worker_utilization`, 1.0 = never idle) --
-    the one PlanMetrics field that depends on *how a kernel runs*, not on
-    its own radix/memory shape. The natural place for a future real
-    synchronization/barrier/exchange-overhead term to land once this
-    project's cost model tracks one (see this module's own docstring:
-    every existing term is a static function of the plan, nothing here
-    models cooperative communication cost yet)."""
-    return weights.idle_worker_penalty * (1.0 - metrics.worst_worker_utilization)
+    """Execution-strategy terms: `total_worker_stage_batches` (the busiest
+    worker's own serial SIMD-iteration count, summed over every stage --
+    see that field's own docstring) is the one PlanMetrics field that
+    depends on *how a kernel runs*, not on its own radix/memory shape.
+
+    Reuses `weights.stage_work` (the same per-stage-work rate `_compute_
+    cost` already charges per stage, applied here per serial batch
+    instead) rather than a new constant -- chosen 2026-08-30 after
+    comparing this against `worst_worker_utilization`-based models
+    (worst-case/simple-average/work-weighted-average, all [0,1]
+    utilization fractions) on 55 real measured candidates: every
+    utilization-fraction model normalizes away the exact quantity that
+    matters (workers_per_fft=2 and =4 can both look like "every worker
+    100% busy" on the same evenly-split stage, since utilization only
+    asks "is any worker idle," never "how many batches is the busiest
+    one left with") -- see docs/execution_cost_model_validation.md for
+    the full comparison (mean Spearman correlation: -0.15 worst-case,
+    -0.21 both averaging variants, +0.46 this one; worker-pair prediction
+    accuracy: 65% worst-case vs 78% this one). The natural place for a
+    future real synchronization/barrier/exchange-overhead term to land
+    once this project's cost model tracks one (see this module's own
+    docstring: every existing term is a static function of the plan,
+    nothing here models cooperative communication cost yet)."""
+    return weights.stage_work * metrics.total_worker_stage_batches
 
 
 def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIGHTS) -> float:
