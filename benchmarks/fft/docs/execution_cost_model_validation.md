@@ -132,3 +132,95 @@ is untouched.
 
 Full existing suite (`python3 -m verification.verify_fft_plan`) passes
 unchanged after this edit.
+
+## Follow-up: persistent execution as a search axis (2026-08-30)
+
+The compute_lanes spill-avoidance investigation (see docs/
+compute_lanes_spill_avoidance.md) surfaced a third execution model this
+project had already implemented (`planning.fft_plan_persistent`,
+`docs/persistent_leaf_design.md`) but never wired into `generate_
+candidates` at all -- every candidate up to this point was either plain
+or cooperative-worker. Real measurement (N=216, single fused leaf,
+radices=(4,2,3,3,3), batch=1, apples-to-apples with every cooperative/
+non-cooperative candidate already in the search): persistent is
+spill-free and correct at the shipped default `compute_lanes=4` (23944
+cycles) where the *same* radix's cooperative worker=2/4 candidates both
+spill outright at that width -- and it beats every other confirmed-safe
+candidate for this N, including the best rescued cooperative one (28784
+cycles) and the plain baseline (43771 cycles).
+
+**Added, step 10 of `generate_candidates` (`planning/fft_plan_search.py`)**:
+- `generate_persistent_leaf_candidates(n, target, inverse, batch)`: one
+  candidate per radix tier (`generate_radix_tiers`, same tiers the
+  cooperative joint search offers), `num_logical_blocks=batch` -- `[]`
+  (not an exception) when `16*n > target.spad_capacity_bytes` or this N
+  needs `make_recursive_transpose_plan`'s own recursion (persistent only
+  builds a single un-split leaf today, see `docs/persistent_leaf_design.md`).
+- `_wrap_persistent_leaf_as_recursive_plan`: wraps `make_persistent_leaf_
+  plan`'s own `FFTCodegenPlan` return as an ordinary single-leaf
+  `RecursiveFFTPlan` (`FFTLeafPlan(kernel=...)` + a synthesized
+  `MultiKernelHostPlan`) -- every generic reader (`flatten_recursive_node`,
+  `compute_stage_metrics`/`estimate_metrics`, `_plan_signature`) works on
+  it with zero special-casing; only the two places this project's own
+  codegen/toolchain genuinely differs by execution model (rendering,
+  probing) need to branch.
+- `PlanChoices.execution_strategy: str | None`: `"persistent"` marks these
+  candidates (`None` otherwise, unchanged).
+- `_plan_signature` now folds `stage.persistent` (plus `total_uthreads`/
+  `max_uthread`, since `num_logical_blocks` isn't otherwise encoded) into
+  its own per-leaf signature tuple -- without this, a persistent candidate
+  and the plain non-cooperative baseline of the *same* radix would
+  collide (both show `cooperation=None`) and global dedup would silently
+  drop one.
+
+**`planning/fft_cost_model.py`**: `compute_stage_metrics` gained a third
+branch reading `stage.persistent_vector_batches`/`persistent_scalar_
+batches` (a persistent stage never sets `worker_batches` -- a separate,
+non-overlapping partition, see `FFTStagePlan`'s own docstring -- so
+without this every persistent stage was silently misread as single-
+worker-serial, wildly overstating its own `total_worker_stage_batches`).
+Verified directly against the same N=216 case: `total_worker_stage_
+batches` = 9 (persistent) vs. 15 (cooperative worker=4) vs. 48 (plain
+baseline) -- same relative order as the real measured cycles, with zero
+new weight (the existing `stage_work` rate already does the job once the
+batch count is read correctly).
+
+**`planning/spill_probe.py`**: new `_probe_plan` dispatcher, used by
+`probe_and_rerank_candidates` -- routes a candidate to `probe_persistent_
+kernel_spill_free` when `plan.root.kernel.persistent is not None`, `probe_
+spill_free` otherwise. Necessary, not cosmetic: `probe_spill_free`'s own
+`generate_recursive_fft_kernels` has no idea `FFTCodegenPlan.persistent`
+exists and would render a persistent leaf as though it were an ordinary
+one (reading `stage.batches`/`worker_batches`, both irrelevant to
+`persistent_vector_batches`/`persistent_scalar_batches`) -- wrong kernel
+body, not just a wrong cost. Also resolves `compute_lanes=None` the same
+way `probe_spill_free` itself does before dispatching (`probe_persistent_
+kernel_spill_free`'s own default only applies when the argument is
+omitted, not when `None` is passed through explicitly).
+
+**Verified end to end on the real toolchain** (not just structurally):
+`probe_and_rerank_candidates(rank_candidates(generate_candidates(216))[:4],
+top_k=2, rank_by_cycles=True)` correctly probes all four top-ranked
+candidates, confirms the persistent one spill-free at 23944 cycles
+(ranked first), excludes the two spilling cooperative candidates per
+existing [[fft-spill-hard-filter]] policy, and keeps the plain baseline
+(43771 cycles) as the second safe option -- no code path change was
+needed in that function beyond the dispatcher itself.
+
+`verification/verify_fft_persistent_search.py` (new, wired into `verify_
+fft_plan.py`'s own `main()`): 5 checks -- candidate generated for a
+feasible N, infeasible N returns `[]` without crashing, signature is
+distinct from the same-radix non-cooperative baseline, cost reflects the
+real register-pressure difference, and the probe-dispatch condition holds
+(the real-hardware round trip itself was run manually, not re-run inside
+this fast check -- see this section's own paragraph above). Full existing
+suite passes unchanged.
+
+Not done this pass (deliberately, matching the scope this was raised
+under): persistent is not yet crossed with worker/tile/split the way
+radix x worker already is (only one `num_logical_blocks` value --
+`batch` -- and one radix per tier is offered per N, no independent sweep
+of either); no cost-model reweighting was needed or added, since the
+existing `total_worker_stage_batches`/`stage_work` machinery already
+ranked persistent correctly once it could see persistent's own batch
+structure at all.

@@ -1101,6 +1101,10 @@ def main() -> None:
     print()
     verify_fft_execution_cost_main()
 
+    from verification.verify_fft_persistent_search import main as verify_fft_persistent_search_main
+    print()
+    verify_fft_persistent_search_main()
+
 
 if __name__ == "__main__":
     main()

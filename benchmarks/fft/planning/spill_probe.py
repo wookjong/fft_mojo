@@ -33,7 +33,7 @@ from pathlib import Path
 from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
 from planning.fft_cost_model import CostWeights, DEFAULT_COST_WEIGHTS, PlanMetrics, estimate_cost
 from planning.fft_plan_core import FFTCodegenPlan
-from planning.fft_plan_recursive import RecursiveFFTPlan
+from planning.fft_plan_recursive import FFTLeafPlan, RecursiveFFTPlan
 from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -480,6 +480,51 @@ class ProbeAndRerankResult:
     ranked_by_cycles: bool = False
 
 
+def _probe_plan(
+    plan: RecursiveFFTPlan, *, compute_lanes, simd_lanes, narrow_middle_stages,
+    target, mojo_root, m2ndp_root, build_timeout, run_timeout,
+) -> SpillProbeResult:
+    """Dispatch to the right real-toolchain probe for `plan`'s own
+    execution model -- `probe_spill_free` (`generate_recursive_fft_kernels`)
+    knows nothing about `FFTCodegenPlan.persistent`, so calling it on a
+    persistent-leaf candidate would render that leaf as though it were an
+    ordinary one (reading `stage.batches`/`worker_batches`, both irrelevant
+    to a persistent stage's own `persistent_vector_batches`/`persistent_
+    scalar_batches` -- see fft_cost_model.compute_stage_metrics' own
+    persistent branch) -- wrong kernel body, not just a wrong cost. Reads
+    the plan's own real structure (`root.kernel.persistent is not None`),
+    not `PlanChoices.execution_strategy` (generation metadata a caller
+    could pass a stale/wrong copy of), same "trust the built plan, not the
+    label" discipline `fft_plan_search._plan_signature` already uses.
+    """
+    # Same `None` resolution `probe_spill_free` itself does before calling
+    # `generate_recursive_fft_kernels` -- see that function's own docstring
+    # for why a raw `None` passed through unresolved would test a wider,
+    # unrepresentative width nobody actually ships (compute_lanes=simd_lanes
+    # instead of this target's real default). `probe_persistent_kernel_
+    # spill_free`'s own `compute_lanes=4` default only applies when a
+    # caller omits the argument entirely, not when `None` is passed
+    # explicitly, so this resolution has to happen here too.
+    resolved_compute_lanes = (
+        compute_lanes if compute_lanes is not None
+        else min(simd_lanes, target.lmul1_float32_lanes)
+    )
+    root = plan.root
+    if isinstance(root, FFTLeafPlan) and root.kernel.persistent is not None:
+        return probe_persistent_kernel_spill_free(
+            root.kernel, num_logical_blocks=root.r,
+            compute_lanes=resolved_compute_lanes, narrow_middle_stages=narrow_middle_stages,
+            mojo_root=mojo_root, m2ndp_root=m2ndp_root,
+            build_timeout=build_timeout, run_timeout=run_timeout,
+        )
+    return probe_spill_free(
+        plan, compute_lanes=compute_lanes, simd_lanes=simd_lanes,
+        narrow_middle_stages=narrow_middle_stages, target=target,
+        mojo_root=mojo_root, m2ndp_root=m2ndp_root,
+        build_timeout=build_timeout, run_timeout=run_timeout,
+    )
+
+
 def probe_and_rerank_candidates(
     candidates,
     *,
@@ -555,7 +600,7 @@ def probe_and_rerank_candidates(
         if len(kept) >= top_k:
             break
         probed_count += 1
-        result = probe_spill_free(
+        result = _probe_plan(
             candidate.plan, compute_lanes=compute_lanes, simd_lanes=simd_lanes,
             narrow_middle_stages=narrow_middle_stages, target=target,
             mojo_root=mojo_root, m2ndp_root=m2ndp_root,

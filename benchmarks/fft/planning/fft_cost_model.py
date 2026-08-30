@@ -402,14 +402,50 @@ def compute_stage_metrics(plan: RecursiveFFTPlan) -> list[StageExecutionMetrics]
         if isinstance(node, PhysicalTransposePlan):
             continue
         for stage in node.stages:
-            simd_iteration_count = len(stage.batches)
-            butterfly_count = sum(b.valid_lanes for b in stage.batches)
-            if stage.worker_batches is None:
+            if stage.persistent_vector_batches is not None:
+                # Persistent-software-workgroup stage (see PersistentWorkgroupPlan /
+                # fft_plan_persistent.py): `worker_batches` is never set here
+                # (a separate, non-overlapping partition -- see FFTStagePlan's
+                # own docstring), so this must be read from `persistent_
+                # vector_batches`/`persistent_scalar_batches` instead, or
+                # every persistent stage would be misread as single-worker-
+                # serial (`worker_batches is None`) below, wildly overstating
+                # its own serial batch count.
+                vector_batches = stage.persistent_vector_batches
+                scalar_batches = stage.persistent_scalar_batches or ()
+                simd_iteration_count = (
+                    sum(len(wb) for wb in vector_batches) + len(scalar_batches)
+                )
+                butterfly_count = sum(
+                    b.valid_lanes for wb in vector_batches for b in wb
+                ) + sum(b.valid_lanes for b in scalar_batches)
+                workers_per_fft = len(vector_batches)
+                active_workers = sum(1 for wb in vector_batches if wb) or (
+                    1 if scalar_batches else 0
+                )
+                # The scalar tail is always owned by the last worker (see
+                # PersistentWorkgroupPlan.scalar_worker_mode's own docstring)
+                # -- its own per-worker total is vector batches PLUS the
+                # scalar tail, everyone else's is vector batches alone.
+                per_worker_totals = [len(wb) for wb in vector_batches]
+                if per_worker_totals:
+                    per_worker_totals[-1] += len(scalar_batches)
+                elif scalar_batches:
+                    per_worker_totals = [len(scalar_batches)]
+                max_batches_per_worker = max(per_worker_totals, default=0)
+                worker_utilization = (
+                    active_workers / workers_per_fft if workers_per_fft else 1.0
+                )
+            elif stage.worker_batches is None:
+                simd_iteration_count = len(stage.batches)
+                butterfly_count = sum(b.valid_lanes for b in stage.batches)
                 workers_per_fft = None
                 active_workers = 1
                 max_batches_per_worker = simd_iteration_count
                 worker_utilization = 1.0
             else:
+                simd_iteration_count = len(stage.batches)
+                butterfly_count = sum(b.valid_lanes for b in stage.batches)
                 workers_per_fft = len(stage.worker_batches)
                 active_workers = sum(1 for wb in stage.worker_batches if wb)
                 max_batches_per_worker = max(

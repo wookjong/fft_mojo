@@ -55,7 +55,13 @@ from dataclasses import dataclass, replace
 
 from planning.fft_cost_model import PlanMetrics, estimate_cost, estimate_metrics
 from planning.fft_plan_cooperative import worker_candidates_per_fft
-from planning.fft_plan_core import FFTCodegenPlan, _prime_factors_supported, coalesce_radices
+from planning.fft_plan_core import (
+    FFTCodegenPlan,
+    MultiKernelHostPlan,
+    _prime_factors_supported,
+    coalesce_radices,
+)
+from planning.fft_plan_persistent import make_persistent_leaf_plan
 from planning.fft_plan_recursive import (
     FFTLeafPlan,
     FFTNode,
@@ -106,6 +112,16 @@ class PlanChoices:
     # generate_per_leaf_worker_candidates' own docstrings for why a single
     # workers_per_fft can't represent "this one leaf, not the others."
     worker_sequence: tuple[int | str | None, ...] | None = None
+    # Only set for generate_candidates' own step 10 (persistent-leaf sweep):
+    # "persistent" marks a candidate built via generate_persistent_leaf_
+    # candidates (planning.fft_plan_persistent.make_persistent_leaf_plan),
+    # a wholly separate execution model from the cooperative-worker family
+    # every other field above describes -- see that function's own
+    # docstring for why `workers_per_fft`/`worker_sequence` stay None on
+    # these candidates (persistent's own worker count is a target-derived
+    # constant, `target.interleave_chunk_uthreads`, never a search choice).
+    # `None` (every other step): not a persistent candidate, unchanged.
+    execution_strategy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -377,6 +393,102 @@ def generate_radix_execution_joint_candidates(
     return results
 
 
+def _persistent_leaf_feasible(n: int, *, target: TargetProfile) -> bool:
+    """Whether `make_persistent_leaf_plan(n, ...)` can build at all for this
+    N on this target -- mirrors that function's own unconditional capacity
+    check (`16 * length <= target.spad_capacity_bytes`, see its own
+    docstring for why persistent always needs the full `16 * length` bytes
+    regardless of launch width) so a caller can skip the attempt instead of
+    catching the `ValueError` it would otherwise raise. Also requires N to
+    fit as a single fused leaf outright (`_leaf_scratchpad_bytes(n) <=
+    scratchpad_byte_budget` is the *cooperative* family's own, unrelated
+    capacity rule -- irrelevant here) since `make_persistent_leaf_plan`
+    only ever builds one un-split kernel: today's implementation has no
+    PRE/MIDDLE/POST-transpose-wrapped persistent shape at all (see
+    docs/persistent_leaf_design.md), so persistent is simply not a
+    candidate axis for an N large enough to need `make_recursive_transpose
+    _plan`'s own recursion.
+    """
+    return 16 * n <= target.spad_capacity_bytes
+
+
+def _wrap_persistent_leaf_as_recursive_plan(
+    n: int, radices: tuple[int, ...], *, num_logical_blocks: int, inverse: bool,
+    target: TargetProfile, batch: int,
+) -> RecursiveFFTPlan:
+    """`make_persistent_leaf_plan`'s own `FFTCodegenPlan` return, wrapped as
+    a single-leaf `RecursiveFFTPlan` -- reusing `FFTLeafPlan`/
+    `RecursiveFFTPlan` exactly as any other un-split candidate this module
+    builds does, so every existing generic reader (`flatten_recursive_node`,
+    `fft_cost_model.compute_stage_metrics`/`estimate_metrics`, `_plan_
+    signature`) works on a persistent candidate with no special-casing --
+    only `codegen`/`spill_probe`'s own render/probe entry points need to
+    branch on `kernel.persistent is not None` (see `generate_recursive_fft_
+    kernels` vs. `codegen.fft_persistent_codegen.generate_persistent_fft_
+    kernel`, and `planning.spill_probe.probe_spill_free` vs. `probe_
+    persistent_kernel_spill_free`), since those are the two places this
+    project's own codegen/toolchain path genuinely differs by execution
+    model, not the plan-level bookkeeping this wrapper covers.
+
+    `r=num_logical_blocks` (not `batch`): `FFTNode(m, r)`'s own contract is
+    "R independent M-point transforms" -- for a persistent leaf that's
+    exactly `num_logical_blocks`, its own count of independent logical FFT
+    blocks one launch covers (see `PersistentWorkgroupPlan`'s own
+    docstring), the persistent-model analogue of what `batch` means for
+    every other candidate this module builds.
+    """
+    kernel = make_persistent_leaf_plan(
+        n, radices, num_logical_blocks=num_logical_blocks, inverse=inverse,
+        target=target,
+    )
+    leaf = FFTLeafPlan(m=n, r=num_logical_blocks, kernel=kernel)
+    host = MultiKernelHostPlan(n=n, inverse=inverse, tolerance=1.0e-3)
+    return RecursiveFFTPlan(n=n, inverse=inverse, root=leaf, host=host, batch=batch)
+
+
+def generate_persistent_leaf_candidates(
+    n: int, *, target: TargetProfile, inverse: bool, batch: int,
+) -> list[tuple[RecursiveFFTPlan, "PlanChoices"]]:
+    """One persistent-leaf candidate per radix tier (`generate_radix_tiers`,
+    the same tier set the cooperative-worker joint search offers), each at
+    `num_logical_blocks=batch` -- the natural persistent-model analogue of
+    "one candidate per (radix, worker) pair" the cooperative axis builds,
+    except persistent's own "how many workers" is a target-derived
+    constant (`target.interleave_chunk_uthreads`), not a search choice, so
+    only radix varies here.
+
+    `[]` (not an exception) when `n` can't build a persistent leaf at all
+    -- either the capacity check (`_persistent_leaf_feasible`) fails, or
+    this specific radix tier's own coalescing raises for this N (the same
+    "illegal combination is pruned before scoring, never surfaced as an
+    error" discipline `generate_radix_execution_joint_candidates` already
+    uses) -- so a caller (`generate_candidates`) can call this
+    unconditionally for every N without its own feasibility check first.
+    """
+    if not _persistent_leaf_feasible(n, target=target):
+        return []
+    results: list[tuple[RecursiveFFTPlan, PlanChoices]] = []
+    seen_radices: set[tuple[int, ...]] = set()
+    for tier_name, allowed in generate_radix_tiers(target):
+        radices = coalesce_radices(_prime_factors_supported(n), allowed=allowed)
+        if radices in seen_radices:
+            continue  # same tier coalescing already tried under a different label
+        seen_radices.add(radices)
+        try:
+            plan = _wrap_persistent_leaf_as_recursive_plan(
+                n, radices, num_logical_blocks=batch, inverse=inverse,
+                target=target, batch=batch,
+            )
+        except (ValueError, NotImplementedError, AssertionError):
+            continue
+        choices = PlanChoices(
+            split_near_length=None, radix_tier_name=tier_name, workers_per_fft=None,
+            tile=None, execution_strategy="persistent",
+        )
+        results.append((plan, choices))
+    return results
+
+
 def generate_tile_candidates(rows: int, cols: int, *, simd_lanes: int) -> list[tuple[int, int]]:
     """A handful of legal (tile_rows, tile_cols) pairs for one PRE/MIDDLE/
     POST transpose of this matrix shape: the planner's own default (square,
@@ -464,7 +576,20 @@ def _plan_signature(plan: RecursiveFFTPlan) -> tuple:
         else:
             radices = tuple(s.radix for s in stage.stages)
             workers = stage.cooperation.workers_per_fft if stage.cooperation is not None else None
-            sig.append(("L", stage.length, radices, workers))
+            # Persistent leaves never set `cooperation` (a separate, non-
+            # overlapping execution model -- see `FFTCodegenPlan.persistent`'s
+            # own docstring), so without this a persistent candidate and a
+            # plain non-cooperative candidate of the same radix sequence
+            # would collide on an identical ("L", length, radices, None)
+            # signature despite rendering completely different code.
+            # `total_uthreads`/`max_uthread` also fold in `num_logical_
+            # blocks` (persistent's own launch-width driver), which
+            # `PersistentWorkgroupPlan` alone does not encode.
+            persistent = (
+                (stage.persistent, stage.total_uthreads, stage.max_uthread)
+                if stage.persistent is not None else None
+            )
+            sig.append(("L", stage.length, radices, workers, persistent))
     return tuple(sig)
 
 
@@ -793,6 +918,28 @@ def generate_candidates(
         simd_lanes=simd_lanes, batch=batch, baseline_plan=baseline_plan,
         baseline_split=baseline_split, max_worker_sequences=max_joint_worker_sequences,
         max_joint_candidates=max_joint_radix_execution_candidates,
+    ):
+        add(plan, choices)
+
+    # 10. persistent-software-workgroup execution -- a wholly separate
+    # execution model from every candidate above (all of which are either
+    # plain or cooperative-worker leaves; see PersistentWorkgroupPlan's own
+    # docstring), only offered when `n` can build a single fused persistent
+    # leaf at all (`generate_persistent_leaf_candidates` returns `[]`
+    # otherwise -- e.g. N large enough to need make_recursive_transpose_
+    # plan's own PRE/MIDDLE/POST recursion, which this execution model does
+    # not support yet). Real measured evidence this axis is worth
+    # generating at all (2026-08-30, N=216, single fused leaf,
+    # radices=(4,2,3,3,3)): persistent at the shipped default compute_lanes
+    # is spill-free and correct where the *same* radix's cooperative
+    # worker=2/4 candidates spill outright, and faster than every other
+    # confirmed-safe candidate for this N (22901-23944 measured cycles vs.
+    # 28784 for the best rescued cooperative candidate and 43771 for the
+    # plain non-cooperative baseline) -- see docs/execution_cost_model_
+    # validation.md and the compute_lanes spill-avoidance investigation
+    # this session's own follow-up.
+    for plan, choices in generate_persistent_leaf_candidates(
+        n, target=target, inverse=inverse, batch=batch,
     ):
         add(plan, choices)
 
