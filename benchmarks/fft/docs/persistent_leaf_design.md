@@ -975,6 +975,30 @@ Do not overload the existing cooperative `worker_batches` contract.
 
 ## Scalar-tail arithmetic
 
+**CORRECTION (2026-08-30): this section's own requirement is wrong and
+was the direct cause of a real, confirmed spill -- do not follow it.**
+See `codegen/fft_persistent_codegen.py`'s own `_worker_body` docstring
+for the full writeup. Summary: forcing the tail-owning worker to literal
+`compute_lanes=1` ("genuine scalar arithmetic," exactly as originally
+specified below) spills for any tail whose radix is >= 5 (confirmed
+real-hardware: N=105 radices=(3,5,7), 272/432-byte frames, independent of
+surrounding code) -- at width=1 a radix-R butterfly's own R complex
+operands each need a separate scalar register with no packing, genuinely
+exceeding this target's register file for R>=5. The fix: render the
+tail-owning worker at the *same* width every other worker in that stage
+uses (this stage's own already-resolved `vector_compute_lanes`), reusing
+this codebase's existing `scalar_pack`/masked-lane mechanism for the
+invalid lanes -- exactly the "zero-padded SIMD as a substitute" this
+section originally forbade. That prohibition was based on an untested
+assumption (avoiding wasted lanes = safer), which turned out to be
+backwards for large radices. Confirmed real-hardware correct and
+spill-free after this fix, at every block count re-tested.
+
+The text immediately below is kept for historical context only -- it is
+what was originally specified and is now known incorrect:
+
+---
+
 The scalar worker must execute genuine scalar arithmetic.
 
 Use the existing radix-specific butterfly generator with:
