@@ -390,24 +390,81 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
     )
 
 
-def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIGHTS) -> float:
+def _memory_cost(metrics: PlanMetrics, weights: CostWeights) -> float:
+    """Data-movement terms: raw DRAM traffic, one fixed cost per transpose
+    kernel boundary (a full extra launch + DRAM round trip), the transpose
+    tile-count terms (more/fewer tiles changes the access pattern, not the
+    byte count), and `recursion_depth_penalty` -- kept here, not in
+    `_execution_cost`, since depth is a *kernel-partition* quantity (each
+    extra recursion level is 3 more transpose kernels/DRAM boundaries, see
+    `FFTRecursiveNodePlan`), the same "where do we cross a DRAM boundary"
+    question Step 2 of this project's own planning-flow design answers,
+    not a question about how one already-decided kernel gets *executed*."""
     oversaturation = max(
         0, metrics.max_transpose_stage_uthreads - _TILE_PARALLELISM_SATURATION_UTHREADS
     )
-    # metrics.spill_free is None until a caller explicitly probes it (see
-    # that field's own docstring) -- only apply the penalty once it's
-    # actually been measured `False`, never for "not probed" or "probed
-    # spill-free".
-    spill_term = weights.spill_penalty if metrics.spill_free is False else 0.0
     return (
         weights.memory_traffic * metrics.estimated_dram_bytes
         + weights.transpose_passes * metrics.transpose_kernel_count
-        + weights.stage_work * metrics.total_leaf_stage_count
-        + weights.idle_worker_penalty * (1.0 - metrics.worst_worker_utilization)
-        + weights.radix_risk_penalty * metrics.radix_risk_score
         + weights.recursion_depth_penalty * metrics.recursion_depth
         + weights.transpose_tile_count * metrics.total_transpose_tiles
         + weights.tile_oversaturation_penalty * oversaturation
         + weights.transpose_tail_risk_penalty * metrics.transpose_tail_tile_count
-        + spill_term
+    )
+
+
+def _compute_cost(metrics: PlanMetrics, weights: CostWeights) -> float:
+    """Arithmetic-work terms: a flat per-stage cost (butterfly + twiddle
+    instruction count is not modeled per-radix here -- see this module's
+    own docstring on what it deliberately does not attempt -- so
+    `total_leaf_stage_count` is the whole of this term today). Kept as its
+    own function even with one term so a future per-radix instruction-count
+    model has a single, obvious place to grow into without touching
+    memory/resource/execution accounting."""
+    return weights.stage_work * metrics.total_leaf_stage_count
+
+
+def _resource_cost(metrics: PlanMetrics, weights: CostWeights) -> float:
+    """Register-pressure/spill-risk terms: the static per-radix risk score
+    (`radix_risk_score`, this module's own compile-time-known proxy for
+    "will this spill" -- see the frozensets at the top of this module) and
+    the real, measured spill penalty (only applied once a caller has
+    actually probed `spill_free` -- see that field's own docstring; `None`
+    means "not probed," never treated as either answer here). NOT the
+    authoritative spill policy either way -- see [[fft-spill-hard-filter]]:
+    `planning.spill_probe.probe_and_rerank_candidates` hard-excludes a
+    confirmed-spilling candidate outright, before this term ever gets a
+    chance to matter for it; this is a diagnostic weight for a caller
+    reading `estimated_cost` directly."""
+    spill_term = weights.spill_penalty if metrics.spill_free is False else 0.0
+    return weights.radix_risk_penalty * metrics.radix_risk_score + spill_term
+
+
+def _execution_cost(metrics: PlanMetrics, weights: CostWeights) -> float:
+    """Execution-strategy terms: how well a chosen cooperative worker count
+    is actually utilized (`worst_worker_utilization`, 1.0 = never idle) --
+    the one PlanMetrics field that depends on *how a kernel runs*, not on
+    its own radix/memory shape. The natural place for a future real
+    synchronization/barrier/exchange-overhead term to land once this
+    project's cost model tracks one (see this module's own docstring:
+    every existing term is a static function of the plan, nothing here
+    models cooperative communication cost yet)."""
+    return weights.idle_worker_penalty * (1.0 - metrics.worst_worker_utilization)
+
+
+def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIGHTS) -> float:
+    """Total estimated cost -- the sum of four independently-documented
+    sub-scores (`_memory_cost`/`_compute_cost`/`_resource_cost`/
+    `_execution_cost`), split out (2026-08-30) so each can be read,
+    reasoned about, and eventually calibrated against real measurements
+    on its own, without the others -- see this module's own docstring for
+    why a fitted, unified formula was never the goal here. Purely a
+    regrouping of the exact same terms this function already summed
+    before the split (same weights, same total for any given `metrics`) --
+    not a ranking change."""
+    return (
+        _memory_cost(metrics, weights)
+        + _compute_cost(metrics, weights)
+        + _resource_cost(metrics, weights)
+        + _execution_cost(metrics, weights)
     )
