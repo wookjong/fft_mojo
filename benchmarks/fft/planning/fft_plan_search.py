@@ -49,16 +49,18 @@ not crossed with step 7's own joint search, for the same worker-legality-
 depends-on-split reason above).
 """
 
+import itertools
 import math
 from dataclasses import dataclass, replace
 
 from planning.fft_cost_model import PlanMetrics, estimate_cost, estimate_metrics
 from planning.fft_plan_cooperative import worker_candidates_per_fft
-from planning.fft_plan_core import FFTCodegenPlan
+from planning.fft_plan_core import FFTCodegenPlan, _prime_factors_supported, coalesce_radices
 from planning.fft_plan_recursive import (
     FFTLeafPlan,
     FFTNode,
     FFTRecursiveNodePlan,
+    PhysicalTransposePlan,
     RecursiveFFTPlan,
     _enumerate_leaf_segmentations,
     _leaf_scratchpad_bytes,
@@ -206,6 +208,175 @@ def generate_per_leaf_worker_candidates(
     return results
 
 
+def generate_leaf_worker_sequences(
+    plan: RecursiveFFTPlan, *, target: TargetProfile, simd_lanes: int = 8,
+    max_sequences: int = 32,
+) -> list[tuple[int | str | None, ...]]:
+    """Every legal *joint* per-leaf worker-count assignment for `plan`'s own
+    leaves (near_fft-first, the same order `forced_worker_sequence`'s own
+    entries line up against) -- the full Cartesian product across each
+    leaf's own legal candidates (`generate_worker_candidates`), not
+    `generate_per_leaf_worker_candidates`'s one-leaf-at-a-time variation
+    (every *other* leaf pinned uncooperative there). This is what actually
+    lets e.g. `(1, 4)` and `(4, 1)` both exist as distinct sequences for a
+    2-leaf tree -- neither is reachable from the single-axis sweep, since
+    both leaves are non-baseline at once in each.
+
+    `None` marks "this leaf uncooperative" (`worker_candidates_per_fft`'s
+    own `1` collapsed to `None`, the same convention
+    `generate_per_leaf_worker_candidates` already uses -- `forced_worker_
+    sequence[i]=None` and `=1` build byte-identical leaves, so keeping
+    both around would only inflate the product for no benefit). The
+    all-`None` sequence (every leaf uncooperative -- today's exact
+    baseline) is always first.
+
+    `max_sequences`: caps how many sequences this returns -- a tree with
+    several multi-candidate leaves is the product of each leaf's own
+    candidate count, which can grow past what's worth building+scoring
+    (see this module's own docstring on avoiding combinatorial
+    explosion elsewhere). `itertools.product` is consumed lazily, so
+    hitting the cap never pays for the untaken tail of the product.
+    """
+    kernels = _leaf_kernels_in_order(plan)
+    if not kernels:
+        return [()]
+
+    per_leaf_options: list[list[int | None]] = []
+    for kernel in kernels:
+        radices = tuple(s.radix for s in kernel.stages)
+        cands = generate_worker_candidates(kernel.length, radices, target=target, simd_lanes=simd_lanes)
+        options: list[int | None] = [None] + [w for w in cands if w > 1]
+        per_leaf_options.append(options)
+
+    baseline_seq: tuple[int | str | None, ...] = tuple(None for _ in kernels)
+    sequences: list[tuple[int | str | None, ...]] = [baseline_seq]
+    seen = {baseline_seq}
+    for combo in itertools.product(*per_leaf_options):
+        if len(sequences) >= max_sequences:
+            break
+        if combo in seen:
+            continue
+        seen.add(combo)
+        sequences.append(combo)
+    return sequences
+
+
+def _leaf_lengths(plan: RecursiveFFTPlan) -> list[int]:
+    """Each leaf's own FFT length (`m`), near_fft-first -- the one piece of
+    shape information `generate_radix_execution_joint_candidates` needs
+    per leaf that does *not* depend on which radix tier ends up choosing
+    that leaf's own radix sequence (leaf lengths/positions come from the
+    split, held fixed for this whole joint search -- see that function's
+    own docstring), so they can be read once from any already-built plan
+    sharing the same split, `default`-tier or not."""
+    return [k.length for k in _leaf_kernels_in_order(plan)]
+
+
+def generate_radix_execution_joint_candidates(
+    n: int,
+    *,
+    target: TargetProfile,
+    inverse: bool,
+    scratchpad_byte_budget: int,
+    simd_lanes: int,
+    batch: int,
+    baseline_plan: RecursiveFFTPlan,
+    baseline_split: int | None,
+    max_worker_sequences: int = 32,
+    max_joint_candidates: int = 96,
+) -> list[tuple[RecursiveFFTPlan, "PlanChoices"]]:
+    """`(radix_tier, per-leaf worker sequence)` pairs evaluated *jointly*,
+    for `baseline_plan`'s own tree shape (split held fixed at
+    `baseline_split` -- see `make_recursive_transpose_plan`'s own
+    `forced_split_near_length` docstring for why this pins only the root
+    level, and why every deeper level still reproduces the *same* split
+    `baseline_plan` already has: `_choose_recursive_split` is a pure
+    function of `(m, scratchpad_byte_budget)` alone, independent of radix
+    tier or worker choice, so nothing here needs to force those levels
+    explicitly to hold them fixed).
+
+    This is the axis fft_plan_search.py's own module docstring names as
+    future work: step 7 already joins split_sequence x radix_tier x tile
+    but deliberately excludes cooperative workers (worker legality depends
+    on the split a leaf ends up with); step 3/4/8 each vary radix tier or
+    worker count independently around the baseline, never together. This
+    function is what actually builds `(radix configuration, execution
+    configuration)` as one candidate, per this project's own design
+    request -- crossing `generate_radix_tiers` with
+    `generate_leaf_worker_sequences`, not sweeping either alone.
+
+    Each leaf's own *realized* radix sequence (not the tier's own label)
+    is computed per tier directly from `coalesce_radices`/
+    `_prime_factors_supported` -- no throwaway plan build needed just to
+    discover it -- and used, together with the worker sequence, as this
+    function's own dedup key: two tiers that happen to coalesce a given N
+    identically (e.g. a leaf with no radix-4-mergeable pairs at all) would
+    otherwise build byte-identical plans under different tier labels.
+
+    Every `(plan, choices)` pair returned already passed the real
+    `make_recursive_transpose_plan` build -- a combination that isn't
+    actually legal (e.g. a worker count `_build_recursive_node`'s own
+    assertions reject for this specific tier's own leaf shape) raises
+    there and is caught and skipped here, never scored.
+
+    `max_worker_sequences`/`max_joint_candidates`: bound the two stages of
+    this search the same way step 7's own `max_joint_split_candidates`/
+    `max_joint_combined_candidates` bound theirs -- a pure compute-time
+    safety valve (each candidate is one plan build + estimate_metrics
+    call, not a real toolchain run).
+    """
+    worker_sequences = generate_leaf_worker_sequences(
+        baseline_plan, target=target, simd_lanes=simd_lanes, max_sequences=max_worker_sequences,
+    )
+    radix_tiers = generate_radix_tiers(target)
+    leaf_lengths = _leaf_lengths(baseline_plan)
+
+    results: list[tuple[RecursiveFFTPlan, PlanChoices]] = []
+    seen_keys: set[tuple[tuple[tuple[int, ...], ...], tuple[int | str | None, ...]]] = set()
+
+    for tier_name, allowed in radix_tiers:
+        realized_radices = tuple(
+            coalesce_radices(_prime_factors_supported(m), allowed=allowed) for m in leaf_lengths
+        )
+        for seq in worker_sequences:
+            if len(results) >= max_joint_candidates:
+                return results
+            key = (realized_radices, seq)
+            if key in seen_keys:
+                continue  # same actual (per-leaf radix, worker) shape as an earlier tier label
+            seen_keys.add(key)
+            if tier_name == "default" and seq == tuple(None for _ in leaf_lengths):
+                continue  # byte-for-byte the baseline candidate (step 1) already covers this
+            try:
+                plan = make_recursive_transpose_plan(
+                    n,
+                    scratchpad_byte_budget=scratchpad_byte_budget,
+                    simd_lanes=simd_lanes,
+                    inverse=inverse,
+                    batch=batch,
+                    spad_capacity_bytes=target.spad_capacity_bytes,
+                    max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
+                    interleave_chunk_uthreads=target.interleave_chunk_uthreads,
+                    forced_split_near_length=baseline_split,
+                    allowed_radix_composites=allowed,
+                    forced_worker_sequence=seq,
+                )
+            except (ValueError, AssertionError):
+                # Illegal for this specific (tier, worker sequence) combination
+                # (e.g. a worker count this tier's own coalesced leaf shape
+                # can no longer support) -- reject before scoring, never a
+                # candidate the caller sees, per this module's own "obviously
+                # bad candidates are pruned before cost ranking" discipline.
+                continue
+            choices = PlanChoices(
+                split_near_length=baseline_split, radix_tier_name=tier_name,
+                workers_per_fft=None, tile=None, worker_sequence=seq,
+            )
+            results.append((plan, choices))
+
+    return results
+
+
 def generate_tile_candidates(rows: int, cols: int, *, simd_lanes: int) -> list[tuple[int, int]]:
     """A handful of legal (tile_rows, tile_cols) pairs for one PRE/MIDDLE/
     POST transpose of this matrix shape: the planner's own default (square,
@@ -271,6 +442,50 @@ def _search_leaf_shape(plan: RecursiveFFTPlan) -> tuple[int, tuple[int, ...]]:
     return leaf.m, tuple(s.radix for s in leaf.kernel.stages)
 
 
+def _plan_signature(plan: RecursiveFFTPlan) -> tuple:
+    """A canonical signature of everything a `RecursiveFFTPlan`'s own
+    already-built structure actually determines about the rendered kernel
+    -- radix sequence + cooperative worker count per leaf, tile size per
+    transpose stage -- used to dedup candidates that two different
+    `generate_candidates` steps built via different routes (e.g. step 8's
+    own single-leaf worker sweep and step 9's own joint radix x worker
+    sweep can both produce "leaf 0 at workers=2, every other leaf
+    uncooperative, default radix tier" for the exact same N) but that
+    resolve to the byte-for-byte identical plan. Deliberately reads the
+    plan's own already-built structure rather than trusting `PlanChoices`
+    (generation metadata, not guaranteed a perfectly faithful summary --
+    see `generate_radix_execution_joint_candidates`'s own dedup, which
+    already made the same "realized structure, not the label" choice for
+    its own narrower, single-step case)."""
+    sig: list[tuple] = []
+    for stage in flatten_recursive_node(plan.root):
+        if isinstance(stage, PhysicalTransposePlan):
+            sig.append(("T", stage.rows, stage.cols, stage.tile_rows, stage.tile_cols))
+        else:
+            radices = tuple(s.radix for s in stage.stages)
+            workers = stage.cooperation.workers_per_fft if stage.cooperation is not None else None
+            sig.append(("L", stage.length, radices, workers))
+    return tuple(sig)
+
+
+def _dedup_candidates(candidates: list[FFTPlanCandidate]) -> list[FFTPlanCandidate]:
+    """Drop every candidate whose own `_plan_signature` already appeared
+    earlier in `candidates` -- first-occurrence order preserved, so
+    `candidates[0]` (the baseline, `_select_top_candidates`'s own "always
+    kept regardless of score" entry) survives untouched even if some
+    later step happens to rebuild the identical plan under a different
+    label."""
+    seen: set[tuple] = set()
+    deduped: list[FFTPlanCandidate] = []
+    for c in candidates:
+        sig = _plan_signature(c.plan)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        deduped.append(c)
+    return deduped
+
+
 def _select_top_candidates(
     candidates: list[FFTPlanCandidate], max_candidates: int
 ) -> list[FFTPlanCandidate]:
@@ -310,6 +525,8 @@ def generate_candidates(
     max_candidates: int = 40,
     max_joint_split_candidates: int = 16,
     max_joint_combined_candidates: int = 128,
+    max_joint_worker_sequences: int = 32,
+    max_joint_radix_execution_candidates: int = 96,
 ) -> list[FFTPlanCandidate]:
     """Baseline (today's exact default plan) plus one axis varied at a time
     around it -- see the module docstring for why this is a staged sweep,
@@ -334,6 +551,12 @@ def generate_candidates(
     cap's job -- see the module-level top-K selection below, which prunes
     the whole combined list by estimated_cost rather than by which step or
     generation-order position a candidate came from.
+
+    `max_joint_worker_sequences`/`max_joint_radix_execution_candidates`:
+    step 9's own two caps -- see `generate_radix_execution_joint_candidates`'s
+    own docstring (`max_worker_sequences`/`max_joint_candidates` there,
+    same meaning, same "compute-time safety valve, not a fairness
+    mechanism" discipline as the step 7 caps above).
     """
 
     def build(
@@ -555,6 +778,25 @@ def generate_candidates(
             tile=None, worker_sequence=seq,
         ))
 
+    # 9. radix tier x per-leaf worker sequence, evaluated JOINTLY -- split
+    # held at baseline's own choice, same discipline steps 3/8 already use.
+    # This is the axis the module docstring (and steps 3/4/7/8's own
+    # comments) all name as future work: radix composition and execution
+    # strategy have never been searched together before this step existed
+    # -- step 3/4 each vary one of the two alone around the baseline, and
+    # step 7's own joint search explicitly excludes cooperative workers.
+    # See generate_radix_execution_joint_candidates' own docstring for the
+    # full reasoning; this just crosses it into the same candidate pool
+    # everything else here already feeds `_select_top_candidates`.
+    for plan, choices in generate_radix_execution_joint_candidates(
+        n, target=target, inverse=inverse, scratchpad_byte_budget=scratchpad_byte_budget,
+        simd_lanes=simd_lanes, batch=batch, baseline_plan=baseline_plan,
+        baseline_split=baseline_split, max_worker_sequences=max_joint_worker_sequences,
+        max_joint_candidates=max_joint_radix_execution_candidates,
+    ):
+        add(plan, choices)
+
+    candidates = _dedup_candidates(candidates)
     return _select_top_candidates(candidates, max_candidates)
 
 

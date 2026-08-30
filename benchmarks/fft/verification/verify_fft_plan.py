@@ -1093,6 +1093,10 @@ def main() -> None:
         raise AssertionError(f"{len(failures)} plan(s) failed: {failures}")
     print("[verify] all FFT plans matched numpy's FFT")
 
+    from verification.verify_fft_search import main as verify_fft_search_main
+    print()
+    verify_fft_search_main()
+
 
 if __name__ == "__main__":
     main()
