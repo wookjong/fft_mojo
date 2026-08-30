@@ -84,22 +84,44 @@ def _worker_body(
     stage: FFTStagePlan, worker_id: int, workers_per_group: int, vector_compute_lanes: int | None,
 ) -> tuple[tuple, int | None]:
     """`(batches, compute_lanes)` for one worker on one stage -- the last
-    worker is the scalar worker (rendered at `compute_lanes=1`, genuine
-    scalar arithmetic, per docs/persistent_leaf_design.md's "Scalar-tail
-    arithmetic") whenever this stage actually assigned it any tail
-    batches; every other worker (including the last, on a stage with no
-    tail at all) is a plain vector worker at `vector_compute_lanes` --
-    already resolved by the caller via `_stage_compute_lanes` (this
-    stage's own register-pressure-narrowed width, the same mechanism
-    fft_codegen.py's plain/cooperative paths use -- see
-    `emit_stage_phase`'s own docstring for why skipping this is not
-    optional: a real crash + wrong answer, not just a spill warning, was
-    confirmed on N=64's (4,4,4) middle stage before this was wired in).
+    worker owns this stage's own tail (partial) batch, if it has one,
+    exclusively; every worker (the tail-owning one included) renders at
+    `vector_compute_lanes` -- the same register-pressure-narrowed width
+    `_stage_compute_lanes` already resolved for this stage (see
+    `emit_stage_phase`'s own docstring for why skipping that narrowing
+    entirely is not optional: a real crash + wrong answer, not just a
+    spill warning, was confirmed on N=64's (4,4,4) middle stage before
+    it was wired in).
+
+    The tail-owning worker does **not** get a hardcoded `compute_lanes=1`
+    ("genuine scalar arithmetic") the way the original design doc
+    specified. That was tried first and is itself a confirmed, real bug:
+    a radix-5 or radix-7 tail batch rendered at literal width=1 spills
+    (272/432-byte frames, N=105 radices=(3,5,7)) regardless of function
+    structure -- confirmed by isolating the tail-owning worker into its
+    own standalone function (ruling out "shared function with other
+    workers" as the cause) and by disassembly (byte-identical frame with
+    or without that isolation). Root cause: at width=1, a radix-R
+    butterfly's own `R` complex operands each become a separate scalar
+    register with no way to pack more than one lane per register --
+    genuinely more live scalar registers than this target provides for
+    R>=5, independent of surrounding code. Rendering the SAME tail batch
+    at `vector_compute_lanes` instead (identical to every other worker)
+    uses this codebase's already-safe, already-proven `scalar_pack`/
+    masked-lane mechanism (`fft_plan_core._make_load`'s own `valid_lanes
+    < simd_lanes` branch, used everywhere else in this project for a
+    partial batch) to render the same tail batch as a real vector
+    register with some lanes masked, not literal per-lane scalars --
+    packing multiple operands' worth of state per register the same way
+    a full batch already does. Confirmed real-hardware: N=105
+    radices=(3,5,7) is spill-free and correct with this fix, previously
+    confirmed spilling at every compute_lanes tried (4, 2, 1, all forced
+    fully scalar for the tail).
     """
     assert stage.persistent_vector_batches is not None
     assert stage.persistent_scalar_batches is not None
     if worker_id == workers_per_group - 1 and stage.persistent_scalar_batches:
-        return stage.persistent_scalar_batches, 1
+        return stage.persistent_scalar_batches, vector_compute_lanes
     return stage.persistent_vector_batches[worker_id], vector_compute_lanes
 
 
@@ -117,23 +139,20 @@ def _emit_worker_dispatch(
     site (inside an `if worker_id == k:` body, not directly inside a
     `@staticmethod def ...():`).
     """
+    emitted_any = False
     for worker_id in range(workers_per_group):
         batches, compute_lanes = _worker_body(
             stage, worker_id, workers_per_group, vector_compute_lanes
         )
-        keyword = "if" if worker_id == 0 else "elif"
+        if not batches:
+            continue
+        keyword = "if" if not emitted_any else "elif"
+        emitted_any = True
         e.add(f"        {keyword} worker_id == {worker_id}:")
         sub = Emitter()
-        if batches:
-            _emit_stage_batches(
-                sub, plan=plan, stage=stage, batches=batches, compute_lanes=compute_lanes
-            )
-        else:
-            # `_emit_batch` always emits at a hardcoded 8-space base indent
-            # (assumes direct function-body placement); match that here so
-            # the uniform +4 re-indent below lands "pass" at the same depth
-            # as a sibling branch's real batch code, not 8 spaces shallower.
-            sub.add("        pass")
+        _emit_stage_batches(
+            sub, plan=plan, stage=stage, batches=batches, compute_lanes=compute_lanes
+        )
         for line in sub.lines:
             e.add("    " + line if line else "")
 
@@ -191,16 +210,18 @@ def emit_stage_phase(
 
     `compute_lanes`/`narrow_middle_stages`: resolved through the *exact
     same* `_stage_compute_lanes` fft_codegen.py's plain/cooperative paths
-    use, applied to every vector worker (the scalar worker stays forced
-    at `compute_lanes=1` regardless -- already narrower than anything
-    this could produce). Defaults (`4`/`True`) match make_fft_kernel.py's
-    own shipped defaults, not "no narrowing" -- skipping this was tried
-    first and produced a real crash (`vs2r.v: Unsupported Instruction`)
-    plus a wrong answer on N=64's own (4,4,4) middle stage, confirmed on
-    real hardware; see docs/persistent_leaf_design.md's own "Register-
-    pressure discipline" section, which requires reusing this mechanism
-    rather than treating a persistent-leaf spill as merely a performance
-    caveat.
+    use, applied to every worker -- including the last (tail-owning)
+    worker, which no longer gets a hardcoded `compute_lanes=1` (see
+    `_worker_body`'s own docstring for why forcing that was itself the
+    bug behind a real, confirmed radix-5/radix-7 spill, root-caused and
+    fixed 2026-08-30). Defaults (`4`/`True`) match make_fft_kernel.py's
+    own shipped defaults, not "no narrowing" -- skipping this entirely
+    was tried first and produced a real crash (`vs2r.v: Unsupported
+    Instruction`) plus a wrong answer on N=64's own (4,4,4) middle stage,
+    confirmed on real hardware; see docs/persistent_leaf_design.md's own
+    "Register-pressure discipline" section, which requires reusing this
+    mechanism rather than treating a persistent-leaf spill as merely a
+    performance caveat.
     """
     is_first = stage.stage_id == 0
     is_last = stage.stage_id == len(plan.stages) - 1

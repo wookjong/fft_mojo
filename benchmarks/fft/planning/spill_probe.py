@@ -32,6 +32,7 @@ from pathlib import Path
 
 from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
 from planning.fft_cost_model import CostWeights, DEFAULT_COST_WEIGHTS, PlanMetrics, estimate_cost
+from planning.fft_plan_core import FFTCodegenPlan
 from planning.fft_plan_recursive import RecursiveFFTPlan
 from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
@@ -286,6 +287,116 @@ def probe_source_spill_free(
             spill_free=not spilling, spilling_kernels=tuple(spilling),
             build_ok=True, run_ok=True, log=log, ndp_cycles=_parse_ndp_cycles(log),
         )
+
+
+class PersistentPlanSpillError(RuntimeError):
+    """Raised by `generate_verified_persistent_fft_kernel` when the real
+    toolchain confirms the persistent-leaf kernel it just rendered spills
+    -- see that function's own docstring for why this exists as a real,
+    enforced default rather than documentation alone.
+
+    Carries the failed `SpillProbeResult` (`probe`) for inspection.
+    """
+
+    def __init__(self, message: str, *, probe: "SpillProbeResult"):
+        super().__init__(message)
+        self.probe = probe
+
+
+def probe_persistent_kernel_spill_free(
+    plan: FFTCodegenPlan,
+    *,
+    num_logical_blocks: int,
+    compute_lanes: int | None = 4,
+    narrow_middle_stages: bool = True,
+    mojo_root: str | None = None,
+    m2ndp_root: str | None = None,
+    build_timeout: float = 120.0,
+    run_timeout: float = 200.0,
+) -> SpillProbeResult:
+    """The persistent-leaf counterpart of `probe_spill_free` -- renders
+    `plan` (from `planning.fft_plan_persistent.make_persistent_leaf_plan`)
+    via `codegen.fft_persistent_codegen.generate_persistent_fft_kernel`
+    and probes the *real* result, same build+run+regex-scan core as every
+    other probe in this module (`probe_source_spill_free`).
+
+    `reference_check` is always on for a persistent kernel (`generate_
+    persistent_fft_kernel` bakes in the O(N^2) host check unconditionally
+    -- unlike the recursive/transpose path's own `reference_check`
+    parameter, there is no way to turn it off here), so a caller also
+    gets a real correctness signal in `result.log` ("[host] persistent
+    FFT verification passed"/"mismatch"), not just spill-freedom -- worth
+    checking directly for a shape this project hasn't validated before
+    (see [[fft-persistent-vs-cooperative]]'s own N=128 finding: spill-free
+    is not, by itself, sufficient evidence of correctness).
+    """
+    from codegen.fft_persistent_codegen import generate_persistent_fft_kernel
+
+    source = generate_persistent_fft_kernel(
+        plan, num_logical_blocks=num_logical_blocks,
+        compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+    )
+    return probe_source_spill_free(
+        source, mojo_root=mojo_root, m2ndp_root=m2ndp_root,
+        build_timeout=build_timeout, run_timeout=run_timeout,
+    )
+
+
+def generate_verified_persistent_fft_kernel(
+    plan: FFTCodegenPlan,
+    *,
+    num_logical_blocks: int,
+    compute_lanes: int | None = 4,
+    narrow_middle_stages: bool = True,
+    mojo_root: str | None = None,
+    m2ndp_root: str | None = None,
+    build_timeout: float = 120.0,
+    run_timeout: float = 200.0,
+) -> str:
+    """The safe default entry point for rendering a persistent-leaf
+    kernel: real build+run probe first (`probe_persistent_kernel_spill_
+    free`), raises `PersistentPlanSpillError` if it spills -- a confirmed
+    spill is a hard disqualification project-wide (see
+    [[fft-spill-hard-filter]]), never something to silently hand back and
+    let a caller find out later. `codegen.fft_persistent_codegen.
+    generate_persistent_fft_kernel` itself stays toolchain-free and will
+    happily render a known-spilling kernel (e.g. N=105 radices=(3,5,7),
+    a confirmed real-hardware spill from this project's own comparison
+    work -- see docs/persistent_vs_cooperative_findings.md) with no
+    error at all -- that function is the low-level building block for
+    callers who explicitly want to bypass this check (e.g. spill_probe
+    itself, or a future search/ranking layer that wants to try many
+    candidates before verifying); this one is what an ordinary caller
+    generating one kernel to actually ship should use instead.
+    """
+    result = probe_persistent_kernel_spill_free(
+        plan, num_logical_blocks=num_logical_blocks,
+        compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+        mojo_root=mojo_root, m2ndp_root=m2ndp_root,
+        build_timeout=build_timeout, run_timeout=run_timeout,
+    )
+    if not (result.build_ok and result.run_ok):
+        raise PersistentPlanSpillError(
+            f"generate_verified_persistent_fft_kernel: the toolchain probe itself "
+            f"failed (build_ok={result.build_ok}, run_ok={result.run_ok}) -- see "
+            f"probe.log for the real build/run output",
+            probe=result,
+        )
+    if not result.spill_free:
+        raise PersistentPlanSpillError(
+            f"generate_verified_persistent_fft_kernel: this plan spills "
+            f"({result.spilling_kernels}), confirmed by a real build+run -- refusing "
+            f"to hand back a kernel this project's own policy treats as unsafe "
+            f"(see [[fft-spill-hard-filter]]). Call generate_persistent_fft_kernel "
+            f"directly if you specifically want the unverified source anyway.",
+            probe=result,
+        )
+    from codegen.fft_persistent_codegen import generate_persistent_fft_kernel
+
+    return generate_persistent_fft_kernel(
+        plan, num_logical_blocks=num_logical_blocks,
+        compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+    )
 
 
 def apply_spill_probe(
