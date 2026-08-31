@@ -38,6 +38,7 @@ from planning.fft_plan_core import (
     pingpong_needed,
 )
 from planning.fft_plan_cooperative import choose_workers_per_fft, make_cooperative_leaf_plan
+from planning.fft_plan_persistent import make_persistent_leaf_plan
 from planning.target_profile import DEFAULT_TARGET_PROFILE
 
 
@@ -376,13 +377,39 @@ def _build_leaf_kernel(
     max_concurrent_scratchpad_bytes: int | None,
     cooperative_workers: int | str | None,
     interleave_chunk_uthreads: int,
+    persistent_leaf: bool = False,
 ) -> FFTCodegenPlan:
     """One leaf/near_fft kernel -- `_build_plan` (today's one-uthread-per-
-    sub-FFT leaf) or `make_cooperative_leaf_plan` (see fft_plan_cooperative.py),
-    picked by `cooperative_workers`:
+    sub-FFT leaf), `make_cooperative_leaf_plan` (see
+    fft_plan_cooperative.py), or `make_persistent_leaf_plan` (see
+    fft_plan_persistent.py), picked by `cooperative_workers`/
+    `persistent_leaf`:
 
-    * `None` (the default): always `_build_plan`, byte-for-byte the plan
-      this function returned before cooperative leaves existed.
+    * `persistent_leaf=True`: `make_persistent_leaf_plan`, this leaf's own
+      local FFT (`length`, `radices`) executed by the persistent-software-
+      workgroup model -- `total_uthreads` here is this leaf's own replica
+      count (`r`/`r*a`, exactly what `total_uthreads` already means for
+      every other leaf kind: see FFTNode(M, R)'s own "R independent
+      M-point transforms" contract in this module's top docstring), passed
+      straight through as `num_logical_blocks` -- persistent absorbs
+      however many replicas that is into its own internal round loop
+      (`preload -> stages -> writeback`, repeated `num_rounds(...)` times
+      inside one launch), never needing this function's own caller to
+      split it into multiple outer launches the way a plain/cooperative
+      leaf's own round-split machinery does (see fft_transpose_codegen.
+      generate_recursive_fft_kernels' own per-stage round loop, which a
+      persistent stage always resolves to exactly one round of, by
+      construction of `plan.total_uthreads == plan.max_uthread ==
+      launch_uthreads`, a target-fixed width independent of replica
+      count). Mutually exclusive with `cooperative_workers` (asserted by
+      `_build_recursive_node`, this function's only caller) -- persistent
+      and cooperative are two different execution strategies for the same
+      leaf-lowering slot, never combined (PersistentWorkgroupPlan's own
+      docstring).
+
+    * `None`/`cooperative_workers` (the default when `persistent_leaf` is
+      `False`): always `_build_plan`, byte-for-byte the plan this function
+      returned before cooperative leaves existed.
     * `"auto"`: `choose_workers_per_fft` decides this leaf's own worker
       count from its own shape (length/radices/simd_lanes) alone.
     * a positive int: an upper bound `choose_workers_per_fft` still rounds
@@ -398,6 +425,17 @@ def _build_leaf_kernel(
     identical output to `cooperative_workers=None`, so a caller opting in
     never pays for cooperation where it cannot help.
     """
+    if persistent_leaf:
+        return make_persistent_leaf_plan(
+            length=length,
+            radices=radices,
+            num_logical_blocks=total_uthreads,
+            inverse=inverse,
+            simd_lanes=simd_lanes,
+            kernel_name=kernel_name,
+            inverse_scale=inverse_scale,
+        )
+
     workers = 1
     if cooperative_workers is not None:
         max_workers = None if cooperative_workers == "auto" else cooperative_workers
@@ -552,6 +590,7 @@ def _build_recursive_node(
     forced_split_near_length: int | None = None,
     forced_split_sequence: tuple[int, ...] | None = None,
     forced_worker_sequence: tuple[int | str | None, ...] | None = None,
+    persistent_leaf: bool = False,
 ) -> FFTNode:
     """`allowed_radix_composites`: `None` (the default) keeps every leaf's
     radix tier exactly `coalesce_radices`'s own default
@@ -602,9 +641,36 @@ def _build_recursive_node(
     would consume the rest; built by `fft_plan_search.
     generate_per_leaf_worker_candidates` for one-leaf-at-a-time search,
     mirroring `_enumerate_leaf_segmentations`'s own role for splits.
+
+    `persistent_leaf`: `False` (the default) keeps every leaf/near_fft
+    kernel this tree builds exactly as `cooperative_workers` alone would
+    -- `True` builds every one of them as a persistent-software-workgroup
+    leaf instead (see `_build_leaf_kernel`'s own docstring). A single
+    uniform choice for the whole tree, same discipline `cooperative_
+    workers` follows before `forced_worker_sequence` existed -- per-leaf
+    mixed strategies are a separate, later phase (docs/cooperative_
+    worker8_pool_alignment_fix.md's own phase list), not this parameter's
+    job yet. Mutually exclusive with both `cooperative_workers` and
+    `forced_worker_sequence` (asserted below): persistent and cooperative
+    are two different execution strategies for the same leaf-lowering
+    slot, never combined on one leaf (PersistentWorkgroupPlan's own
+    docstring), and a per-leaf worker-count sequence has nothing to say
+    about a leaf that isn't cooperative at all.
     """
     idx = node_id[0]
     node_id[0] += 1
+
+    if persistent_leaf:
+        assert cooperative_workers is None, (
+            "persistent_leaf and cooperative_workers are mutually exclusive -- "
+            "persistent and cooperative are different execution strategies for "
+            "the same leaf, never combined on one leaf"
+        )
+        assert forced_worker_sequence is None, (
+            "persistent_leaf and forced_worker_sequence are mutually exclusive -- "
+            "a per-leaf cooperative worker-count sequence has nothing to say "
+            "about a leaf that isn't cooperative at all"
+        )
 
     if forced_split_sequence is not None:
         assert forced_split_near_length is None, (
@@ -678,6 +744,7 @@ def _build_recursive_node(
             max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
             cooperative_workers=this_leaf_workers,
             interleave_chunk_uthreads=interleave_chunk_uthreads,
+            persistent_leaf=persistent_leaf,
         )
         return FFTLeafPlan(m=m, r=r, kernel=kernel)
 
@@ -708,6 +775,7 @@ def _build_recursive_node(
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
         cooperative_workers=this_leaf_workers,
         interleave_chunk_uthreads=interleave_chunk_uthreads,
+        persistent_leaf=persistent_leaf,
     )
     near_fft = FFTLeafPlan(m=b, r=r * a, kernel=near_kernel)
 
@@ -726,6 +794,7 @@ def _build_recursive_node(
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
         cooperative_workers=cooperative_workers,
         interleave_chunk_uthreads=interleave_chunk_uthreads,
+        persistent_leaf=persistent_leaf,
         allowed_radix_composites=allowed_radix_composites,
         # forced_split_near_length intentionally NOT propagated -- only the
         # outermost (root) split is ever forced, see this function's own
@@ -770,6 +839,7 @@ def make_recursive_transpose_plan(
     forced_split_near_length: int | None = None,
     forced_split_sequence: tuple[int, ...] | None = None,
     forced_worker_sequence: tuple[int | str | None, ...] | None = None,
+    persistent_leaf: bool = False,
 ) -> RecursiveFFTPlan:
     """N decomposed recursively (six-step-FFT style): each node either
     fuses into one multi-radix leaf kernel (see FFTLeafPlan) or splits
@@ -807,6 +877,10 @@ def make_recursive_transpose_plan(
     mutually exclusive with `cooperative_workers` (asserted in
     `_build_recursive_node`) -- pass one or the other, never both.
 
+    `persistent_leaf`: `False` (the default) -- see `_build_recursive_
+    node`'s own docstring. Mutually exclusive with `cooperative_workers`
+    and `forced_worker_sequence` (asserted in `_build_recursive_node`).
+
     `batch`: how many independent length-`n` transforms to run in one
     launch, `1` by default (today's exact prior behavior, a single
     transform). Passed straight through as the root node's own `r`
@@ -833,6 +907,7 @@ def make_recursive_transpose_plan(
         forced_split_near_length=forced_split_near_length,
         forced_split_sequence=forced_split_sequence,
         forced_worker_sequence=forced_worker_sequence,
+        persistent_leaf=persistent_leaf,
     )
     host = MultiKernelHostPlan(n=n, inverse=inverse, tolerance=1.0e-3)
     return RecursiveFFTPlan(n=n, inverse=inverse, root=root, host=host, batch=batch)

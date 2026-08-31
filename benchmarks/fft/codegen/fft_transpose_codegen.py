@@ -49,6 +49,7 @@ from codegen.common import (
     spad as _spad,
 )
 from codegen.fft_codegen import emit_kernel as _emit_kernel
+from codegen.fft_persistent_codegen import emit_persistent_kernel_struct
 from planning.fft_plan_balanced import BalancedTransposeFFTPlan, FFTTransposePlan
 from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 from planning.fft_plan_recursive import (
@@ -688,7 +689,19 @@ def _stage_round_size(
     """
     if not spread_across_units:
         return stage.max_uthread
-    if not isinstance(stage, PhysicalTransposePlan) and stage.cooperation is not None:
+    if not isinstance(stage, PhysicalTransposePlan) and (
+        stage.cooperation is not None or stage.persistent is not None
+    ):
+        # A persistent stage's own max_uthread (== launch_uthreads, a
+        # target-fixed width -- see make_persistent_leaf_plan) is not a
+        # per-physical-unit scratchpad cap this formula's own widening
+        # story applies to at all (there is no "spread this launch's
+        # microthreads across more units" question for a persistent leaf
+        # -- its own preload/stage/writeback phases already dispatch
+        # every physical unit's own software group internally); a
+        # cooperative leaf has its own, separate, not-yet-verified
+        # placement story either way (see the comment this branch already
+        # carried for cooperation).
         return stage.max_uthread
     if stage.simd_lanes * 4 != 32:
         raise ValueError(
@@ -830,6 +843,26 @@ def generate_recursive_fft_kernels(
         e.add(f"# ---- stage {i}: {stage.kernel_name} ----")
         if isinstance(stage, PhysicalTransposePlan):
             _emit_physical_transpose_kernel(e, plan=stage)
+        elif stage.persistent is not None:
+            # A persistent leaf renders its own preload/stage_N/writeback
+            # struct + round-unrolled device_main (emit_persistent_kernel_
+            # struct, shared with the standalone generate_persistent_fft_
+            # kernel entry point) -- not _emit_kernel's plain/cooperative
+            # per-stage NDPTask shape at all, and it never loops (its own
+            # emit_stage_phase already renders every worker's batches
+            # fully unrolled -- see that module's own top docstring for
+            # why round-specific *functions* don't work here, a different
+            # liability than loop_stages targets elsewhere), so this
+            # stage contributes nothing to loop_twiddle_tables/stage_loops.
+            assert stage.host.total_elems % stage.length == 0, (
+                f"stage {i} ({stage.kernel_name}): host.total_elems="
+                f"{stage.host.total_elems} not a multiple of length={stage.length}"
+            )
+            num_logical_blocks = stage.host.total_elems // stage.length
+            emit_persistent_kernel_struct(
+                e, plan=stage, num_logical_blocks=num_logical_blocks,
+                compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+            )
         else:
             stage_loop_stages = loop_stages
             stage_loops[i] = stage_loop_stages
@@ -956,31 +989,38 @@ def generate_recursive_fft_kernels(
     }
     for i, stage in enumerate(stages):
         e.add(f"    var pool{i}_elems = {stage.simd_lanes * round_sizes[i]}")
-        cooperative = not isinstance(stage, PhysicalTransposePlan) and stage.cooperation is not None
-        if cooperative:
+        needs_chunk_alignment = not isinstance(stage, PhysicalTransposePlan) and (
+            stage.cooperation is not None or stage.persistent is not None
+        )
+        if needs_chunk_alignment:
             # A cooperative stage's fft_slot/worker_id grouping
-            # (_emit_cooperative_stage's own docstring) is only sound when
-            # local_uthread_id()'s and global_uthread_id()'s own
-            # WORKERS_PER_FFT-sized groupings partition the same physical
-            # microthreads -- which holds only if *this launch's own pool*
-            # starts exactly on a hardware interleave-chunk boundary
-            # (interleave_chunk_uthreads * uthread_bytes = 256B on this
-            # target), since the M2NDP address decoder places a
-            # microthread's physical unit from its absolute DRAM address,
-            # not from an index relative to the launch. `Pool.alloc`
-            # (src/m2ndp_host.mojo) only aligns individual allocations to
-            # 64B, so a raw `cxl_alloc` address is not guaranteed
-            # 256B-aligned -- confirmed the real, root cause of a
-            # workers_per_fft=8 wrong answer previously misdiagnosed as
-            # below-the-planning-layer (an unaligned pool put half an
-            # 8-worker group on one physical unit and half on the next,
-            # each writing into a *different* private scratchpad the other
-            # half never sees). `fft_persistent_codegen.py` already carries
-            # this exact fix (see docs/persistent_leaf_design.md's own
-            # "uthread pool alignment" section); this mirrors it rather
-            # than centralizing into `Pool.alloc` itself, which every
-            # non-cooperative benchmark in the repo also uses and does not
-            # need the stricter alignment for.
+            # (_emit_cooperative_stage's own docstring), or a persistent
+            # stage's own software_group_id (== global_uthread_id() //
+            # workers_per_group, sharing that group's scratchpad the same
+            # way -- see PersistentWorkgroupPlan's own docstring), is only
+            # sound when local_uthread_id()'s/global_uthread_id()'s own
+            # WORKERS_PER_FFT- or workers_per_group-sized groupings
+            # partition the same physical microthreads -- which holds only
+            # if *this launch's own pool* starts exactly on a hardware
+            # interleave-chunk boundary (interleave_chunk_uthreads *
+            # uthread_bytes = 256B on this target), since the M2NDP
+            # address decoder places a microthread's physical unit from
+            # its absolute DRAM address, not from an index relative to
+            # the launch. `Pool.alloc` (src/m2ndp_host.mojo) only aligns
+            # individual allocations to 64B, so a raw `cxl_alloc` address
+            # is not guaranteed 256B-aligned -- confirmed the real, root
+            # cause of a workers_per_fft=8 wrong answer previously
+            # misdiagnosed as below-the-planning-layer (an unaligned pool
+            # put half an 8-worker group on one physical unit and half on
+            # the next, each writing into a *different* private
+            # scratchpad the other half never sees). `fft_persistent_
+            # codegen.py`'s own standalone host main already carries this
+            # exact fix (see docs/persistent_leaf_design.md's own "uthread
+            # pool alignment" section) for exactly this same reason; this
+            # mirrors it here too rather than centralizing into `Pool.
+            # alloc` itself, which every non-cooperative, non-persistent
+            # benchmark in the repo also uses and does not need the
+            # stricter alignment for.
             chunk_bytes = target.interleave_chunk_uthreads * target.uthread_bytes
             pad_elems = chunk_bytes // 4
             e.add(f"    var pool{i}_raw = cxl_alloc[Float32](pool{i}_elems + {pad_elems})")

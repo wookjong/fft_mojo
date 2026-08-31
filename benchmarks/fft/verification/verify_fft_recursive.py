@@ -27,6 +27,7 @@ from planning.fft_plan_recursive import (
 from codegen.fft_codegen import Emitter
 from codegen.fft_transpose_codegen import _emit_physical_transpose_stage
 from verification.verify_fft_harness import Ptr, _simd, _translate_emitted_lines, run_kernel
+from verification.verify_fft_persistent import run_persistent_kernel
 
 
 def _translate_physical_transpose_stage(plan: PhysicalTransposePlan) -> str:
@@ -243,6 +244,21 @@ def run_recursive_plan(
                 run_physical_transpose(stage, src_real=cur_r, src_imag=cur_i, dst_real=next_r, dst_imag=next_i, tw_real=tw_r, tw_imag=tw_i)
             else:
                 run_physical_transpose(stage, src_real=cur_r, src_imag=cur_i, dst_real=next_r, dst_imag=next_i)
+        elif stage.persistent is not None:
+            # A persistent leaf cannot go through run_kernel at all (see
+            # verify_fft_persistent.run_persistent_kernel's own docstring:
+            # a different round/group model entirely, not just a
+            # different worker-dispatch flavor of the same one) --
+            # num_logical_blocks is this leaf's own replica count, exactly
+            # what fft_plan_recursive._build_leaf_kernel passed through as
+            # total_uthreads/num_logical_blocks when it built this plan.
+            assert stage.host.total_elems % stage.length == 0
+            num_logical_blocks = stage.host.total_elems // stage.length
+            run_persistent_kernel(
+                stage, num_logical_blocks=num_logical_blocks,
+                input_real=cur_r, input_imag=cur_i, output_real=next_r, output_imag=next_i,
+                compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+            )
         else:
             assert stage.large_twiddle is None
             # A cooperative stage never loops regardless of the caller's own

@@ -24,10 +24,12 @@ import numpy as np
 from planning.fft_plan_core import FFTCodegenPlan, _build_plan, layouts_for_radices, pingpong_needed
 from planning.fft_plan_cooperative import make_cooperative_leaf_plan
 from planning.fft_plan_persistent import make_persistent_leaf_plan
+from planning.fft_plan_recursive import flatten_recursive_node, make_recursive_transpose_plan
 from planning.target_profile import DEFAULT_TARGET_PROFILE
 from verification.verify_fft_cooperative import run_cooperative_kernel
 from verification.verify_fft_harness import Ptr, run_kernel
 from verification.verify_fft_persistent import run_persistent_kernel
+from verification.verify_fft_recursive import run_recursive_plan
 
 
 def check_noncooperative_invariants(plan: FFTCodegenPlan) -> None:
@@ -197,6 +199,53 @@ def verify_cross_strategy_equivalence(
     }
 
 
+def verify_persistent_recursive_split(
+    n: int, *, scratchpad_byte_budget: int, inverse: bool = False, seed: int = 0,
+) -> dict[str, object]:
+    """Phase 3 (persistent recursive-split support): a split plan built
+    with `persistent_leaf=True` must use *exactly* the same split/radix
+    decomposition as the same call without it (persistent is a leaf-
+    lowering choice, never a data-layout algorithm -- see
+    docs/cooperative_worker8_pool_alignment_fix.md's own phase list), and
+    must match numpy's FFT numerically. Returns `{"same_split_shape":
+    bool, "max_error": float}`; caller decides the tolerance.
+
+    Doesn't touch real hardware (see that module's own docstring on why a
+    Python numeric pass is necessary but not sufficient for the class of
+    bug Phase 1 found) -- real-hardware confirmation for this exact check
+    (N=960/1024, forward+inverse) is in docs/
+    cooperative_worker8_pool_alignment_fix.md's own Phase 3 section,
+    reproducible via run_fft_test.sh/make_fft_kernel.py's own
+    `persistent_leaf`-equivalent path.
+    """
+    plan_persistent = make_recursive_transpose_plan(
+        n, scratchpad_byte_budget=scratchpad_byte_budget, inverse=inverse, persistent_leaf=True,
+    )
+    plan_plain = make_recursive_transpose_plan(
+        n, scratchpad_byte_budget=scratchpad_byte_budget, inverse=inverse,
+    )
+
+    leaves_persistent = [
+        s for s in flatten_recursive_node(plan_persistent.root) if isinstance(s, FFTCodegenPlan)
+    ]
+    leaves_plain = [
+        s for s in flatten_recursive_node(plan_plain.root) if isinstance(s, FFTCodegenPlan)
+    ]
+    same_split_shape = [(leaf.length, len(leaf.stages)) for leaf in leaves_persistent] == [
+        (leaf.length, len(leaf.stages)) for leaf in leaves_plain
+    ]
+    for leaf in leaves_persistent:
+        check_persistent_invariants(leaf)
+    for leaf in leaves_plain:
+        check_noncooperative_invariants(leaf)
+
+    rng = np.random.default_rng(seed)
+    x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
+    got = run_recursive_plan(plan_persistent, x, compute_lanes=4, narrow_middle_stages=True)
+    ref = np.fft.ifft(x) if inverse else np.fft.fft(x)
+    return {"same_split_shape": same_split_shape, "max_error": float(np.max(np.abs(got - ref)))}
+
+
 def main() -> None:
     tolerance = 1e-6
     failures: list[str] = []
@@ -300,6 +349,20 @@ def main() -> None:
             print(f"    {'OK  ' if ok else 'FAIL'} {tag}: worst pairwise/numpy error {worst:.3e}")
             if not ok:
                 print(f"         detail: {errs}")
+                failures.append(tag)
+
+    print()
+    print("  Persistent recursive-split support (Phase 3): same split/radix as non-persistent, numpy-correct:")
+    split_cases: list[tuple[int, int]] = [(960, 32 * 16), (1024, 32 * 16)]
+    for n, budget in split_cases:
+        for inverse in (False, True):
+            tag = f"N={n} budget={budget} inverse={inverse}"
+            result = verify_persistent_recursive_split(
+                n, scratchpad_byte_budget=budget, inverse=inverse, seed=17,
+            )
+            ok = result["same_split_shape"] and result["max_error"] <= tolerance
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: {result}")
+            if not ok:
                 failures.append(tag)
 
     if failures:

@@ -34,6 +34,7 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 from planning.fft_plan_core import (
+    _DEFAULT,
     AddressMapping,
     FFTCodegenPlan,
     FFTStagePlan,
@@ -42,6 +43,7 @@ from planning.fft_plan_core import (
     PersistentWorkgroupPlan,
     ScratchpadBufferPlan,
     SIMDBatchPlan,
+    _Default,
     _StageLayout,
     _make_load,
     _make_store,
@@ -254,6 +256,7 @@ def make_persistent_leaf_plan(
     scalar_worker_mode: Literal["adaptive", "reserved"] = "adaptive",
     kernel_name: str = "PersistentFFT",
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    inverse_scale: float | None | _Default = _DEFAULT,
 ) -> FFTCodegenPlan:
     """A length-`length` leaf FFT (single fused kernel, `radices` its own
     Cooley-Tukey/Stockham stage sequence -- same contract as `_build_plan`/
@@ -274,6 +277,16 @@ def make_persistent_leaf_plan(
     `required_scratchpad_bytes` below) regardless of caller-supplied
     launch width -- there is no "smaller launch, less capacity needed"
     tradeoff the way there is for the ordinary per-uthread model.
+
+    `inverse_scale`: the same `_DEFAULT` sentinel `_build_plan`/
+    `make_cooperative_leaf_plan` use -- omitted, it's `1/length` when
+    `inverse` else `None`; pass `None` explicitly to suppress that for a
+    persistent leaf used as a non-final kernel in a recursive chain (the
+    overall 1/N belongs on whichever one kernel in the chain is actually
+    last, never automatically on every `inverse=True` kernel -- see
+    `_build_plan`'s own docstring for the same rule). Needed for
+    `fft_plan_recursive.py`'s own leaf builder to thread persistent leaves
+    through a split exactly like every other leaf kind already does.
     """
     if num_logical_blocks < 1:
         raise ValueError("num_logical_blocks must be >= 1")
@@ -356,7 +369,8 @@ def make_persistent_leaf_plan(
 
     layouts = layouts_for_radices(length, radices, simd_lanes)
     buffer_names: tuple[str, str] = ("buf_a", "buf_b")
-    inverse_scale = (1.0 / length) if inverse else None
+    if inverse_scale is _DEFAULT:
+        inverse_scale = (1.0 / length) if inverse else None
 
     stages = _lower_persistent_stages(
         length=length,

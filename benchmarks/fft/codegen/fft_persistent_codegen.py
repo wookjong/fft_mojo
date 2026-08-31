@@ -328,21 +328,34 @@ def _emit_params_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
     e.add()
 
 
-def generate_persistent_fft_kernel(
-    plan: FFTCodegenPlan, *, num_logical_blocks: int,
+def emit_persistent_kernel_struct(
+    e: Emitter, *, plan: FFTCodegenPlan, num_logical_blocks: int,
     compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
-) -> str:
-    """Render a full persistent-software-workgroup FFT: one `NDPTask`
-    struct, one host-level `.launch()`, exactly `2 + len(plan.stages)`
-    distinct kernel functions (`preload`, `stage_0`, ..., `writeback`;
-    see this module's own top docstring for why round-specific functions
-    don't work), `device_main` calling that same small function set once
-    per round in the right order. `plan` must come from
-    `planning.fft_plan_persistent.make_persistent_leaf_plan` (i.e.
-    `plan.persistent is not None`); `num_logical_blocks` must match what
-    that call was given (checked below, not re-derived, since
-    `plan.host.total_elems` only encodes `length * num_logical_blocks`
-    jointly).
+) -> None:
+    """Append one `NDPTask` struct for a persistent-software-workgroup FFT
+    leaf to `e`: `Params`, `buf_a`/`buf_b`/`round_tracker` scratchpad,
+    exactly `2 + len(plan.stages)` distinct kernel functions (`preload`,
+    `stage_0`, ..., `writeback`; see this module's own top docstring for
+    why round-specific functions don't work), and a `device_main` calling
+    that same small function set once per round in the right order.
+
+    Factored out of `generate_persistent_fft_kernel` so a caller building
+    a *shared* multi-kernel host `main()` (`fft_transpose_codegen.
+    generate_recursive_fft_kernels`, once a leaf in a recursive split
+    opts into persistent execution) can emit this one leaf's own struct
+    inline, the same way it already calls `_emit_kernel`/
+    `_emit_physical_transpose_kernel` for the other two kernel shapes it
+    knows how to render -- without also getting a second, standalone
+    `main()` this function no longer emits. `generate_persistent_fft_
+    kernel` (below) is now a thin wrapper: this struct plus its own
+    self-contained host `main()`, unchanged in output for every existing
+    caller.
+
+    `plan` must come from `planning.fft_plan_persistent.
+    make_persistent_leaf_plan` (i.e. `plan.persistent is not None`);
+    `num_logical_blocks` must match what that call was given (checked
+    below, not re-derived, since `plan.host.total_elems` only encodes
+    `length * num_logical_blocks` jointly).
 
     `compute_lanes`/`narrow_middle_stages`: forwarded to `emit_stage_
     phase` -- see its own docstring for why the defaults (`4`/`True`,
@@ -350,7 +363,7 @@ def generate_persistent_fft_kernel(
     just a performance knob.
     """
     if plan.persistent is None:
-        raise ValueError("generate_persistent_fft_kernel requires a persistent plan")
+        raise ValueError("emit_persistent_kernel_struct requires a persistent plan")
     if plan.host.total_elems != plan.length * num_logical_blocks:
         raise ValueError(
             f"num_logical_blocks={num_logical_blocks} is inconsistent with "
@@ -380,10 +393,6 @@ def generate_persistent_fft_kernel(
     assert buffer_names == ("buf_a", "buf_b"), buffer_names
     final_buffer = buffer_names[len(plan.stages) % 2]
 
-    e = Emitter()
-    _emit_prelude(e)
-    e.add(f"comptime N = {plan.length}")
-    e.add()
     _emit_params_struct(e, plan=plan)
 
     e.add(f"struct {plan.kernel_name}(NDPTask):")
@@ -439,6 +448,29 @@ def generate_persistent_fft_kernel(
             e.add(f"        launch_parallel[{plan.kernel_name}.{phase}]()")
     e.add()
     e.add()
+
+
+def generate_persistent_fft_kernel(
+    plan: FFTCodegenPlan, *, num_logical_blocks: int,
+    compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
+) -> str:
+    """Render a full persistent-software-workgroup FFT: `emit_persistent_
+    kernel_struct`'s one `NDPTask` struct, plus this function's own
+    self-contained host `main()` (one `.launch()`, buffer alloc/fill,
+    reference check) -- the standalone single-file entry point every
+    existing caller of this function still gets unchanged. See
+    `emit_persistent_kernel_struct`'s own docstring for the struct-only
+    half of this, now shared with `fft_transpose_codegen.
+    generate_recursive_fft_kernels`.
+    """
+    e = Emitter()
+    _emit_prelude(e)
+    e.add(f"comptime N = {plan.length}")
+    e.add()
+    emit_persistent_kernel_struct(
+        e, plan=plan, num_logical_blocks=num_logical_blocks,
+        compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+    )
 
     host = plan.host
     e.add("def main() raises:")
