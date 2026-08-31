@@ -56,11 +56,14 @@ from dataclasses import dataclass, replace
 from planning.fft_cost_model import PlanMetrics, estimate_cost, estimate_metrics
 from planning.fft_plan_cooperative import worker_candidates_per_fft
 from planning.fft_plan_core import (
+    _DEFAULT,
     FFTCodegenPlan,
     MultiKernelHostPlan,
+    _Default,
     _prime_factors_supported,
     coalesce_radices,
 )
+from planning.fft_plan_lanes import apply_all_scalar_lanes_to_plan, apply_compute_lanes_to_plan
 from planning.fft_plan_persistent import make_persistent_leaf_plan
 from planning.fft_plan_recursive import (
     FFTLeafPlan,
@@ -122,6 +125,15 @@ class PlanChoices:
     # constant, `target.interleave_chunk_uthreads`, never a search choice).
     # `None` (every other step): not a persistent candidate, unchanged.
     execution_strategy: str | None = None
+    # Only set for generate_candidates' own lane-variant sweep
+    # (generate_lane_variant_candidates): "unnarrowed" or "all_scalar" --
+    # see that function's own docstring. `None` (every other step,
+    # including the plain baseline): every stage's own `compute_lanes`
+    # stays unset (`None`) on the plan itself, and codegen resolves it
+    # live from whatever flat compute_lanes/narrow_middle_stages the
+    # eventual renderer passes -- see planning.fft_plan_lanes' own module
+    # docstring for why that is still today's exact default behavior.
+    lane_variant: str | None = None
 
 
 @dataclass(frozen=True)
@@ -583,6 +595,45 @@ def generate_persistent_leaf_candidates(
     return results
 
 
+def generate_lane_variant_candidates(
+    plan: RecursiveFFTPlan, choices: "PlanChoices", *, compute_lanes: int | None,
+) -> list[tuple[RecursiveFFTPlan, "PlanChoices"]]:
+    """Two bounded, tree-wide `stage.compute_lanes` variants of `plan` --
+    `"unnarrowed"` (every FFT leaf's own middle stages rendered at full
+    `compute_lanes`, no halving) and `"all_scalar"` (every stage of every
+    leaf floored to `compute_lanes=1`) -- via `planning.fft_plan_lanes.
+    apply_compute_lanes_to_plan`/`apply_all_scalar_lanes_to_plan`. The
+    third, "baseline narrow_middle_stages=True" shape
+    `generate_compute_lane_candidates` (fft_plan_lanes.py) would also
+    offer is deliberately *not* added again here: every existing
+    candidate this module already builds has `stage.compute_lanes` unset
+    (`None`) on every stage, and codegen's own live-fallback default
+    (`make_fft_kernel.py`'s shipped `compute_lanes=4, narrow_middle_
+    stages=True`) already renders that exact same code at emit time -- a
+    plan-level "baseline" candidate here would be cost-scored twice under
+    two different `_plan_signature`s for what a real toolchain build
+    renders identically, not a genuinely new candidate.
+
+    Deliberately not crossed with every other axis (radix tier, worker
+    sequence, split) -- this module's own "one axis at a time, star
+    search around a fixed point" discipline (see the module docstring):
+    `plan`/`choices` is whatever the caller already picked (typically the
+    baseline, the same "hold everything else fixed" pattern step 3's
+    worker sweep and step 8's per-leaf worker sweep both already use for
+    their own axis), and this adds only the `compute_lanes` axis around
+    it. `[]` when `compute_lanes` is `None` (nothing to narrow or floor --
+    matches `resolve_stage_compute_lanes`'s own `None`-passthrough rule).
+    """
+    if compute_lanes is None:
+        return []
+    unnarrowed = apply_compute_lanes_to_plan(plan, compute_lanes=compute_lanes, narrow_middle_stages=False)
+    all_scalar = apply_all_scalar_lanes_to_plan(plan)
+    return [
+        (unnarrowed, replace(choices, lane_variant="unnarrowed")),
+        (all_scalar, replace(choices, lane_variant="all_scalar")),
+    ]
+
+
 def generate_tile_candidates(rows: int, cols: int, *, simd_lanes: int) -> list[tuple[int, int]]:
     """A handful of legal (tile_rows, tile_cols) pairs for one PRE/MIDDLE/
     POST transpose of this matrix shape: the planner's own default (square,
@@ -748,6 +799,7 @@ def generate_candidates(
     max_joint_combined_candidates: int = 128,
     max_joint_worker_sequences: int = 32,
     max_joint_radix_execution_candidates: int = 96,
+    compute_lanes: int | None | _Default = _DEFAULT,
 ) -> list[FFTPlanCandidate]:
     """Baseline (today's exact default plan) plus one axis varied at a time
     around it -- see the module docstring for why this is a staged sweep,
@@ -778,7 +830,21 @@ def generate_candidates(
     own docstring (`max_worker_sequences`/`max_joint_candidates` there,
     same meaning, same "compute-time safety valve, not a fairness
     mechanism" discipline as the step 7 caps above).
+
+    `compute_lanes`: `_DEFAULT` (the sentinel, not `None` -- `None` is
+    itself a real, distinct meaning, "no lane restriction," matching
+    `resolve_stage_compute_lanes`'s own convention) resolves to
+    `min(simd_lanes, target.lmul1_float32_lanes)`, the exact value
+    `make_fft_kernel.py` ships as its own default -- so step 11's lane-
+    variant sweep (below) narrows/floors around the same width a real
+    build would actually use unless a caller overrides it. Feeds only
+    step 11; every other step's own candidates are unaffected (their own
+    `stage.compute_lanes` stays unset, as it always has -- see
+    `generate_lane_variant_candidates`'s own docstring for why the
+    baseline shape isn't duplicated as a plan-level candidate here).
     """
+    if compute_lanes is _DEFAULT:
+        compute_lanes = min(simd_lanes, target.lmul1_float32_lanes)
 
     def build(
         *, forced_split_near_length: int | None, allowed_radix_composites,
@@ -1044,6 +1110,24 @@ def generate_candidates(
     for plan, choices in generate_persistent_leaf_candidates(
         n, target=target, inverse=inverse, batch=batch,
         scratchpad_byte_budget=scratchpad_byte_budget,
+    ):
+        add(plan, choices)
+
+    # 11. compute_lanes variant sweep, split held at baseline's own choice
+    # (same "hold everything else fixed, vary one axis" discipline every
+    # other star-search arm above already uses) -- "unnarrowed" and
+    # "all_scalar" tree-wide variants of the baseline plan itself (see
+    # generate_lane_variant_candidates' own docstring for why the third,
+    # "baseline narrow_middle_stages=True" shape isn't duplicated here).
+    # This is the axis Phase 5 (planning.fft_plan_lanes.py) built the
+    # mechanism for but never wired into search -- until this step,
+    # compute_lanes was reachable only as a flat, whole-tree render-time
+    # argument to codegen, invisible to cost-based ranking or the spill
+    # probe's own candidate list.
+    for plan, choices in generate_lane_variant_candidates(
+        baseline_plan,
+        PlanChoices(split_near_length=baseline_split, radix_tier_name="default", workers_per_fft=None, tile=None),
+        compute_lanes=compute_lanes,
     ):
         add(plan, choices)
 

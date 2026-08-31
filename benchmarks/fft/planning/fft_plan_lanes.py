@@ -26,6 +26,7 @@ can decide every stage's own width before codegen ever sees it.
 from dataclasses import replace
 
 from planning.fft_plan_core import FFTCodegenPlan, FFTStagePlan
+from planning.fft_plan_recursive import FFTLeafPlan, FFTNode, FFTRecursiveNodePlan, RecursiveFFTPlan
 
 # See codegen.fft_codegen's own former copy of this comment (moved here
 # unchanged) for the real-hardware evidence: N=11/13/17 standalone, single-
@@ -182,3 +183,75 @@ def generate_compute_lane_candidates(
         seen.add(key)
         deduped.append(candidate)
     return deduped
+
+
+def _apply_to_node(
+    node: FFTNode, *, compute_lanes: int | None, narrow_middle_stages: bool, all_scalar: bool,
+) -> FFTNode:
+    """Every leaf `apply_compute_lanes`/`generate_compute_lane_candidates`
+    already knows how to handle one `FFTCodegenPlan` at a time -- a
+    `RecursiveFFTPlan`'s own leaves sit nested inside `FFTLeafPlan`/
+    `FFTRecursiveNodePlan` (a frozen-dataclass tree, not a flat list), so
+    setting every leaf's own `compute_lanes` tree-wide needs this
+    recursive rewrite instead of a single `apply_compute_lanes` call.
+    `PhysicalTransposePlan` (PRE/MIDDLE/POST) stages are untouched --
+    `compute_lanes` is an FFT-arithmetic-stage concept only (see
+    `fft_transpose_codegen.generate_recursive_fft_kernels`'s own
+    docstring: transpose kernels have their own separate width story).
+    """
+    if isinstance(node, FFTLeafPlan):
+        if all_scalar:
+            new_kernel = replace(
+                node.kernel,
+                stages=tuple(replace(s, compute_lanes=1) for s in node.kernel.stages),
+            )
+        else:
+            new_kernel = apply_compute_lanes(
+                node.kernel, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+            )
+        return replace(node, kernel=new_kernel)
+    assert isinstance(node, FFTRecursiveNodePlan)
+    return replace(
+        node,
+        near_fft=_apply_to_node(
+            node.near_fft, compute_lanes=compute_lanes,
+            narrow_middle_stages=narrow_middle_stages, all_scalar=all_scalar,
+        ),
+        far_child=_apply_to_node(
+            node.far_child, compute_lanes=compute_lanes,
+            narrow_middle_stages=narrow_middle_stages, all_scalar=all_scalar,
+        ),
+    )
+
+
+def apply_compute_lanes_to_plan(
+    plan: RecursiveFFTPlan, *, compute_lanes: int | None, narrow_middle_stages: bool = False,
+) -> RecursiveFFTPlan:
+    """Tree-wide `apply_compute_lanes`: every FFT leaf in `plan`'s own
+    split tree gets its own `compute_lanes` populated by `resolve_stage_
+    compute_lanes`, the same rule every leaf would already resolve to
+    individually -- one flat `compute_lanes`/`narrow_middle_stages`
+    applied uniformly across the whole tree, not a per-leaf choice (see
+    `generate_lane_variant_candidates` in `fft_plan_search.py` for the
+    bounded per-plan candidate set built from this)."""
+    return replace(
+        plan,
+        root=_apply_to_node(
+            plan.root, compute_lanes=compute_lanes,
+            narrow_middle_stages=narrow_middle_stages, all_scalar=False,
+        ),
+    )
+
+
+def apply_all_scalar_lanes_to_plan(plan: RecursiveFFTPlan) -> RecursiveFFTPlan:
+    """Tree-wide floor: every stage of every FFT leaf in `plan`'s own
+    split tree rendered at `compute_lanes=1` -- the one width real-
+    hardware evidence never found *wrong*, only sometimes slower (see
+    `generate_compute_lane_candidates`'s own "all-scalar" candidate,
+    applied here tree-wide instead of to one leaf)."""
+    return replace(
+        plan,
+        root=_apply_to_node(
+            plan.root, compute_lanes=None, narrow_middle_stages=False, all_scalar=True,
+        ),
+    )

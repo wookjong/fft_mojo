@@ -26,11 +26,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planning.fft_plan_recursive import _recursive_split_candidates, make_recursive_transpose_plan
+from planning.fft_plan_core import FFTCodegenPlan
+from planning.fft_plan_recursive import _recursive_split_candidates, flatten_recursive_node, make_recursive_transpose_plan
 from planning.fft_plan_search import (
     FFTPlanCandidate,
     PlanChoices,
     _leaf_kernels_in_order,
+    _plan_signature,
     _root_split_length,
     generate_candidates,
     generate_leaf_worker_sequences,
@@ -290,10 +292,10 @@ def check_cross_step_duplicates_removed() -> None:
         f"expected every candidate in generate_candidates(N={n})'s own output to "
         f"realize a distinct plan -- found {len(sigs) - len(set(sigs))} duplicate(s)"
     )
-    cooperative = [c for c in cands if c.choices.workers_per_fft is not None or c.choices.worker_sequence is not None]
-    assert cooperative, f"expected >= 1 cooperative candidate at N={n} for this check to mean anything"
+    non_baseline_leaf = [c for c in cands if c.choices.workers_per_fft is not None or c.choices.worker_sequence is not None]
+    assert non_baseline_leaf, f"expected >= 1 cooperative/persistent candidate at N={n} for this check to mean anything"
     print(f"    OK   N={n}: {len(cands)} candidates, all distinct plan signatures "
-          f"({len(cooperative)} cooperative, surviving via whichever step built them first)")
+          f"({len(non_baseline_leaf)} cooperative/persistent, surviving via whichever step built them first)")
 
 
 def check_generate_candidates_includes_step9() -> None:
@@ -365,6 +367,85 @@ def check_probe_and_rerank_accepts_joint_candidates() -> None:
           f"(real-hardware rank_by_cycles run separately, not part of this fast check)")
 
 
+def check_generate_candidates_includes_step11() -> None:
+    """End to end through generate_candidates (step 11, the compute_lanes
+    variant sweep -- Phase 6's second half): "unnarrowed" and "all_scalar"
+    tree-wide lane variants of the baseline both reach the final, deduped
+    pool, each with every leaf's every stage's own `compute_lanes`
+    actually populated (not left `None`, the shape every other step's own
+    candidates still have -- see generate_lane_variant_candidates' own
+    docstring for why the plan-level "baseline" shape is deliberately not
+    a third variant here)."""
+    n = 960
+    cands = generate_candidates(n, scratchpad_byte_budget=32 * 16, max_candidates=200)
+    lane_variants = {c.choices.lane_variant: c for c in cands if c.choices.lane_variant is not None}
+    assert "unnarrowed" in lane_variants and "all_scalar" in lane_variants, (
+        f"expected both 'unnarrowed' and 'all_scalar' lane-variant candidates, got {sorted(lane_variants)}"
+    )
+    for label, c in lane_variants.items():
+        leaves = [s for s in flatten_recursive_node(c.plan.root) if isinstance(s, FFTCodegenPlan)]
+        assert leaves, f"{label}: expected at least one FFT leaf"
+        for leaf in leaves:
+            for stage in leaf.stages:
+                assert stage.compute_lanes is not None, (
+                    f"{label}: leaf {leaf.kernel_name} stage {stage.stage_id} has compute_lanes=None"
+                )
+        if label == "all_scalar":
+            assert all(
+                stage.compute_lanes == 1 for leaf in leaves for stage in leaf.stages
+            ), "all_scalar variant must floor every stage to compute_lanes=1"
+    print(f"    OK   N={n}: generate_candidates includes both compute_lanes variants "
+          f"('unnarrowed', 'all_scalar'), every leaf stage's own compute_lanes set")
+
+
+def check_lane_variant_signature_distinct_from_baseline() -> None:
+    """`_plan_signature` must not collapse a lane-variant candidate onto
+    the plain baseline (whose own stages all have `compute_lanes=None`)
+    -- Phase 5's own signature change (folding each leaf's per-stage
+    `compute_lanes` tuple in) is what makes this hold; this confirms it
+    actually does for a real step-11 candidate, not just in isolation."""
+    n = 960
+    cands = generate_candidates(n, scratchpad_byte_budget=32 * 16, max_candidates=200)
+    baseline = next(
+        c for c in cands
+        if c.choices.lane_variant is None and c.choices.worker_sequence is None
+        and c.choices.execution_strategy is None and c.choices.radix_tier_name == "default"
+        and c.choices.split_sequence is None and c.choices.tile is None
+    )
+    lane_variants = [c for c in cands if c.choices.lane_variant is not None]
+    assert lane_variants, "need >= 1 lane-variant candidate for this check to mean anything"
+    sig_baseline = _plan_signature(baseline.plan)
+    for c in lane_variants:
+        assert _plan_signature(c.plan) != sig_baseline, (
+            f"lane_variant={c.choices.lane_variant!r} collided with the baseline's own "
+            f"_plan_signature -- global dedup would have silently dropped one of them"
+        )
+    print(f"    OK   N={n}: {len(lane_variants)} lane-variant candidate(s) each have a "
+          f"_plan_signature distinct from the plain baseline's")
+
+
+def check_probe_accepts_lane_variant_candidates() -> None:
+    """Same discipline as check_probe_and_rerank_accepts_joint_candidates
+    above, for step 11's own candidates: planning.spill_probe.probe_and_
+    rerank_candidates only reads candidate.plan/candidate.metrics, both
+    already well-formed on a lane-variant candidate."""
+    from planning.spill_probe import probe_and_rerank_candidates
+
+    n = 960
+    cands = generate_candidates(n, scratchpad_byte_budget=32 * 16, max_candidates=200)
+    lane_variants = [c for c in cands if c.choices.lane_variant is not None]
+    assert lane_variants, "need >= 1 lane-variant candidate for this check to mean anything"
+    import inspect
+    sig = inspect.signature(probe_and_rerank_candidates)
+    assert "candidates" in sig.parameters and "rank_by_cycles" in sig.parameters
+    for c in lane_variants:
+        assert c.plan is not None
+        assert c.metrics is not None
+        assert hasattr(c.metrics, "spill_free") and hasattr(c.metrics, "ndp_cycles")
+    print(f"    OK   N={n}: probe_and_rerank_candidates' own signature/field expectations "
+          f"hold for {len(lane_variants)} step-11 candidate(s) (real-hardware run separately)")
+
+
 def main() -> None:
     print("  fft_plan_search.py: radix x execution joint search (step 9):")
     check_same_radix_multiple_workers()
@@ -377,6 +458,13 @@ def main() -> None:
     check_generate_candidates_includes_step9()
     check_probe_and_rerank_accepts_joint_candidates()
     print("[verify] fft_plan_search step-9 joint search: all checks passed")
+
+    print()
+    print("  fft_plan_search.py: compute_lanes variant sweep (step 11):")
+    check_generate_candidates_includes_step11()
+    check_lane_variant_signature_distinct_from_baseline()
+    check_probe_accepts_lane_variant_candidates()
+    print("[verify] fft_plan_search step-11 compute_lanes sweep: all checks passed")
 
 
 if __name__ == "__main__":
