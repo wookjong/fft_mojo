@@ -585,8 +585,9 @@ def _search_leaf_shape(plan: RecursiveFFTPlan) -> tuple[int, tuple[int, ...]]:
 def _plan_signature(plan: RecursiveFFTPlan) -> tuple:
     """A canonical signature of everything a `RecursiveFFTPlan`'s own
     already-built structure actually determines about the rendered kernel
-    -- radix sequence + cooperative worker count per leaf, tile size per
-    transpose stage -- used to dedup candidates that two different
+    -- radix sequence + cooperative worker count + per-stage compute_lanes
+    per leaf, tile size per transpose stage -- used to dedup candidates
+    that two different
     `generate_candidates` steps built via different routes (e.g. step 8's
     own single-leaf worker sweep and step 9's own joint radix x worker
     sweep can both produce "leaf 0 at workers=2, every other leaf
@@ -603,6 +604,7 @@ def _plan_signature(plan: RecursiveFFTPlan) -> tuple:
             sig.append(("T", stage.rows, stage.cols, stage.tile_rows, stage.tile_cols))
         else:
             radices = tuple(s.radix for s in stage.stages)
+            lanes = tuple(s.compute_lanes for s in stage.stages)
             workers = stage.cooperation.workers_per_fft if stage.cooperation is not None else None
             # Persistent leaves never set `cooperation` (a separate, non-
             # overlapping execution model -- see `FFTCodegenPlan.persistent`'s
@@ -617,7 +619,7 @@ def _plan_signature(plan: RecursiveFFTPlan) -> tuple:
                 (stage.persistent, stage.total_uthreads, stage.max_uthread)
                 if stage.persistent is not None else None
             )
-            sig.append(("L", stage.length, radices, workers, persistent))
+            sig.append(("L", stage.length, radices, workers, persistent, lanes))
     return tuple(sig)
 
 

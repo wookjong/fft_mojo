@@ -66,6 +66,11 @@ from planning.fft_plan_core import (
     StorePlan,
     TwiddlePlan,
 )
+from planning.fft_plan_lanes import (
+    _ALWAYS_NARROW_RADICES,
+    _RISKY_RADIX_PAIRS,
+    resolve_stage_compute_lanes as _resolve_stage_compute_lanes,
+)
 from planning.fft_plan_simple import DecomposedFFTPlan
 
 
@@ -601,112 +606,35 @@ def _emit_batch(
     e.add()
 
 
-# A big radix's own butterfly needs roughly one pair of SIMD registers per
-# operand loaded (real+imag) before it can compute a single output -- for
-# a fully unrolled O(radix) DFT-matrix butterfly (see fft_butterflies.py),
-# that liability is in the *operand count itself*, not the SIMD width of
-# any one register, so it exists regardless of stage position (unlike the
-# middle-stage-only liability `narrow_middle_stages` targets below) *and*
-# doesn't respond to a simple halving the way that liability does.
-# Confirmed by direct real-hardware probe, each as a **standalone,
-# single-stage kernel** (first and last stage at once, no scratchpad
-# involved at all -- the narrowest possible context, ruling out every
-# other explanation): N=11/13/17 alone all MISMATCH at compute_lanes=4
-# with the exact same `csrr ..., vlenb` dynamic-spill-slot shape as
-# FFTRecNear0's radix-5 stage_1 (N=630) -- the same M2NDP-Detour `ReadCsr`
-# gap (see generate_recursive_fft_kernels' own narrow_middle_stages
-# docstring), reached by a different route. Critically, *halving*
-# compute_lanes (4->2) does NOT fix this the way it fixed the middle-stage
-# case: N=11 at compute_lanes=2 still MISMATCHES, byte-for-byte the same
-# failure as compute_lanes=4 -- only compute_lanes=1 (fully scalar, no
-# SIMD width left to reduce) passes. So these radices are floored to `1`
-# outright below, not merely halved. `10` was already known always-risky
-# (fft_plan_core._prime_factors_supported's own comment, N=160/320);
-# 11/13/17 were previously only flagged as risky *as a non-first stage*
-# (fft_cost_model._NON_FIRST_STAGE_RISKY_RADICES, now corrected to
-# fft_cost_model._ALWAYS_RISKY_RADICES to match this) -- that
-# classification undersold the actual risk, since it was only ever probed
-# embedded in a (4, r) chain, never standing completely alone. radix 5/7
-# (also multi-operand, but smaller) are NOT here: N=15/21/35/45 etc. all
-# ran clean standalone or as a first/last stage (see verify_fft_plan.py's
-# own recursive_cases and this session's real-hardware N=630 isolation)
-# -- their own risk is confirmed only in the middle-stage shape
-# `narrow_middle_stages` already covers (and a halving is enough there),
-# so adding them here would floor real N's that have never actually
-# failed all the way to fully scalar for no benefit.
-_ALWAYS_NARROW_RADICES = frozenset({10, 11, 13, 17})
-
-# N=54=(6,9): a 2-stage leaf whose *second* stage (radix 9, reading its
-# operands out of scratchpad) is technically "last", not "middle" -- so
-# neither reason in `_stage_compute_lanes` below caught it before this set
-# existed, yet compute_lanes=1 was confirmed clean for exactly this stage
-# (fft_cost_model.py's own N=54 note). Deliberately keyed on the *adjacent
-# pair* (prev stage's radix, this stage's radix), not on radix 9 alone in
-# any non-first position: a direct (4, 9) chain (N=36, forced via
-# allowed_radix_composites) built and ran clean, zero spill -- so whatever
-# makes (6, 9) risky is specific to that sequence, and flagging radix 9
-# alone would also floor the confirmed-safe (4, 9) shape for no benefit.
-# Only the one real-hardware-confirmed pair is listed; do not add a
-# speculative reverse/repeated pair ((9, 6), (9, 9), (6, 6), ...) without
-# its own probe.
-_RISKY_RADIX_PAIRS = frozenset({(6, 9)})
+# _ALWAYS_NARROW_RADICES/_RISKY_RADIX_PAIRS (imported above) and the
+# real-hardware evidence behind each MOVED to planning.fft_plan_lanes --
+# see that module's own docstring for why (compute_lanes became a
+# *planning* decision, not a codegen one) and its own copy of this
+# comment for the full N=11/13/17/N=54 evidence. Both names stay
+# importable from here too (re-exported) only because nothing in this
+# repo has swept every historical comment that still names them -- new
+# code should reference `fft_plan_lanes._ALWAYS_NARROW_RADICES` directly.
 
 
 def _stage_compute_lanes(
     *, compute_lanes: int | None, is_first: bool, is_last: bool, radix: int,
     narrow_middle_stages: bool, prev_radix: int | None = None,
 ) -> int | None:
-    """Three independent reasons to narrow the caller's own already-decided
-    `compute_lanes`, each with its own confirmed-sufficient reduction --
-    more than one can apply at once (e.g. a radix-11 middle stage), in
-    which case the floor-to-1 wins since it's the strongest:
-
-    1. `narrow_middle_stages` and this is a *middle* stage (neither first
-       nor last): the one shape every confirmed register-pressure failure
-       driven by *stage position* shares -- it both reads its operands
-       out of scratchpad (like any non-first stage) AND writes its own
-       twiddled output back to scratchpad in the same pass (like any
-       non-last stage), so it carries the load+twiddle+store state of
-       both at once. `fft_plan_core._prime_factors_supported`'s own
-       N=54=(6,9) note and this project's own N=630 real-hardware
-       isolation (FFTRecNear0's radix-5 stage_1) are two independent
-       confirmed cases, and a plain *halving* (floor 1) was confirmed
-       sufficient there (N=630 passes real hardware at the halved width).
-       A first or last stage never has both halves of this liability (a
-       first stage's own input is DRAM, not scratchpad; a last stage
-       never has a twiddled scratchpad store, see `layouts_for_radices`)
-       -- gated by `narrow_middle_stages` since a caller may want to
-       compare against the old flat-compute_lanes shape.
-    2. `stage.radix in _ALWAYS_NARROW_RADICES` (see that set's own
-       comment): a register-pressure failure driven by *operand count
-       alone*, confirmed even at a stage that is neither non-first nor
-       non-last -- unconditional, not gated by `narrow_middle_stages`.
-       Unlike reason 1, a halving is *not* enough here (N=11 still
-       MISMATCHES at compute_lanes=2) -- only `compute_lanes=1` was
-       confirmed clean, so this floors outright rather than halving.
-    3. `(prev_radix, radix) in _RISKY_RADIX_PAIRS` (see that set's own
-       comment): a register-pressure failure driven by a specific
-       *adjacent-stage sequence*, confirmed even though neither radix
-       alone (nor other pairings of either) is risky. Unconditional, not
-       gated by `narrow_middle_stages`, and floors outright like reason 2
-       (only `compute_lanes=1` was confirmed clean for the one real pair
-       this covers).
-
-    `None` (no explicit compute_lanes -- "render at plan.simd_lanes",
-    today's oldest behavior) is left alone regardless of any reason: there
-    is no already-decided width to narrow, and a caller passing `None` has
-    already opted out of every compute_lanes-driven safety choice.
+    """Fallback-only now: computes a stage's own render width live, the
+    way every call site here used to before `FFTStagePlan.compute_lanes`
+    existed. A thin wrapper around `planning.fft_plan_lanes.
+    resolve_stage_compute_lanes` (moved there verbatim, same three
+    reasons/same evidence -- see that function's own docstring), kept
+    here under its old name/signature so every existing call site below
+    (and `fft_persistent_codegen.py`'s own import of it) keeps working
+    unchanged. Only ever reached when a stage's own `compute_lanes` field
+    is `None` (see `_emit_stage`'s own updated docstring) -- a plan built
+    with `fft_plan_lanes.apply_compute_lanes` never calls this at all.
     """
-    if compute_lanes is None:
-        return compute_lanes
-    if radix in _ALWAYS_NARROW_RADICES:
-        return 1
-    if prev_radix is not None and (prev_radix, radix) in _RISKY_RADIX_PAIRS:
-        return 1
-    is_middle = not is_first and not is_last
-    if narrow_middle_stages and is_middle:
-        return max(1, compute_lanes // 2)
-    return compute_lanes
+    return _resolve_stage_compute_lanes(
+        compute_lanes=compute_lanes, is_first=is_first, is_last=is_last, radix=radix,
+        narrow_middle_stages=narrow_middle_stages, prev_radix=prev_radix,
+    )
 
 
 def _emit_stage(
@@ -724,14 +652,27 @@ def _emit_stage(
     static method the caller (`_emit_task_struct`) needs its own
     `launch_parallel` call for -- see the loop_stages tail_batch branch
     below for why that tail is its own device function instead of more
-    code appended after the loop inside `stage_{id}` itself."""
+    code appended after the loop inside `stage_{id}` itself.
+
+    `compute_lanes`: this stage's own `stage.compute_lanes` wins when the
+    planner already set it (see `FFTStagePlan.compute_lanes`'s own
+    docstring) -- codegen makes no lane-width decision of its own in that
+    case, just renders at the width the plan already carries. Only when
+    `stage.compute_lanes` is `None` (a plan built before that field
+    existed, or one that never opted in) does this fall back to computing
+    it live from the caller's own flat `compute_lanes`/
+    `narrow_middle_stages` arguments, exactly as every call site here did
+    before `FFTStagePlan.compute_lanes` existed."""
     is_first = stage.stage_id == 0
     is_last = stage.stage_id == len(plan.stages) - 1
     prev_radix = plan.stages[stage.stage_id - 1].radix if not is_first else None
-    compute_lanes = _stage_compute_lanes(
-        compute_lanes=compute_lanes, is_first=is_first, is_last=is_last, radix=stage.radix,
-        narrow_middle_stages=narrow_middle_stages, prev_radix=prev_radix,
-    )
+    if stage.compute_lanes is not None:
+        compute_lanes = stage.compute_lanes
+    else:
+        compute_lanes = _stage_compute_lanes(
+            compute_lanes=compute_lanes, is_first=is_first, is_last=is_last, radix=stage.radix,
+            narrow_middle_stages=narrow_middle_stages, prev_radix=prev_radix,
+        )
 
     def emit_header(name: str) -> None:
         e.add("    @staticmethod")

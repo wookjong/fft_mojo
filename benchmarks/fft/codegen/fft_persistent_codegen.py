@@ -208,28 +208,33 @@ def emit_stage_phase(
     function total per stage (not one per round) -- see this module's own
     top docstring for why.
 
-    `compute_lanes`/`narrow_middle_stages`: resolved through the *exact
-    same* `_stage_compute_lanes` fft_codegen.py's plain/cooperative paths
-    use, applied to every worker -- including the last (tail-owning)
-    worker, which no longer gets a hardcoded `compute_lanes=1` (see
-    `_worker_body`'s own docstring for why forcing that was itself the
-    bug behind a real, confirmed radix-5/radix-7 spill, root-caused and
-    fixed 2026-08-30). Defaults (`4`/`True`) match make_fft_kernel.py's
-    own shipped defaults, not "no narrowing" -- skipping this entirely
-    was tried first and produced a real crash (`vs2r.v: Unsupported
-    Instruction`) plus a wrong answer on N=64's own (4,4,4) middle stage,
-    confirmed on real hardware; see docs/persistent_leaf_design.md's own
-    "Register-pressure discipline" section, which requires reusing this
-    mechanism rather than treating a persistent-leaf spill as merely a
-    performance caveat.
+    `compute_lanes`/`narrow_middle_stages`: `stage.compute_lanes` wins
+    when the planner already set it (see `FFTStagePlan.compute_lanes`'s
+    own docstring), applied to every worker -- including the last (tail-
+    owning) worker, which no longer gets a hardcoded `compute_lanes=1`
+    (see `_worker_body`'s own docstring for why forcing that was itself
+    the bug behind a real, confirmed radix-5/radix-7 spill, root-caused
+    and fixed 2026-08-30). Only when `stage.compute_lanes` is `None` does
+    this fall back to resolving through the *exact same* `_stage_compute_
+    lanes` fft_codegen.py's plain/cooperative paths use. Defaults (`4`/
+    `True`) match make_fft_kernel.py's own shipped defaults, not "no
+    narrowing" -- skipping this entirely was tried first and produced a
+    real crash (`vs2r.v: Unsupported Instruction`) plus a wrong answer on
+    N=64's own (4,4,4) middle stage, confirmed on real hardware; see
+    docs/persistent_leaf_design.md's own "Register-pressure discipline"
+    section, which requires reusing this mechanism rather than treating a
+    persistent-leaf spill as merely a performance caveat.
     """
     is_first = stage.stage_id == 0
     is_last = stage.stage_id == len(plan.stages) - 1
     prev_radix = plan.stages[stage.stage_id - 1].radix if not is_first else None
-    vector_compute_lanes = _stage_compute_lanes(
-        compute_lanes=compute_lanes, is_first=is_first, is_last=is_last, radix=stage.radix,
-        narrow_middle_stages=narrow_middle_stages, prev_radix=prev_radix,
-    )
+    if stage.compute_lanes is not None:
+        vector_compute_lanes = stage.compute_lanes
+    else:
+        vector_compute_lanes = _stage_compute_lanes(
+            compute_lanes=compute_lanes, is_first=is_first, is_last=is_last, radix=stage.radix,
+            narrow_middle_stages=narrow_middle_stages, prev_radix=prev_radix,
+        )
 
     e = Emitter()
     name = f"stage_{stage.stage_id}"

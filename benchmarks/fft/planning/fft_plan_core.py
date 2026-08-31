@@ -379,6 +379,20 @@ class FFTStagePlan:
     # with `persistent_vector_batches is None`: not a persistent plan.
     persistent_scalar_batches: tuple[SIMDBatchPlan, ...] | None = None
 
+    # This stage's own render width, a *planning* decision (see
+    # planning.fft_plan_lanes.py's own module docstring for why this
+    # moved out of codegen) -- `None` means "not yet decided by the
+    # planner," in which case codegen falls back to computing it live the
+    # old way (its own `_stage_compute_lanes`, now a thin wrapper around
+    # `fft_plan_lanes.resolve_stage_compute_lanes`) from whatever flat
+    # `compute_lanes`/`narrow_middle_stages` the caller passed to codegen
+    # directly, unchanged behavior for every plan built before this field
+    # existed. Once set (`fft_plan_lanes.apply_compute_lanes` or one of
+    # `generate_compute_lane_candidates`'s own results), codegen renders
+    # this stage at exactly this width and makes no further lane-width
+    # decision of its own.
+    compute_lanes: int | None = None
+
 
 @dataclass(frozen=True)
 class CooperationPlan:

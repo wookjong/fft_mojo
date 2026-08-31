@@ -23,9 +23,11 @@ import numpy as np
 
 from planning.fft_plan_core import FFTCodegenPlan, _build_plan, layouts_for_radices, pingpong_needed
 from planning.fft_plan_cooperative import make_cooperative_leaf_plan
+from planning.fft_plan_lanes import apply_compute_lanes, generate_compute_lane_candidates
 from planning.fft_plan_persistent import make_persistent_leaf_plan
 from planning.fft_plan_recursive import flatten_recursive_node, make_recursive_transpose_plan
 from planning.target_profile import DEFAULT_TARGET_PROFILE
+from codegen.fft_codegen import _stage_compute_lanes, generate_fft_kernel
 from verification.verify_fft_cooperative import run_cooperative_kernel
 from verification.verify_fft_harness import Ptr, run_kernel
 from verification.verify_fft_persistent import run_persistent_kernel
@@ -268,6 +270,57 @@ def verify_mixed_leaf_strategy(
     return float(np.max(np.abs(got - ref)))
 
 
+def verify_compute_lanes_planner_promotion(
+    length: int, radices: tuple[int, ...], *, compute_lanes: int | None = 4,
+) -> dict[str, object]:
+    """Phase 5 (compute_lanes promoted to a planning decision): the
+    planner-resolved path (`apply_compute_lanes` + codegen using each
+    stage's own `compute_lanes` field, no live decision) must produce
+    *byte-for-byte identical* generated text to the old live-resolution
+    path (a flat `compute_lanes`/`narrow_middle_stages` passed straight
+    to codegen, `_stage_compute_lanes` deciding per stage at emit time) --
+    the whole point of moving the decision is that it changes *where* the
+    decision is made, not *what* it decides. Also confirms every stage's
+    own field really did get set (no silent `None` left over) and that
+    `generate_compute_lane_candidates` produces genuinely distinct
+    per-stage lane tuples, not duplicates.
+    """
+    plan = _build_plan(
+        length=length, inverse=False, total_uthreads=1, simd_lanes=8,
+        use_pingpong=pingpong_needed(len(radices)),
+        layouts=layouts_for_radices(length, radices, 8),
+        kernel_name="LanesPromotion",
+    )
+
+    live_lanes = []
+    for i, stage in enumerate(plan.stages):
+        is_first = i == 0
+        is_last = i == len(plan.stages) - 1
+        prev_radix = plan.stages[i - 1].radix if not is_first else None
+        live_lanes.append(
+            _stage_compute_lanes(
+                compute_lanes=compute_lanes, is_first=is_first, is_last=is_last,
+                radix=stage.radix, narrow_middle_stages=True, prev_radix=prev_radix,
+            )
+        )
+    text_old = generate_fft_kernel(plan, compute_lanes=compute_lanes, narrow_middle_stages=True)
+
+    plan_new = apply_compute_lanes(plan, compute_lanes=compute_lanes, narrow_middle_stages=True)
+    planned_lanes = [s.compute_lanes for s in plan_new.stages]
+    text_new = generate_fft_kernel(plan_new, compute_lanes=None, narrow_middle_stages=False)
+
+    candidates = generate_compute_lane_candidates(plan, compute_lanes=compute_lanes)
+    candidate_lane_tuples = [tuple(s.compute_lanes for s in c.stages) for c in candidates]
+
+    return {
+        "all_stages_set": all(lanes is not None for lanes in planned_lanes) if compute_lanes is not None else True,
+        "planned_matches_live": planned_lanes == live_lanes,
+        "text_identical": text_old == text_new,
+        "candidates_distinct": len(candidate_lane_tuples) == len(set(candidate_lane_tuples)),
+        "candidate_count": len(candidates),
+    }
+
+
 def main() -> None:
     tolerance = 1e-6
     failures: list[str] = []
@@ -407,6 +460,24 @@ def main() -> None:
             print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
             if not ok:
                 failures.append(tag)
+
+    print()
+    print("  compute_lanes planner promotion (Phase 5): planner-resolved path == old live-resolution path:")
+    lanes_cases: list[tuple[int, tuple[int, ...]]] = [
+        (105, (3, 5, 7)),   # known middle-stage-narrowing shape
+        (128, (4, 4, 4, 2)),
+        (110, (2, 5, 11)),  # radix 11: _ALWAYS_NARROW_RADICES floor
+    ]
+    for length, radices in lanes_cases:
+        tag = f"length={length} radices={radices}"
+        result = verify_compute_lanes_planner_promotion(length, radices)
+        ok = (
+            result["all_stages_set"] and result["planned_matches_live"]
+            and result["text_identical"] and result["candidates_distinct"]
+        )
+        print(f"    {'OK  ' if ok else 'FAIL'} {tag}: {result}")
+        if not ok:
+            failures.append(tag)
 
     if failures:
         raise AssertionError(f"{len(failures)} execution-strategy invariant check(s) failed: {failures}")
