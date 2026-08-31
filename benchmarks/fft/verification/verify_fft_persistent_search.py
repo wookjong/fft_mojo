@@ -51,29 +51,89 @@ def check_persistent_infeasible_returns_empty_not_crash() -> None:
 
 
 def check_persistent_gated_off_where_measured_slower() -> None:
-    """Real-hardware regression guard (2026-08-30): N=960/1024 both pass
+    """Real-hardware regression guard (2026-08-30) for the *unsplit*
+    single-leaf persistent path specifically: N=960/1024 both pass
     persistent's own raw capacity check (16*n <= spad_capacity_bytes) but
-    are confirmed ~50x SLOWER than the plain non-cooperative baseline
-    (persistent only activates one of target.num_ndp_units physical units
-    for these -- see _persistent_leaf_feasible's own docstring) -- and,
-    before this gate existed, the wrongly-cheap persistent candidate
+    an *unsplit* persistent leaf (num_logical_blocks=batch, typically 1)
+    is confirmed ~50x SLOWER than the plain non-cooperative baseline for
+    these two (it only activates one of target.num_ndp_units physical
+    units -- see _persistent_leaf_feasible's own docstring) -- and, before
+    this gate existed, the wrongly-cheap unsplit persistent candidate
     ranked #1 by estimated_cost among 89 real N=960 candidates. This test
     exists so a future change to _persistent_leaf_feasible cannot silently
-    reopen that regression without this failing first."""
+    reopen that specific regression without this failing first.
+
+    This does NOT mean N=960/1024 can never get a persistent candidate at
+    all any more (2026-08-31, Phase 4/6): a persistent leaf reached
+    *through a split* (`generate_leaf_worker_sequences`'s own
+    `"persistent"` per-leaf entries, gated by the different, per-leaf
+    `_leaf_persistent_feasible`) is a real, measured-competitive candidate
+    for these same N (docs/persistent_recursive_split.md's own N=960/1024
+    real-hardware parity numbers) -- see check_split_persistent_reachable_
+    where_unsplit_is_gated below for that path's own coverage. This
+    function only asserts the narrow *unsplit* generator specifically
+    stays gated, which it does unchanged."""
     for n in (960, 1024):
         cands = generate_persistent_leaf_candidates(n, target=DEFAULT_TARGET_PROFILE, inverse=False, batch=1)
         assert cands == [], (
-            f"N={n} is confirmed ~50x slower with persistent (real hardware, 2026-08-30) "
-            f"-- generate_persistent_leaf_candidates must gate it off, got {len(cands)} candidate(s)"
+            f"N={n} is confirmed ~50x slower with an *unsplit* persistent leaf (real "
+            f"hardware, 2026-08-30) -- generate_persistent_leaf_candidates must gate it "
+            f"off, got {len(cands)} candidate(s)"
         )
-    print("    OK   N=960/1024: gated off (confirmed ~50x slower on real hardware, "
-          "not merely a raw-capacity check) -- generate_candidates never even builds these")
+    print("    OK   N=960/1024: unsplit single-leaf persistent path stays gated off "
+          "(confirmed ~50x slower on real hardware) -- split+persistent is a separate, "
+          "ungated path, see check_split_persistent_reachable_where_unsplit_is_gated")
+
+
+def check_split_persistent_reachable_where_unsplit_is_gated() -> None:
+    """Phase 6 (2026-08-31): the *split* persistent path -- unlike the
+    unsplit one check_persistent_gated_off_where_measured_slower guards --
+    is reachable for exactly the N the unsplit path is gated off for, via
+    generate_leaf_worker_sequences' own per-leaf "persistent" entries
+    (Phase 4) flowing through generate_radix_execution_joint_candidates
+    (step 9). Confirms this doesn't regress into the same wrongly-cheap-
+    unsplit trap: every surviving split+persistent candidate for N=960/
+    1024 must actually be split (more than one leaf), never a single
+    persistent leaf covering the whole N."""
+    from planning.fft_plan_recursive import flatten_recursive_node
+    from planning.fft_plan_core import FFTCodegenPlan
+
+    for n in (960, 1024):
+        cands = generate_candidates(n, target=DEFAULT_TARGET_PROFILE, max_candidates=300)
+        persistent = [c for c in cands if _is_persistent_candidate(c.choices)]
+        assert persistent, f"expected at least one split+persistent candidate for N={n}"
+        for c in persistent:
+            leaves = [s for s in flatten_recursive_node(c.plan.root) if isinstance(s, FFTCodegenPlan)]
+            assert len(leaves) > 1, (
+                f"N={n}: a persistent candidate with only {len(leaves)} leaf is unsplit -- "
+                f"this must never happen here, see check_persistent_gated_off_where_measured_slower"
+            )
+    print("    OK   N=960/1024: split+persistent candidates reachable via the per-leaf "
+          "joint search, every one genuinely split (never the gated-off unsplit shape)")
+
+
+def _is_persistent_candidate(choices) -> bool:
+    """A candidate is "persistent" whether it came from step 10's own
+    unsplit single-leaf sweep (`execution_strategy == "persistent"`) or
+    from the per-leaf joint search's own `"persistent"` entries in
+    `worker_sequence` (Phase 4's per-leaf mixed execution strategy,
+    fft_plan_search.generate_leaf_worker_sequences) -- two different
+    generation *routes* to the same underlying execution model, which
+    `_plan_signature` (and this project's own dedup) already treats as
+    interchangeable when they happen to build the identical plan (e.g.
+    an N small enough that the baseline tree never splits at all, so
+    both routes build the same single persistent leaf and only one
+    survives dedup -- which one is generation-order, not something a
+    test should pin to a specific label)."""
+    return choices.execution_strategy == "persistent" or (
+        choices.worker_sequence is not None and "persistent" in choices.worker_sequence
+    )
 
 
 def check_persistent_signature_distinct_from_cooperative() -> None:
     n = 216
     cands = generate_candidates(n, target=DEFAULT_TARGET_PROFILE, max_candidates=300)
-    persistent = [c for c in cands if c.choices.execution_strategy == "persistent"]
+    persistent = [c for c in cands if _is_persistent_candidate(c.choices)]
     non_cooperative_baseline = [
         c for c in cands
         if c.choices.execution_strategy is None and c.choices.workers_per_fft is None
@@ -99,7 +159,7 @@ def check_persistent_lower_register_pressure_reflected_in_cost() -> None:
     docs/execution_cost_model_validation.md), not a magic weight."""
     n = 216
     cands = generate_candidates(n, target=DEFAULT_TARGET_PROFILE, max_candidates=300)
-    persistent = next(c for c in cands if c.choices.execution_strategy == "persistent")
+    persistent = next(c for c in cands if _is_persistent_candidate(c.choices))
     baseline = next(
         c for c in cands
         if c.choices.execution_strategy is None and c.choices.workers_per_fft is None
@@ -146,6 +206,7 @@ def main() -> None:
     check_persistent_candidate_generated_for_feasible_n()
     check_persistent_infeasible_returns_empty_not_crash()
     check_persistent_gated_off_where_measured_slower()
+    check_split_persistent_reachable_where_unsplit_is_gated()
     check_persistent_signature_distinct_from_cooperative()
     check_persistent_lower_register_pressure_reflected_in_cost()
     check_probe_dispatch_routes_persistent_to_persistent_probe()

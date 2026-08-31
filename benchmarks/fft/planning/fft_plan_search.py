@@ -206,6 +206,12 @@ def generate_per_leaf_worker_candidates(
     cross with it, same as `generate_worker_candidates`' own caller does
     today.
 
+    Also offers `"persistent"` as one more per-leaf option (Phase 4's
+    per-leaf mixed execution strategy, gated by `_leaf_persistent_
+    feasible`) alongside each leaf's own legal cooperative worker counts
+    -- a third value `forced_worker_sequence`'s own entries already
+    support, not a new axis this function needs separate plumbing for.
+
     `leaf_index` is returned alongside each sequence purely for a
     caller's own labeling/debugging (e.g. `PlanChoices` doesn't need it,
     since the sequence itself already shows which slot is non-`None`) --
@@ -220,6 +226,9 @@ def generate_per_leaf_worker_candidates(
             if w <= 1:
                 continue  # workers=1 is byte-for-byte this leaf's own uncooperative baseline
             seq = tuple(w if j == i else None for j in range(num_leaves))
+            results.append((i, seq))
+        if _leaf_persistent_feasible(kernel.length, target=target):
+            seq = tuple("persistent" if j == i else None for j in range(num_leaves))
             results.append((i, seq))
     return results
 
@@ -252,16 +261,27 @@ def generate_leaf_worker_sequences(
     (see this module's own docstring on avoiding combinatorial
     explosion elsewhere). `itertools.product` is consumed lazily, so
     hitting the cap never pays for the untaken tail of the product.
+
+    Each leaf's own option list also includes `"persistent"` when
+    `_leaf_persistent_feasible` says so (Phase 4's per-leaf mixed
+    execution strategy) -- so the Cartesian product this function already
+    builds naturally covers every representative mix the design's own
+    "minimal mixed candidates" list asks for (e.g. a 2-leaf tree gets
+    `(persistent, persistent)`, `(persistent, None)`, `(None, persistent)`,
+    and `(persistent, w)`/`(w, persistent)` for each legal cooperative `w`
+    -- all for free from the same product, not a separate generator).
     """
     kernels = _leaf_kernels_in_order(plan)
     if not kernels:
         return [()]
 
-    per_leaf_options: list[list[int | None]] = []
+    per_leaf_options: list[list[int | str | None]] = []
     for kernel in kernels:
         radices = tuple(s.radix for s in kernel.stages)
         cands = generate_worker_candidates(kernel.length, radices, target=target, simd_lanes=simd_lanes)
-        options: list[int | None] = [None] + [w for w in cands if w > 1]
+        options: list[int | str | None] = [None] + [w for w in cands if w > 1]
+        if _leaf_persistent_feasible(kernel.length, target=target):
+            options.append("persistent")
         per_leaf_options.append(options)
 
     baseline_seq: tuple[int | str | None, ...] = tuple(None for _ in kernels)
@@ -377,12 +397,17 @@ def generate_radix_execution_joint_candidates(
                     allowed_radix_composites=allowed,
                     forced_worker_sequence=seq,
                 )
-            except (ValueError, AssertionError):
+            except (ValueError, AssertionError, NotImplementedError):
                 # Illegal for this specific (tier, worker sequence) combination
                 # (e.g. a worker count this tier's own coalesced leaf shape
-                # can no longer support) -- reject before scoring, never a
-                # candidate the caller sees, per this module's own "obviously
-                # bad candidates are pruned before cost ranking" discipline.
+                # can no longer support, or a "persistent" entry -- see
+                # generate_leaf_worker_sequences' own docstring -- whose
+                # coalesced radix sequence make_persistent_leaf_plan itself
+                # rejects, e.g. too many distinct kernel functions for
+                # target.max_kernel_register) -- reject before scoring,
+                # never a candidate the caller sees, per this module's own
+                # "obviously bad candidates are pruned before cost ranking"
+                # discipline.
                 continue
             choices = PlanChoices(
                 split_near_length=baseline_split, radix_tier_name=tier_name,
@@ -393,11 +418,52 @@ def generate_radix_execution_joint_candidates(
     return results
 
 
+def _leaf_persistent_feasible(length: int, *, target: TargetProfile) -> bool:
+    """Whether *one leaf* of this length can be built as a persistent-
+    software-workgroup kernel at all -- the per-leaf legality
+    `generate_leaf_worker_sequences`/`generate_per_leaf_worker_candidates`
+    need to offer `"persistent"` as one leaf's own execution-strategy
+    option inside a split tree (Phase 4's per-leaf mixed strategy), as
+    opposed to `_persistent_leaf_feasible` below, which answers a
+    different question -- whether the *entire* N is worth persisting
+    *unsplit* -- and is not reused here.
+
+    Only the real, physical capacity check applies at leaf granularity:
+    `16 * length <= target.spad_capacity_bytes` (mirrors
+    `make_persistent_leaf_plan`'s own unconditional check, so a caller
+    can skip the attempt instead of catching the `ValueError` it would
+    otherwise raise). `_persistent_leaf_feasible`'s own *second*
+    condition (`_leaf_scratchpad_bytes(n) <= scratchpad_byte_budget`,
+    evidence-gated against the whole N) does not apply here and must
+    not be reused: that condition existed specifically because an
+    *unsplit* persistent leaf activates only one of `target.
+    num_ndp_units` physical NDP units when `num_logical_blocks` is small
+    (typically `batch`, often 1) -- a real, measured, ~50x-slower
+    failure mode for exactly the N that condition excludes. A persistent
+    leaf reached *through a split* has no such problem: its own
+    `num_logical_blocks` is that leaf's own replica count from the split
+    (`r`/`r*a`, typically dozens, not 1), fanning real rounds out across
+    physical units the same way a cooperative or plain leaf's own launch
+    already does -- confirmed on real hardware at parity with a plain
+    split (docs/persistent_recursive_split.md's own N=960/1024 numbers,
+    1587-vs-1594 and 7688-vs-7688 cycles). Remaining infeasibility this
+    cheap check cannot predict (radix-specific `max_kernel_register`
+    limits, target-mapping invariants) is caught the same way every
+    other per-tier/per-sequence combination in this module already is:
+    the actual `make_recursive_transpose_plan` build is wrapped in
+    `try`/`except (ValueError, AssertionError, NotImplementedError)` by
+    this function's own callers, never scored if it raises.
+    """
+    return 16 * length <= target.spad_capacity_bytes
+
+
 def _persistent_leaf_feasible(
     n: int, *, target: TargetProfile, scratchpad_byte_budget: int,
 ) -> bool:
     """Whether `make_persistent_leaf_plan(n, ...)` can build *and is worth
-    offering* for this N on this target.
+    offering* as a single *unsplit* leaf covering the whole N -- see
+    `_leaf_persistent_feasible` above for the different, per-leaf-inside-
+    a-split question `generate_leaf_worker_sequences` needs instead.
 
     Two independent conditions, both required:
 
