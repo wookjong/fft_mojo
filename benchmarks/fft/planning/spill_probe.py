@@ -485,17 +485,38 @@ def _probe_plan(
     target, mojo_root, m2ndp_root, build_timeout, run_timeout,
 ) -> SpillProbeResult:
     """Dispatch to the right real-toolchain probe for `plan`'s own
-    execution model -- `probe_spill_free` (`generate_recursive_fft_kernels`)
-    knows nothing about `FFTCodegenPlan.persistent`, so calling it on a
-    persistent-leaf candidate would render that leaf as though it were an
-    ordinary one (reading `stage.batches`/`worker_batches`, both irrelevant
-    to a persistent stage's own `persistent_vector_batches`/`persistent_
-    scalar_batches` -- see fft_cost_model.compute_stage_metrics' own
-    persistent branch) -- wrong kernel body, not just a wrong cost. Reads
-    the plan's own real structure (`root.kernel.persistent is not None`),
-    not `PlanChoices.execution_strategy` (generation metadata a caller
-    could pass a stale/wrong copy of), same "trust the built plan, not the
-    label" discipline `fft_plan_search._plan_signature` already uses.
+    execution model.
+
+    Only an *unsplit* single persistent leaf at the plan's own root
+    (`root.kernel.persistent is not None`, `root` itself an `FFTLeafPlan`)
+    goes to the specialized `probe_persistent_kernel_spill_free` path --
+    the one shape `generate_recursive_fft_kernels` cannot render at all
+    (it has no host `main()` of its own to plug a bare `FFTCodegenPlan`
+    into; `probe_persistent_kernel_spill_free` renders it via `codegen.
+    fft_persistent_codegen.generate_persistent_fft_kernel`'s own
+    self-contained host main instead). Everything else -- including a
+    *split* tree with one or more persistent leaves inside it (Phase 3/4's
+    per-leaf mixed execution strategy, `docs/persistent_recursive_split.md`
+    / `docs/per_leaf_mixed_execution_strategy.md`) -- goes to the plain
+    `probe_spill_free` path (`generate_recursive_fft_kernels`), which
+    *does* know how to render a persistent stage correctly wherever one
+    appears in the tree (`generate_recursive_fft_kernels`'s own per-stage
+    `stage.persistent is not None` branch, added the same session as
+    those two docs) -- confirmed on real hardware for a split+persistent
+    candidate under this function's own actual defaults
+    (`spread_across_units=True`, not just the `False` this project's own
+    scratch verification scripts happened to use while building that
+    support). Earlier versions of this docstring said `probe_spill_free`
+    "knows nothing about `FFTCodegenPlan.persistent`" -- true before that
+    fix, no longer true; kept only as a note for why an unsplit root is
+    still special-cased at all here, not because the plain path is
+    unsafe for persistent in general.
+
+    Reads the plan's own real structure (`root.kernel.persistent is not
+    None`), not `PlanChoices.execution_strategy` (generation metadata a
+    caller could pass a stale/wrong copy of), same "trust the built plan,
+    not the label" discipline `fft_plan_search._plan_signature` already
+    uses.
     """
     # Same `None` resolution `probe_spill_free` itself does before calling
     # `generate_recursive_fft_kernels` -- see that function's own docstring

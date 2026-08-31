@@ -1145,7 +1145,16 @@ def _describe_node(node: FFTNode, depth: int, lines: list[str]) -> None:
         radices = tuple(s.radix for s in node.kernel.stages)
         coop = node.kernel.cooperation
         workers = f" workers={coop.workers_per_fft}" if coop is not None else ""
-        lines.append(f"{pad}Leaf M={node.m} R={node.r} radices={radices}{workers}")
+        # persistent/compute_lanes were both invisible here before Phase 6
+        # (generate_candidates' own step 9/11 first made either a real,
+        # per-leaf search choice) -- a debug dump that can't distinguish a
+        # persistent leaf from a plain one, or show what compute_lanes it
+        # was built with, isn't showing "why this candidate looks the way
+        # it does" (this function's own caller's stated job) for either.
+        persistent = " persistent" if node.kernel.persistent is not None else ""
+        lanes = tuple(s.compute_lanes for s in node.kernel.stages)
+        lanes_str = f" compute_lanes={list(lanes)}" if any(lane is not None for lane in lanes) else ""
+        lines.append(f"{pad}Leaf M={node.m} R={node.r} radices={radices}{workers}{persistent}{lanes_str}")
         return
     assert isinstance(node, FFTRecursiveNodePlan)
     lines.append(f"{pad}Node M={node.m} R={node.r}  split: A={node.a} B={node.b}")
@@ -1175,6 +1184,8 @@ def format_plan_summary(candidate: FFTPlanCandidate, *, index: int | None = None
         f"radix_tier={c.radix_tier_name} workers_per_fft={c.workers_per_fft} tile={c.tile}"
         + (f" split_sequence={c.split_sequence}" if c.split_sequence is not None else "")
         + (f" worker_sequence={c.worker_sequence}" if c.worker_sequence is not None else "")
+        + (f" execution_strategy={c.execution_strategy}" if c.execution_strategy is not None else "")
+        + (f" lane_variant={c.lane_variant}" if c.lane_variant is not None else "")
     )
     lines.append("")
     _describe_node(candidate.plan.root, 1, lines)

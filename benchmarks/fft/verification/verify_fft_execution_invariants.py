@@ -28,6 +28,7 @@ from planning.fft_plan_persistent import make_persistent_leaf_plan
 from planning.fft_plan_recursive import flatten_recursive_node, make_recursive_transpose_plan
 from planning.target_profile import DEFAULT_TARGET_PROFILE
 from codegen.fft_codegen import _stage_compute_lanes, generate_fft_kernel
+from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
 from verification.verify_fft_cooperative import run_cooperative_kernel
 from verification.verify_fft_harness import Ptr, run_kernel
 from verification.verify_fft_persistent import run_persistent_kernel
@@ -198,6 +199,62 @@ def verify_cross_strategy_equivalence(
         "noncoop_vs_coop": _err(noncoop_out, coop_out),
         "noncoop_vs_persistent": _err(noncoop_out, persistent_out),
         "coop_vs_persistent": _err(coop_out, persistent_out),
+    }
+
+
+def verify_persistent_immune_to_spread_across_units(
+    n: int, *, scratchpad_byte_budget: int, forced_worker_sequence: tuple,
+) -> dict[str, object]:
+    """`probe_spill_free`/`make_fft_kernel.py` both default to
+    `spread_across_units=True` -- every real-hardware confirmation of
+    split+persistent leaves during Phase 3/4/6 development used `False`
+    explicitly instead (a gap in this project's own verification
+    coverage, not the shipped default), so nothing had actually exercised
+    the combination the real toolchain probe/CLI always use until this
+    check existed. Confirms structurally (fast, no real build) that a
+    persistent stage's own `pool{i}_elems` is *identical* between
+    `spread_across_units=True` and `False` (the `_stage_round_size`
+    exemption -- see that function's own docstring -- doing its job),
+    while at least one *other* stage's own pool size legitimately widens
+    under `True` (proving the flag still does something on this same
+    plan, i.e. this isn't a false pass from an already-degenerate case).
+    Confirmed separately on real hardware (not by this fast check) for
+    N=960 forced_worker_sequence=("persistent", None).
+    """
+    import re
+
+    plan = make_recursive_transpose_plan(
+        n, scratchpad_byte_budget=scratchpad_byte_budget, forced_worker_sequence=forced_worker_sequence,
+    )
+    text_narrow = generate_recursive_fft_kernels(
+        plan, compute_lanes=4, narrow_middle_stages=True, spread_across_units=False,
+    )
+    text_spread = generate_recursive_fft_kernels(
+        plan, compute_lanes=4, narrow_middle_stages=True, spread_across_units=True,
+    )
+
+    def pool_sizes(text: str) -> dict[int, int]:
+        return {int(i): int(v) for i, v in re.findall(r"var pool(\d+)_elems = (\d+)", text)}
+
+    sizes_narrow = pool_sizes(text_narrow)
+    sizes_spread = pool_sizes(text_spread)
+
+    leaves = [s for s in flatten_recursive_node(plan.root) if isinstance(s, FFTCodegenPlan)]
+    persistent_stage_indices = {
+        i for i, s in enumerate(flatten_recursive_node(plan.root)) if isinstance(s, FFTCodegenPlan) and s.persistent is not None
+    }
+    assert persistent_stage_indices, "need >= 1 persistent stage for this check to mean anything"
+
+    persistent_unaffected = all(
+        sizes_narrow[i] == sizes_spread[i] for i in persistent_stage_indices
+    )
+    something_else_widened = any(
+        sizes_spread[i] != sizes_narrow[i] for i in sizes_narrow if i not in persistent_stage_indices
+    )
+    return {
+        "persistent_stage_indices": sorted(persistent_stage_indices),
+        "persistent_unaffected_by_spread": persistent_unaffected,
+        "some_other_stage_did_widen": something_else_widened,
     }
 
 
@@ -439,6 +496,23 @@ def main() -> None:
             print(f"    {'OK  ' if ok else 'FAIL'} {tag}: {result}")
             if not ok:
                 failures.append(tag)
+
+    print()
+    print("  Persistent immune to spread_across_units (Phase 3 gap found 2026-08-31): "
+          "probe_spill_free/make_fft_kernel.py's own real default (True), not just False:")
+    spread_cases: list[tuple[int, int, tuple]] = [
+        (960, 32 * 16, ("persistent", None)),
+        (960, 32 * 16, (2, "persistent")),
+    ]
+    for n, budget, seq in spread_cases:
+        tag = f"N={n} forced_worker_sequence={seq}"
+        result = verify_persistent_immune_to_spread_across_units(
+            n, scratchpad_byte_budget=budget, forced_worker_sequence=seq,
+        )
+        ok = result["persistent_unaffected_by_spread"] and result["some_other_stage_did_widen"]
+        print(f"    {'OK  ' if ok else 'FAIL'} {tag}: {result}")
+        if not ok:
+            failures.append(tag)
 
     print()
     print("  Per-leaf mixed execution strategy (Phase 4): forced_worker_sequence mixing noncoop/cooperative/persistent:")
