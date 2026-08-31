@@ -1105,6 +1105,24 @@ def main() -> None:
     print()
     verify_fft_persistent_search_main()
 
+    # verify_fft_persistent.py was never chained into this suite before --
+    # confirmed by grep, 2026-08-31: it only ever ran standalone
+    # (`python3 verification/verify_fft_persistent.py`), so its own
+    # extensive plan-equivalence/numeric/target-invariant coverage was
+    # invisible to "run the whole suite."
+    from verification.verify_fft_persistent import main as verify_fft_persistent_main
+    print()
+    verify_fft_persistent_main()
+
+    # Phase 2 (execution-strategy invariants): structural checks the
+    # numeric harnesses above cannot make (they pass a plan/property, not
+    # a numeric result) plus a genuine same-input cross-strategy
+    # equivalence check -- see that module's own docstring for why this is
+    # not redundant with the cooperative/persistent numeric suites above.
+    from verification.verify_fft_execution_invariants import main as verify_fft_execution_invariants_main
+    print()
+    verify_fft_execution_invariants_main()
+
 
 if __name__ == "__main__":
     main()
