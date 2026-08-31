@@ -393,23 +393,47 @@ def generate_radix_execution_joint_candidates(
     return results
 
 
-def _persistent_leaf_feasible(n: int, *, target: TargetProfile) -> bool:
-    """Whether `make_persistent_leaf_plan(n, ...)` can build at all for this
-    N on this target -- mirrors that function's own unconditional capacity
-    check (`16 * length <= target.spad_capacity_bytes`, see its own
-    docstring for why persistent always needs the full `16 * length` bytes
-    regardless of launch width) so a caller can skip the attempt instead of
-    catching the `ValueError` it would otherwise raise. Also requires N to
-    fit as a single fused leaf outright (`_leaf_scratchpad_bytes(n) <=
-    scratchpad_byte_budget` is the *cooperative* family's own, unrelated
-    capacity rule -- irrelevant here) since `make_persistent_leaf_plan`
-    only ever builds one un-split kernel: today's implementation has no
-    PRE/MIDDLE/POST-transpose-wrapped persistent shape at all (see
-    docs/persistent_leaf_design.md), so persistent is simply not a
-    candidate axis for an N large enough to need `make_recursive_transpose
-    _plan`'s own recursion.
+def _persistent_leaf_feasible(
+    n: int, *, target: TargetProfile, scratchpad_byte_budget: int,
+) -> bool:
+    """Whether `make_persistent_leaf_plan(n, ...)` can build *and is worth
+    offering* for this N on this target.
+
+    Two independent conditions, both required:
+
+    1. `16 * n <= target.spad_capacity_bytes` -- mirrors `make_persistent_
+       leaf_plan`'s own unconditional capacity check (see its own
+       docstring for why persistent always needs the full `16 * length`
+       bytes regardless of launch width) so a caller can skip the attempt
+       instead of catching the `ValueError` it would otherwise raise.
+
+    2. `_leaf_scratchpad_bytes(n) <= scratchpad_byte_budget` -- the
+       *cooperative* family's own single-fused-leaf capacity rule
+       (`generate_split_candidates`'s own check for offering `None`/no-
+       split at all). Required here too, on real-measurement grounds, not
+       merely because persistent has no split shape: every representative
+       N this project measured (2026-08-30, 5 N where this holds vs. 2
+       where it doesn't) that satisfies it had persistent beat the plain
+       non-cooperative baseline by 28-46%; every N where it fails
+       (N=960, N=1024 -- both need `make_recursive_transpose_plan`'s own
+       PRE/MIDDLE/POST-transpose recursion under the cooperative family's
+       real budget) had persistent lose by roughly 50x, because a single
+       persistent leaf activates only one of `target.num_ndp_units`
+       physical NDP units (`num_logical_blocks=batch`, usually 1, active)
+       where the split/transpose structure fans real DRAM-tile work out
+       across all of them -- a dimension `fft_cost_model.py` does not
+       model at all (see docs/execution_cost_model_validation.md's own
+       "Persistent as a search axis: representative sweep" section), so
+       this condition cannot be left to cost-based ranking to catch. Using
+       persistent's own `16 * n <= spad_capacity_bytes` alone (condition 1)
+       would offer -- and, worse, cost-rank *first* -- a candidate
+       confirmed catastrophically slower than the plan a caller already
+       has, at exactly the N where that plan needs to split at all.
     """
-    return 16 * n <= target.spad_capacity_bytes
+    return (
+        16 * n <= target.spad_capacity_bytes
+        and _leaf_scratchpad_bytes(n) <= scratchpad_byte_budget
+    )
 
 
 def _wrap_persistent_leaf_as_recursive_plan(
@@ -448,6 +472,7 @@ def _wrap_persistent_leaf_as_recursive_plan(
 
 def generate_persistent_leaf_candidates(
     n: int, *, target: TargetProfile, inverse: bool, batch: int,
+    scratchpad_byte_budget: int = 4096,
 ) -> list[tuple[RecursiveFFTPlan, "PlanChoices"]]:
     """One persistent-leaf candidate per radix tier (`generate_radix_tiers`,
     the same tier set the cooperative-worker joint search offers), each at
@@ -457,15 +482,18 @@ def generate_persistent_leaf_candidates(
     constant (`target.interleave_chunk_uthreads`), not a search choice, so
     only radix varies here.
 
-    `[]` (not an exception) when `n` can't build a persistent leaf at all
-    -- either the capacity check (`_persistent_leaf_feasible`) fails, or
-    this specific radix tier's own coalescing raises for this N (the same
-    "illegal combination is pruned before scoring, never surfaced as an
-    error" discipline `generate_radix_execution_joint_candidates` already
-    uses) -- so a caller (`generate_candidates`) can call this
-    unconditionally for every N without its own feasibility check first.
+    `[]` (not an exception) when `n` can't build a persistent leaf at all,
+    or measured evidence says it isn't worth offering (`_persistent_leaf_
+    feasible`'s own docstring -- an N large enough to need `make_recursive
+    _transpose_plan`'s own recursion under `scratchpad_byte_budget` loses
+    to it by ~50x, not merely "doesn't apply"), or this specific radix
+    tier's own coalescing raises for this N (the same "illegal combination
+    is pruned before scoring, never surfaced as an error" discipline
+    `generate_radix_execution_joint_candidates` already uses) -- so a
+    caller (`generate_candidates`) can call this unconditionally for every
+    N without its own feasibility check first.
     """
-    if not _persistent_leaf_feasible(n, target=target):
+    if not _persistent_leaf_feasible(n, target=target, scratchpad_byte_budget=scratchpad_byte_budget):
         return []
     results: list[tuple[RecursiveFFTPlan, PlanChoices]] = []
     seen_radices: set[tuple[int, ...]] = set()
@@ -924,22 +952,30 @@ def generate_candidates(
     # 10. persistent-software-workgroup execution -- a wholly separate
     # execution model from every candidate above (all of which are either
     # plain or cooperative-worker leaves; see PersistentWorkgroupPlan's own
-    # docstring), only offered when `n` can build a single fused persistent
-    # leaf at all (`generate_persistent_leaf_candidates` returns `[]`
-    # otherwise -- e.g. N large enough to need make_recursive_transpose_
-    # plan's own PRE/MIDDLE/POST recursion, which this execution model does
-    # not support yet). Real measured evidence this axis is worth
-    # generating at all (2026-08-30, N=216, single fused leaf,
-    # radices=(4,2,3,3,3)): persistent at the shipped default compute_lanes
-    # is spill-free and correct where the *same* radix's cooperative
-    # worker=2/4 candidates spill outright, and faster than every other
-    # confirmed-safe candidate for this N (22901-23944 measured cycles vs.
-    # 28784 for the best rescued cooperative candidate and 43771 for the
-    # plain non-cooperative baseline) -- see docs/execution_cost_model_
-    # validation.md and the compute_lanes spill-avoidance investigation
-    # this session's own follow-up.
+    # docstring), only offered when `_persistent_leaf_feasible` says so --
+    # both a real capacity check and, since 2026-08-30's representative
+    # sweep, an evidence-based gate matching `scratchpad_byte_budget`
+    # (see that function's own docstring for the full reasoning and
+    # docs/execution_cost_model_validation.md's own "Persistent as a
+    # search axis: representative sweep" section for the numbers): every
+    # N that would ALSO fit as a single fused leaf under the cooperative
+    # family's own budget had persistent beat non-cooperative by 28-46%
+    # (N=30,64,105,144,256); every N that needs `make_recursive_transpose_
+    # plan`'s own recursion instead had persistent lose by ~50x (N=960,
+    # 1024) -- a single persistent leaf only ever activates one of
+    # `target.num_ndp_units` physical NDP units, where the split/transpose
+    # structure fans real work out across all of them, a dimension the
+    # cost model does not represent at all. This gate exists because that
+    # failure is NOT caught by cost-based ranking on its own: for N=960,
+    # the wrongly-cheap persistent candidate (its single-leaf `estimated_
+    # dram_bytes` looks far smaller than the split structure's own,
+    # multi-transpose-kernel total) ranked #1 by estimated_cost among 89
+    # real candidates despite being confirmed ~50x slower on real
+    # hardware -- confirmed before this gate existed, the reason it was
+    # added the same session rather than left as a reported risk.
     for plan, choices in generate_persistent_leaf_candidates(
         n, target=target, inverse=inverse, batch=batch,
+        scratchpad_byte_budget=scratchpad_byte_budget,
     ):
         add(plan, choices)
 

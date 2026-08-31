@@ -50,6 +50,26 @@ def check_persistent_infeasible_returns_empty_not_crash() -> None:
     print(f"    OK   N={n}: persistent infeasibility handled as an empty list, not a crash")
 
 
+def check_persistent_gated_off_where_measured_slower() -> None:
+    """Real-hardware regression guard (2026-08-30): N=960/1024 both pass
+    persistent's own raw capacity check (16*n <= spad_capacity_bytes) but
+    are confirmed ~50x SLOWER than the plain non-cooperative baseline
+    (persistent only activates one of target.num_ndp_units physical units
+    for these -- see _persistent_leaf_feasible's own docstring) -- and,
+    before this gate existed, the wrongly-cheap persistent candidate
+    ranked #1 by estimated_cost among 89 real N=960 candidates. This test
+    exists so a future change to _persistent_leaf_feasible cannot silently
+    reopen that regression without this failing first."""
+    for n in (960, 1024):
+        cands = generate_persistent_leaf_candidates(n, target=DEFAULT_TARGET_PROFILE, inverse=False, batch=1)
+        assert cands == [], (
+            f"N={n} is confirmed ~50x slower with persistent (real hardware, 2026-08-30) "
+            f"-- generate_persistent_leaf_candidates must gate it off, got {len(cands)} candidate(s)"
+        )
+    print("    OK   N=960/1024: gated off (confirmed ~50x slower on real hardware, "
+          "not merely a raw-capacity check) -- generate_candidates never even builds these")
+
+
 def check_persistent_signature_distinct_from_cooperative() -> None:
     n = 216
     cands = generate_candidates(n, target=DEFAULT_TARGET_PROFILE, max_candidates=300)
@@ -125,6 +145,7 @@ def main() -> None:
     print("  fft_plan_search.py: persistent-execution joint search (step 10):")
     check_persistent_candidate_generated_for_feasible_n()
     check_persistent_infeasible_returns_empty_not_crash()
+    check_persistent_gated_off_where_measured_slower()
     check_persistent_signature_distinct_from_cooperative()
     check_persistent_lower_register_pressure_reflected_in_cost()
     check_probe_dispatch_routes_persistent_to_persistent_probe()
