@@ -246,6 +246,28 @@ def verify_persistent_recursive_split(
     return {"same_split_shape": same_split_shape, "max_error": float(np.max(np.abs(got - ref)))}
 
 
+def verify_mixed_leaf_strategy(
+    n: int, *, scratchpad_byte_budget: int, forced_worker_sequence: tuple, inverse: bool = False,
+    seed: int = 0,
+) -> float:
+    """Phase 4 (per-leaf mixed execution strategy): a split plan where
+    each leaf's own entry in `forced_worker_sequence` picks a *different*
+    execution strategy independently (`None`/`"auto"`/int = non-
+    cooperative/cooperative, `"persistent"` = persistent -- see
+    `_build_recursive_node`'s own updated docstring) must still match
+    numpy's FFT. Returns the max abs error; caller decides the tolerance.
+    """
+    plan = make_recursive_transpose_plan(
+        n, scratchpad_byte_budget=scratchpad_byte_budget, inverse=inverse,
+        forced_worker_sequence=forced_worker_sequence,
+    )
+    rng = np.random.default_rng(seed)
+    x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
+    got = run_recursive_plan(plan, x, compute_lanes=4, narrow_middle_stages=True)
+    ref = np.fft.ifft(x) if inverse else np.fft.fft(x)
+    return float(np.max(np.abs(got - ref)))
+
+
 def main() -> None:
     tolerance = 1e-6
     failures: list[str] = []
@@ -362,6 +384,27 @@ def main() -> None:
             )
             ok = result["same_split_shape"] and result["max_error"] <= tolerance
             print(f"    {'OK  ' if ok else 'FAIL'} {tag}: {result}")
+            if not ok:
+                failures.append(tag)
+
+    print()
+    print("  Per-leaf mixed execution strategy (Phase 4): forced_worker_sequence mixing noncoop/cooperative/persistent:")
+    mixed_cases: list[tuple[tuple, int, int]] = [
+        (("persistent", None), 960, 32 * 16),
+        ((None, "persistent"), 960, 32 * 16),
+        (("persistent", "persistent"), 960, 32 * 16),
+        ((2, "persistent"), 960, 32 * 16),
+        (("persistent", "auto"), 960, 32 * 16),
+    ]
+    for seq, n, budget in mixed_cases:
+        for inverse in (False, True):
+            tag = f"forced_worker_sequence={seq} N={n} inverse={inverse}"
+            err = verify_mixed_leaf_strategy(
+                n, scratchpad_byte_budget=budget, forced_worker_sequence=seq,
+                inverse=inverse, seed=23,
+            )
+            ok = err <= tolerance
+            print(f"    {'OK  ' if ok else 'FAIL'} {tag}: max error {err:.3e}")
             if not ok:
                 failures.append(tag)
 

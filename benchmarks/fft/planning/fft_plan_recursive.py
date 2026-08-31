@@ -624,38 +624,55 @@ def _build_recursive_node(
     them).
 
     `forced_worker_sequence`: like `forced_split_sequence`, but for each
-    *leaf's own* `cooperative_workers` instead of each level's own split
-    -- one entry per leaf this tree actually builds, near_fft-first, in
-    the exact same visitation order `forced_split_sequence` already
-    walks: this call consumes its own first entry for whichever leaf it
-    builds (the near_fft leaf if `m` splits, the terminal leaf if it
-    doesn't), then passes the rest to `far_child` below if it split.
-    Independent of whether the split itself came from the heuristic,
-    `forced_split_near_length`, or `forced_split_sequence` -- it only
-    tracks how many leaves get built, not how the tree got that shape, so
-    a caller can vary per-leaf worker counts against *any* split choice.
-    Mutually exclusive with `cooperative_workers` (the caller picks a
-    single uniform choice for every leaf, or a per-leaf sequence, never
-    both -- asserted below). A terminal leaf (no further split) requires
-    the sequence be down to exactly its own one entry, since nothing
-    would consume the rest; built by `fft_plan_search.
-    generate_per_leaf_worker_candidates` for one-leaf-at-a-time search,
-    mirroring `_enumerate_leaf_segmentations`'s own role for splits.
+    *leaf's own execution strategy* instead of each level's own split --
+    one entry per leaf this tree actually builds, near_fft-first, in the
+    exact same visitation order `forced_split_sequence` already walks:
+    this call consumes its own first entry for whichever leaf it builds
+    (the near_fft leaf if `m` splits, the terminal leaf if it doesn't),
+    then passes the rest to `far_child` below if it split. Independent of
+    whether the split itself came from the heuristic, `forced_split_
+    near_length`, or `forced_split_sequence` -- it only tracks how many
+    leaves get built, not how the tree got that shape, so a caller can
+    vary per-leaf strategy against *any* split choice.
+
+    Each entry is either a `cooperative_workers`-shaped value (`None` =
+    non-cooperative, `"auto"` or a positive int = cooperative -- see
+    `_build_leaf_kernel`'s own docstring) or the literal string
+    `"persistent"`, meaning *this one leaf* is built by `make_persistent_
+    leaf_plan` instead, independent of what neighboring entries say --
+    the actual per-leaf *mixed execution strategy* mechanism (near=
+    persistent, far=non-coop, or any other combination): reuses this
+    existing one-entry-per-leaf sequence rather than a parallel one,
+    since a leaf's execution strategy and its cooperative worker count
+    were never independent choices to begin with (exactly one of
+    {non-cooperative, cooperative(workers), persistent} applies per
+    leaf).
+
+    Mutually exclusive with `cooperative_workers` and `persistent_leaf`
+    (the caller picks a single uniform choice for every leaf via those
+    two, or a per-leaf sequence via this one, never a mix -- asserted
+    below). A terminal leaf (no further split) requires the sequence be
+    down to exactly its own one entry, since nothing would consume the
+    rest; built by `fft_plan_search.generate_per_leaf_worker_candidates`
+    for one-leaf-at-a-time search, mirroring `_enumerate_leaf_
+    segmentations`'s own role for splits.
 
     `persistent_leaf`: `False` (the default) keeps every leaf/near_fft
     kernel this tree builds exactly as `cooperative_workers` alone would
     -- `True` builds every one of them as a persistent-software-workgroup
     leaf instead (see `_build_leaf_kernel`'s own docstring). A single
-    uniform choice for the whole tree, same discipline `cooperative_
-    workers` follows before `forced_worker_sequence` existed -- per-leaf
-    mixed strategies are a separate, later phase (docs/cooperative_
-    worker8_pool_alignment_fix.md's own phase list), not this parameter's
-    job yet. Mutually exclusive with both `cooperative_workers` and
-    `forced_worker_sequence` (asserted below): persistent and cooperative
-    are two different execution strategies for the same leaf-lowering
-    slot, never combined on one leaf (PersistentWorkgroupPlan's own
-    docstring), and a per-leaf worker-count sequence has nothing to say
-    about a leaf that isn't cooperative at all.
+    *uniform* choice for the whole tree, same discipline `cooperative_
+    workers` follows before `forced_worker_sequence` existed -- for a
+    *mixed* per-leaf choice (some persistent, some not), use `forced_
+    worker_sequence`'s own `"persistent"` entries instead (see above).
+    Mutually exclusive with both `cooperative_workers` and `forced_
+    worker_sequence` (asserted below) when *this* uniform flag is `True`
+    -- persistent and cooperative are two different execution strategies
+    for the same leaf-lowering slot, never combined on one leaf
+    (PersistentWorkgroupPlan's own docstring); a *uniform* `True` here and
+    a *per-leaf* sequence both claiming to decide the same leaf's strategy
+    is exactly the ambiguity this exclusion rules out, not a claim that
+    the two features are unrelated.
     """
     idx = node_id[0]
     node_id[0] += 1
@@ -717,10 +734,25 @@ def _build_recursive_node(
                 "was built -- it needs exactly one entry per leaf this tree "
                 "actually builds, near_fft-first"
             )
-        this_leaf_workers = forced_worker_sequence[0]
+        entry = forced_worker_sequence[0]
         rest_worker_sequence: tuple[int | str | None, ...] | None = forced_worker_sequence[1:]
+        # "persistent" is a distinct sentinel from "auto"/an int (which
+        # both mean "cooperative, this many workers") -- this one leaf
+        # gets built by make_persistent_leaf_plan instead, independent of
+        # what neighboring entries in the same sequence say. This is the
+        # actual per-leaf *mixed execution strategy* mechanism Phase 4
+        # needs (see docs/persistent_recursive_split.md's own "not done
+        # yet" list): reusing forced_worker_sequence's existing one-entry-
+        # per-leaf, near_fft-first walk rather than inventing a parallel
+        # sequence parameter, since a leaf's execution strategy and its
+        # cooperative worker count were never independent choices to begin
+        # with -- exactly one of {non-cooperative, cooperative(workers),
+        # persistent} applies per leaf.
+        this_leaf_persistent = entry == "persistent"
+        this_leaf_workers = None if this_leaf_persistent else entry
     else:
         this_leaf_workers = cooperative_workers
+        this_leaf_persistent = persistent_leaf
         rest_worker_sequence = None
 
     if split_b is None:
@@ -744,7 +776,7 @@ def _build_recursive_node(
             max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
             cooperative_workers=this_leaf_workers,
             interleave_chunk_uthreads=interleave_chunk_uthreads,
-            persistent_leaf=persistent_leaf,
+            persistent_leaf=this_leaf_persistent,
         )
         return FFTLeafPlan(m=m, r=r, kernel=kernel)
 
@@ -775,7 +807,7 @@ def _build_recursive_node(
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
         cooperative_workers=this_leaf_workers,
         interleave_chunk_uthreads=interleave_chunk_uthreads,
-        persistent_leaf=persistent_leaf,
+        persistent_leaf=this_leaf_persistent,
     )
     near_fft = FFTLeafPlan(m=b, r=r * a, kernel=near_kernel)
 
