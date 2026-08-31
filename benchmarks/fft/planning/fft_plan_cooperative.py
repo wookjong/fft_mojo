@@ -62,7 +62,7 @@ def worker_candidates_per_fft(
     simd_lanes: int = 8,
     max_workers: int | None = None,
     interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
-    exclude_full_interleave_chunk: bool = True,
+    exclude_full_interleave_chunk: bool = False,
 ) -> list[int]:
     """Every legal cooperative worker count for a leaf of this shape,
     ascending -- every divisor of the hardware's own interleave chunk
@@ -90,28 +90,46 @@ def worker_candidates_per_fft(
     `fft_plan_recursive.make_recursive_transpose_plan`) -- `None` (the
     default) applies none beyond the reasoning above.
 
-    `exclude_full_interleave_chunk`: `True` (the default) drops
-    `workers_per_fft == interleave_chunk_uthreads` (8, on this project's
-    own target) from the candidate list even when it would otherwise
-    qualify -- confirmed real-hardware wrong (not merely spilling; the
-    Python-level numeric harness passes cleanly, so this is not a logic
-    bug in this module) at that exact worker count, independent of
-    `compute_lanes`/batch size/`loop_stages`: N=128 radices=(4,4,4,2)
-    2026-08-30 (mismatch at a fixed output index, every compute_lanes and
-    batch size tried), and matches this project's own earlier N=1024
-    finding (`fft_cooperative_codegen._emit_cooperative_stage`'s own
-    docstring, commit `d93a290`) that was believed fully fixed by making
-    `loop_stages` apply per-worker -- that fix was necessary but not
-    sufficient; something else, still unidentified at the instruction
-    level, breaks specifically when one cooperative group exactly fills
-    the hardware's own interleave chunk. `choose_workers_per_fft` falls
-    back to the next-largest divisor (4, on this target) automatically,
-    which real-hardware testing confirms correct at every compute_lanes/
-    batch size tried for the same N=128 case (still spills at some
-    compute_lanes -- a caller wanting a confirmed spill-free plan still
-    needs `--verify-spill-free`/`probe_spill_free`, unaffected by this
-    flag). Pass `False` only after separately confirming a specific case
-    doesn't hit this -- never as a blanket default.
+    `exclude_full_interleave_chunk`: `False` (the default, since the real
+    root cause below was fixed) -- history for why this flag exists at
+    all: `workers_per_fft == interleave_chunk_uthreads` (8, on this
+    project's own target) was confirmed real-hardware wrong 2026-08-30
+    (N=128 radices=(4,4,4,2), mismatch at a fixed output index,
+    independent of compute_lanes/batch size/loop_stages, Python-level
+    numeric harness passing cleanly throughout) and defaulted to excluded
+    while that looked like a below-the-planning-layer defect matching this
+    project's vlenb-CSR/transpose-tile pattern. It was not: root-caused
+    2026-08-31 to `Pool.alloc` (`src/m2ndp_host.mojo`) only aligning
+    individual `cxl_alloc` allocations to 64B, not to this target's own
+    256B hardware interleave chunk (`interleave_chunk_uthreads *
+    uthread_bytes`) -- since the M2NDP address decoder places a
+    microthread's physical unit from its *absolute* DRAM address (not an
+    index relative to the launch), an unaligned launch pool silently
+    shifts every `group_id()` boundary by a few microthreads. A
+    `workers_per_fft` that exactly fills the interleave chunk (8 here) has
+    zero slack to absorb that shift -- any nonzero misalignment splits the
+    group across two physical units, each with its own private scratchpad,
+    so half the cooperating workers write stage output the other half's
+    reads never see. `workers_per_fft` values that are proper divisors of
+    the chunk (1/2/4) merely *happened* to survive every case actually
+    tested before this fix, for the same reason: the bump allocator's own
+    64B/2-uthread granularity only ever produces an even misalignment, and
+    a small enough worker count can tolerate some (never all) of those --
+    this was a latent risk for them too, not a workers=8-only bug.
+    Real fix (`fft_transpose_codegen.generate_recursive_fft_kernels` and
+    `fft_cooperative_codegen.generate_cooperative_fft_kernel`, mirroring
+    `fft_persistent_codegen.py`'s own pre-existing identical fix -- see
+    docs/persistent_leaf_design.md's "uthread pool alignment" section,
+    which this exact class of bug had already forced once, just never
+    connected to cooperative leaves): over-allocate the launch pool and
+    round its address up to the next 256B boundary by hand at host-main
+    time. Confirmed real-hardware correct at workers_per_fft=8 for the
+    same N=128 case, every compute_lanes tried (still spills at some --
+    a caller wanting a confirmed spill-free plan still needs
+    `--verify-spill-free`/`probe_spill_free`, an orthogonal question this
+    flag never touched). Pass `True` only to reproduce the old excluded
+    behavior for comparison -- there is no known-good reason to exclude
+    this worker count from candidate generation any more.
     """
     if not radices:
         raise ValueError("radices must be non-empty")
@@ -132,7 +150,7 @@ def choose_workers_per_fft(
     simd_lanes: int = 8,
     max_workers: int | None = None,
     interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
-    exclude_full_interleave_chunk: bool = True,
+    exclude_full_interleave_chunk: bool = False,
 ) -> int:
     """A leaf's own useful cooperative worker count -- the *largest* legal
     candidate from `worker_candidates_per_fft` (see its own docstring for

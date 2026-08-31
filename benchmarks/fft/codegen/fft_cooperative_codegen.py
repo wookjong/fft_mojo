@@ -29,6 +29,7 @@ from codegen.lowering import (
     try_build_loop_stage as _try_build_loop_stage,
 )
 from planning.fft_plan_core import AddressMapping, AddressMappingKind, FFTCodegenPlan, FFTStagePlan, SIMDBatchPlan
+from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
 
 def _cooperative_mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
@@ -246,7 +247,8 @@ def _emit_cooperative_stage(
 
 
 def generate_cooperative_fft_kernel(
-    plan: FFTCodegenPlan, *, compute_lanes: int | None = None, in_place: bool = False
+    plan: FFTCodegenPlan, *, compute_lanes: int | None = None, in_place: bool = False,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
 ) -> str:
     """Render a standalone cooperative leaf (`plan.cooperation is not None` --
     see fft_plan_cooperative.make_cooperative_leaf_plan): one NDPTask, one
@@ -317,7 +319,28 @@ def generate_cooperative_fft_kernel(
     e.add("    var ref_imag = cxl_alloc[Float32](total_elems)")
     e.add()
     e.add(f"    var pool_elems = {host.pool_elems}")
-    e.add("    var uthread_pool = cxl_alloc[Float32](pool_elems)")
+    # This launch's own pool must start exactly on a hardware interleave-
+    # chunk boundary -- `_emit_cooperative_stage`'s fft_slot/worker_id
+    # grouping only partitions the same physical microthreads local_
+    # uthread_id()/global_uthread_id() do when it does (see that function's
+    # own docstring), and `Pool.alloc` (src/m2ndp_host.mojo) only aligns
+    # individual `cxl_alloc` allocations to 64B, not to this target's own
+    # 256B chunk (interleave_chunk_uthreads * uthread_bytes). Root cause of
+    # a workers_per_fft=8 wrong answer previously misdiagnosed as below the
+    # planning/codegen layer -- see fft_transpose_codegen.
+    # generate_recursive_fft_kernels' own matching fix, and
+    # fft_persistent_codegen.py's pre-existing one (docs/
+    # persistent_leaf_design.md's "uthread pool alignment" section) this
+    # mirrors.
+    chunk_bytes = target.interleave_chunk_uthreads * target.uthread_bytes
+    pad_elems = chunk_bytes // 4
+    e.add(f"    var pool_raw = cxl_alloc[Float32](pool_elems + {pad_elems})")
+    e.add("    var pool_raw_addr = Int(pool_raw)")
+    e.add(f"    var pool_addr = (pool_raw_addr + {chunk_bytes - 1}) // {chunk_bytes} * {chunk_bytes}")
+    e.add(f"    if pool_addr % {chunk_bytes} != 0:")
+    e.add('        print("[host] pool alignment assertion failed:", pool_addr)')
+    e.add("        return")
+    e.add("    var uthread_pool = UnsafePointer[Float32, MutAnyOrigin](unsafe_from_address=pool_addr)")
     e.add()
 
     e.add("    seed(0)")

@@ -136,21 +136,60 @@ per-worker -- that fix was necessary but **not sufficient**; this session
 found the same worker-count/wrong-answer pattern persists independent of
 `loop_stages`/function size.
 
-**Fix landed** (`planning/fft_plan_cooperative.py`,
-`worker_candidates_per_fft`/`choose_workers_per_fft` gain
-`exclude_full_interleave_chunk: bool = True`): `workers_per_fft ==
-interleave_chunk_uthreads` (8) is no longer offered as an automatic
-candidate, by default -- both the `"auto"` path and an explicit
-`--cooperative-workers 8` (which was *already* only ever an upper bound
-for `choose_workers_per_fft`, never a raw override -- see
-`fft_plan_recursive.py`'s own docstring on this) now fall back to the
-next-largest safe divisor (4, on this target), confirmed real-hardware
-correct at every `compute_lanes`/batch size tried for N=128. Persistent's
-own N=128 numbers still stand as the only option confirmed *both*
-spill-free *and* correct at that N in this sweep -- cooperative's
-now-default `workers_per_fft=4` is correct but still spills (a separate,
-pre-existing, purely register-pressure issue, mitigable the same way as
-every other case in this doc: `--compute-lanes 2`).
+**2026-08-30 mitigation (superseded, see 2026-08-31 below):** `planning/
+fft_plan_cooperative.py`'s `worker_candidates_per_fft`/
+`choose_workers_per_fft` gained `exclude_full_interleave_chunk: bool =
+True`, dropping `workers_per_fft == interleave_chunk_uthreads` (8) from
+automatic candidate generation. This was exclusion-as-mitigation, not a
+fix -- correctly labeled at the time as *not* root-caused to the
+instruction level, and flagged for further investigation
+([[fft-prefer-root-cause-fix]]).
+
+**2026-08-31 -- actually root-caused and fixed for real.** The "below the
+planning/codegen layer" diagnosis was wrong; it *is* a planning/codegen-
+layer bug, just not in the stage arithmetic the Python numeric harness
+re-executes (which is exactly why that harness passed cleanly throughout
+-- it never modeled real DRAM addresses at all). Root cause: `Pool.alloc`
+(`src/m2ndp_host.mojo:175-192`) aligns each `cxl_alloc` allocation to only
+64 bytes, not to this target's own 256-byte hardware interleave chunk
+(`interleave_chunk_uthreads * uthread_bytes`). The M2NDP address decoder
+assigns a microthread's physical NDP unit from its *absolute* DRAM
+address (`(addr // 256) % num_ndp_units`), not an index relative to the
+launch -- so an unaligned launch pool silently shifts every `group_id()`
+boundary inside the launch by a few microthreads. `workers_per_fft=8`
+exactly fills one interleave chunk with zero slack to absorb that shift:
+any nonzero misalignment splits one cooperative group across two physical
+units, each with its own *private* scratchpad, so half the workers write
+stage output the other half's reads at the same `fft_slot` never see --
+a clean explanation for "mismatch at a fixed output index, independent of
+compute_lanes/batch/loop_stages." Confirmed directly: an instrumented
+build printing the launch pool's own address showed `mod 256 = 0` for a
+passing single-leaf case and `mod 256 = 128` for the exact failing
+recursive-pipeline case (same N/radices/workers, same generated stage
+code byte-for-byte -- only the host's own pool address differed).
+
+This also explains why `workers_per_fft` in `{1,2,4}` merely *happened*
+to survive every case tested before this fix rather than being
+structurally safe: `Pool.alloc`'s 64B/2-uthread granularity only ever
+produces an *even* misalignment, which `workers_per_fft=2` always
+tolerates and `workers_per_fft=4` tolerates only for some (not all)
+misalignments -- a latent risk for both, not a workers=8-only bug, simply
+never hit by the specific buffer layouts tested so far.
+
+**Real fix** (`fft_transpose_codegen.generate_recursive_fft_kernels` and
+`fft_cooperative_codegen.generate_cooperative_fft_kernel`): over-allocate
+the launch pool and round its address up to the next 256B boundary by
+hand in the generated host `main()`, mirroring `fft_persistent_codegen.
+py`'s own *pre-existing* identical fix (see docs/persistent_leaf_design.md's
+"uthread pool alignment" section) -- that fix had already forced this
+exact class of bug into the open once, for persistent leaves, and was
+simply never connected to cooperative ones. `exclude_full_interleave_chunk`
+now defaults to `False`; `workers_per_fft=8` is confirmed real-hardware
+correct again for N=128 across every `compute_lanes` tried (still spills
+at some -- a separate, pre-existing, purely register-pressure question,
+mitigable the usual way: `--compute-lanes 2`, and orthogonal to this fix).
+Persistent's own N=128 numbers still stand as the only option confirmed
+*both* spill-free *and* correct at that N in this sweep.
 
 ## 10. Sensitivity
 

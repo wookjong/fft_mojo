@@ -956,7 +956,51 @@ def generate_recursive_fft_kernels(
     }
     for i, stage in enumerate(stages):
         e.add(f"    var pool{i}_elems = {stage.simd_lanes * round_sizes[i]}")
-        e.add(f"    var pool{i} = cxl_alloc[Float32](pool{i}_elems)")
+        cooperative = not isinstance(stage, PhysicalTransposePlan) and stage.cooperation is not None
+        if cooperative:
+            # A cooperative stage's fft_slot/worker_id grouping
+            # (_emit_cooperative_stage's own docstring) is only sound when
+            # local_uthread_id()'s and global_uthread_id()'s own
+            # WORKERS_PER_FFT-sized groupings partition the same physical
+            # microthreads -- which holds only if *this launch's own pool*
+            # starts exactly on a hardware interleave-chunk boundary
+            # (interleave_chunk_uthreads * uthread_bytes = 256B on this
+            # target), since the M2NDP address decoder places a
+            # microthread's physical unit from its absolute DRAM address,
+            # not from an index relative to the launch. `Pool.alloc`
+            # (src/m2ndp_host.mojo) only aligns individual allocations to
+            # 64B, so a raw `cxl_alloc` address is not guaranteed
+            # 256B-aligned -- confirmed the real, root cause of a
+            # workers_per_fft=8 wrong answer previously misdiagnosed as
+            # below-the-planning-layer (an unaligned pool put half an
+            # 8-worker group on one physical unit and half on the next,
+            # each writing into a *different* private scratchpad the other
+            # half never sees). `fft_persistent_codegen.py` already carries
+            # this exact fix (see docs/persistent_leaf_design.md's own
+            # "uthread pool alignment" section); this mirrors it rather
+            # than centralizing into `Pool.alloc` itself, which every
+            # non-cooperative benchmark in the repo also uses and does not
+            # need the stricter alignment for.
+            chunk_bytes = target.interleave_chunk_uthreads * target.uthread_bytes
+            pad_elems = chunk_bytes // 4
+            e.add(f"    var pool{i}_raw = cxl_alloc[Float32](pool{i}_elems + {pad_elems})")
+            e.add(f"    var pool{i}_raw_addr = Int(pool{i}_raw)")
+            e.add(
+                f"    var pool{i}_addr = (pool{i}_raw_addr + {chunk_bytes - 1}) "
+                f"// {chunk_bytes} * {chunk_bytes}"
+            )
+            e.add(f"    if pool{i}_addr % {chunk_bytes} != 0:")
+            e.add(
+                f'        print("[host] stage {i} ({stage.kernel_name}) pool '
+                f'alignment assertion failed:", pool{i}_addr)'
+            )
+            e.add("        return")
+            e.add(
+                f"    var pool{i} = UnsafePointer[Float32, MutAnyOrigin]"
+                f"(unsafe_from_address=pool{i}_addr)"
+            )
+        else:
+            e.add(f"    var pool{i} = cxl_alloc[Float32](pool{i}_elems)")
     e.add()
 
     e.add("    seed(0)")
