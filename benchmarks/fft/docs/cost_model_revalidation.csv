@@ -1,0 +1,25 @@
+n,label,plan_kwargs,estimated_cost,memory_cost,execution_cost,total_worker_stage_batches,radix_risk_score,spill_free,near_active_units_best,far_active_units_best,build_ok,run_ok,measured_cycles,error,model_rank,measured_rank,regret
+216,noncoop,{},3461.3,3456.0,4.800000000000001,48,0.0,True,1,,True,True,43771,,3,3,0.9614178168130489
+216,coop4,{'cooperative_workers': 4},3458.0,3456.0,1.5,15,0.0,False,1,,True,True,22316,,2,1,0.0
+216,persistent,{'persistent_leaf': True},3457.4,3456.0,0.9,9,0.0,True,1,,True,True,23941,,1,2,0.0728177092668938
+144,noncoop,{},2306.6,2304.0,2.2,22,0.0,True,1,,True,True,26062,,3,3,0.7713586624073949
+144,coop4,{'cooperative_workers': 4},2305.2000000000003,2304.0,0.8,8,0.0,False,1,,True,True,17580,,2,2,0.19486168694351935
+144,persistent,{'persistent_leaf': True},2304.8,2304.0,0.4,4,0.0,True,1,,True,True,14713,,1,1,0.0
+512,noncoop,{},40445.8,40442.0,3.3000000000000003,33,0.0,True,1,32,True,True,45814,,3,3,0.4814072301623229
+512,coop4,{'cooperative_workers': 4},40443.4,40442.0,0.9,9,0.0,False,1,32,True,True,30926,,2,1,0.0
+512,persistent,{'persistent_leaf': True},40443.0,40442.0,0.5,5,0.0,True,2,32,True,True,35868,,1,2,0.15980081484834763
+630,noncoop,{},55231.7,50230.0,1.2000000000000002,12,1.0,False,1,14,True,True,35246,,3,3,0.44450819672131137
+630,coop4,{'cooperative_workers': 4},55231.1,50230.0,0.6000000000000001,6,1.0,False,3,14,True,True,24400,,2,1,0.0
+630,persistent,{'persistent_leaf': True},55231.0,50230.0,0.5,5,1.0,True,6,32,True,True,27886,,1,2,0.14286885245901648
+960,noncoop,{},76693.8,76690.0,3.3000000000000003,33,0.0,True,1,30,True,True,48320,,6,6,0.5248193379406103
+960,coop2,{'cooperative_workers': 2},76692.2,76690.0,1.7000000000000002,17,0.0,False,1,30,True,True,34805,,5,4,0.09833065101454763
+960,coop4,{'cooperative_workers': 4},76691.5,76690.0,1.0,10,0.0,False,2,30,True,True,32311,,4,2,0.019628262172993738
+960,coop8,{'cooperative_workers': 8},76691.1,76690.0,0.6000000000000001,6,0.0,False,4,30,True,True,33616,,1,3,0.06080974470636491
+960,persistent,{'persistent_leaf': True},76691.1,76690.0,0.6000000000000001,6,0.0,True,4,32,True,True,39378,,2,5,0.24263940168512743
+960,mixed_persistent_near_noncoop_far,"{'forced_worker_sequence': ('persistent', None)}",76691.1,76690.0,0.6000000000000001,6,0.0,True,4,30,True,True,31689,,3,1,0.0
+1024,noncoop,{},81789.8,81786.0,3.3000000000000003,33,0.0,True,1,32,True,True,49061,,3,3,0.43344241220125057
+1024,coop4,{'cooperative_workers': 4},81787.4,81786.0,0.9,9,0.0,False,2,32,True,True,34226,,2,1,0.0
+1024,persistent,{'persistent_leaf': True},81787.0,81786.0,0.5,5,0.0,True,4,32,True,True,39730,,1,2,0.16081341670075378
+2048,noncoop,{},163902.0,163898.0,3.4000000000000004,34,0.0,True,1,32,True,True,63550,,3,3,0.3053838095433725
+2048,coop4,{'cooperative_workers': 4},163899.6,163898.0,1.0,10,0.0,False,4,32,True,True,48683,,2,1,0.0
+2048,persistent,{'persistent_leaf': True},163899.2,163898.0,0.6000000000000001,6,0.0,True,8,32,True,True,54901,,1,2,0.12772425692746947

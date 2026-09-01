@@ -246,6 +246,50 @@ vector_spill=False`): N=30 14->? / N=64 72->73 / N=144 79->80 / N=216
 89->90 / N=256 84->85, roughly 1-7% relative growth. N=960/1024 add zero
 (gated). Not a combinatorial concern.
 
+## CORRECTION (2026-08-31): the N=960/1024 rows above were measured wrong
+
+The "Representative sweep" table's N=960/1024 rows (non-cooperative 2114/
+2111, best-cooperative 2107/2111) and the "Cost model" table's matching
+"real result" column entries are **wrong** -- extracted with the `tail -1`
+Gantt-log convention `planning/spill_probe.py`'s `_parse_ndp_cycles` fix
+retired 2026-08-31 (see `docs/active_ndp_units_cost_task.md`'s Phase 1.5
+writeup for the full root cause: every non-cooperative/cooperative N=960/
+1024 plan here needs `make_recursive_transpose_plan`'s real split, i.e.
+multiple kernel structs each launched as a separate `m2ndp_run`
+subprocess with its own restarted cycle counter -- `tail -1` only ever
+captured the LAST struct's, a POST transpose, own standalone duration).
+Every OTHER row in this doc's own sweep (N=30/64/105/144/256) is a single
+fused leaf -- one kernel struct, one process, genuinely unaffected.
+
+Corrected totals (`benchmark_fft_candidates.sh`/`spill_probe.py` now sum
+each struct's own final cycle value automatically): N=960 non-cooperative
+= 48320 (this doc's split-baseline shape, default tier); N=1024
+non-cooperative = 49061. The **unsplit giant-leaf persistent** values
+(109074, 110976) are NOT affected -- a `num_logical_blocks=1` unsplit
+persistent leaf is exactly ONE kernel struct/one process by construction,
+so `tail -1` was always correct there -- directly reconfirmed by rebuilding
+and rerunning the exact N=960 unsplit-persistent case (`make_persistent_
+leaf_plan(960, radices=(4,4,4,3,5), num_logical_blocks=1, ...)`): 1
+"Registered task" line, `_parse_ndp_cycles` (fixed) agrees with the old
+`tail -1` value byte-for-byte at 109074, PASS.
+
+This changes the "why persistent loses badly for large N" section's own
+magnitude, though not its direction: recomputed against the corrected
+48320 non-cooperative baseline, N=960's real ratio is
+`109074 / 48320` ≈ **2.26x slower**, not "~50x slower, catastrophic" as
+originally reported (the ~50x figure divided the correct 109074 by the
+wrong, ~23x-too-small 2114). Persistent (unsplit, single active NDP unit)
+is still slower than the split baseline at this N -- that qualitative
+finding survives -- but by a modest margin, not a catastrophic one. This
+matters because `_persistent_leaf_feasible`'s own structural gate
+(`fft_plan_search.py`) was sized specifically to keep away a "confirmed
+~50x slower" candidate; whether a real ~2.3x-slower candidate still
+deserves a hard structural exclusion (vs. letting cost-based ranking
+handle it) is a real open question this correction reopens, not settled
+here -- flagging for whoever next revisits that gate, not fixing it in
+this pass (this correction is about the measurement, not the gate's own
+policy).
+
 ## Multi-leaf mixed execution strategy: not attempted
 
 Not measured or implemented this pass (explicitly out of scope: "먼저

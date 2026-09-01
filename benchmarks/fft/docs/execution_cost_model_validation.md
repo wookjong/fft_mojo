@@ -39,15 +39,27 @@ direction, comparable magnitude of improvement.
 
 N=512/1024 (lopsided multi-leaf, near-leaf big + far-leaf `butterfly_count=1`):
 the near-leaf's own `max_batches_per_worker` sum drops from 16 (W=2) to 8
-(W=4) -- genuinely and correctly detected -- but the far-leaf's own single
-stage is stuck at `max_batches_per_worker=1` regardless of worker count
-(nothing to divide), and **measured total cycles do not move at all**
-(1187/1195/1195 for N=512; 2111/2111/2111 for N=1024). This is not a stage-
-metric failure: `memory_cost` for these N is already 40000-82000 vs. an
-execution-cost delta in the single digits, i.e. the existing memory-traffic
-term already correctly predicts these lopsided plans are DRAM-bound, not
-leaf-compute-bound -- the near-leaf's real internal speedup exists but isn't
-on the critical path total cycle count reflects.
+(W=4) -- genuinely and correctly detected. The original claim here --
+**"measured total cycles do not move at all" (1187/1195/1195 for N=512;
+2111/2111/2111 for N=1024)** -- is **WRONG, corrected 2026-08-31**: those
+numbers were extracted via the `tail -1`-on-Gantt-log convention that
+`planning/spill_probe.py`'s `_parse_ndp_cycles` fix retired -- it only
+ever captured the LAST kernel struct's (POST transpose, identical
+regardless of the near-leaf's own worker count) own standalone duration,
+not the real end-to-end total. Corrected totals (same split/radix/tile,
+`benchmark_fft_candidates.sh` now sums per-struct correctly): N=512
+non-cooperative=45814, worker=2=28753 (spill), worker=4=30926 (spill);
+N=1024 non-cooperative=49061, worker=2=32054 (spill), worker=4=34226
+(spill) -- a real ~30-37% drop, not "no movement." The near-leaf's own
+internal speedup was ALWAYS on the critical path; the memory-cost
+argument below was explaining an artifact of the measurement bug, not a
+real DRAM-bound property of these plans -- see `docs/
+active_ndp_units_cost_task.md`'s Phase 1.5/2 writeup for the full root
+cause and `docs/persistent_recursive_split.md`'s own correction section
+for the parallel fix to that doc's "parity" claim. Left the paragraph
+below unedited for the historical record of what this doc originally
+argued from the wrong number; do not trust its "DRAM-bound, not
+leaf-compute-bound" conclusion.
 
 ## Phase 4: leaf/plan-level aggregation semantics
 
@@ -60,6 +72,34 @@ already assumes this (`estimated_dram_bytes = len(stages) * plan.n * ...`,
 an unconditional sum across every stage in the flattened list) -- summing
 stage/leaf execution time the same way is not a new assumption, it is the
 same one the memory-cost model already relies on.
+
+## FLAGGED SUSPECT 2026-08-31, HIGHEST PRIORITY, NOT YET RE-VERIFIED
+
+This section's 55-real-candidate dataset is the empirical basis for
+**adopting Model D (`total_worker_stage_batches`) as the actual
+production `_execution_cost`** -- the single most consequential
+measurement in this whole doc. At least one of its own 14 N is confirmed
+split (`N=960/split=30`, named explicitly in the "Policy-legal-only"
+paragraph below), and any split N's real cycle measurement almost
+certainly used the `tail -1`-on-Gantt-log convention `planning.spill_
+probe._parse_ndp_cycles`'s 2026-08-31 fix retired (see this doc's own two
+corrections above and `docs/active_ndp_units_cost_task.md`'s Phase 1.5
+writeup for the confirmed root cause and magnitude: real totals for a
+split N run ~19-23x higher than what `tail -1` reported, and -- more
+importantly for a *ranking* comparison -- the old number was strategy-
+blind for the leaf, always just the last kernel struct's own duration).
+No reproducer script for this exact 55-candidate sweep survives in the
+repo to rerun directly (checked: no matching Python source under
+`benchmarks/fft/`), so this cannot be cheaply re-verified the way the
+other corrections in this doc were. **Recommended before trusting this
+comparison for anything new**: re-run a fresh version of this sweep
+(`benchmark_fft_candidates.sh`, now fixed) across a representative set of
+N including several confirmed-split ones, and check whether Model D still
+wins -- not done this pass. The qualitative argument for D over A/B/C
+(an unnormalized sum sees what a `[0,1]` utilization fraction structurally
+cannot) does not depend on the exact numbers here and likely still holds,
+but the specific accuracy percentages (78.3%, 71.4%, 57.6%, etc.) should
+not be quoted as calibrated until this is redone.
 
 ## Phase 3/6: model comparison (55 real measured candidates, rebuilt +
 re-scored with each model)

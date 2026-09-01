@@ -69,17 +69,38 @@ No `third_party/m2ndp-detour` source touched.
 
 ## What this does not yet do
 
-- `estimate_cost` does not yet differentiate the two lane variants from
-  each other or from the baseline (both scored identically in this
-  session's own runs) -- the cost model does not model compute_lanes at
-  all yet (Phase 7's own "7-1. compute_lanes cost" item: real emitted-
-  chunk counts, not an arbitrary penalty). Ranking these candidates
-  meaningfully today happens downstream, at the spill-probe/real-hardware
-  measurement stage (a spill is a real, per-lane-width property the probe
-  already sees), not via `estimated_cost`.
 - Only two variants (`unnarrowed`, `all_scalar`) around the baseline
   split/radix -- not crossed with worker sequences, persistent leaves, or
   non-baseline radix tiers/splits. Extending this to per-leaf-independent
   lane choices (different leaves narrowed differently, matching the
   plan's own "worker x compute_lanes"/"persistent x compute_lanes" joint
   candidates) is further work within this axis, not done here.
+
+## Update 2026-08-31: Phase 7-1, estimate_cost now differentiates lane variants
+
+`estimate_cost` used to score every lane variant identically (this
+section originally recorded that gap) -- `total_worker_stage_batches`
+counted batches, not the real vector instructions codegen emits per
+batch, so a stage's own `compute_lanes` was invisible to the cost model
+entirely. Fixed in `fft_cost_model.py`: `StageExecutionMetrics` gained
+`chunks_per_batch` (`ceil(simd_lanes / stage.compute_lanes)`, hand-synced
+with `codegen.lowering.chunk_batch`'s own `n_chunks` formula -- real
+emitted-chunk counts, not an arbitrary penalty, per this item's own
+original scoping), and `total_worker_stage_batches` now weights each
+stage's `max_batches_per_worker` by it. `stage.compute_lanes is None`
+(every candidate except the lane-variant/joint-search ones) resolves to
+1 chunk, so this is a no-op for the vast majority of candidates --
+verified byte-for-byte via the full existing `verify_fft_execution_cost.py`
+suite still passing unchanged.
+
+Confirmed on N=960 (simd_lanes=8, default compute_lanes=4):
+`all_scalar` (every stage floored to compute_lanes=1) now costs more than
+the unnarrowed baseline, with `total_worker_stage_batches` scaling by
+exactly 8x (33 -> 264) -- see
+`verify_fft_execution_cost.check_compute_lanes_differentiated_by_chunk_count`.
+Ranking among lane variants can still fall back to the spill-probe/real-
+hardware stage for the final word (a spill is a real, per-lane-width
+property the probe already sees, and `estimated_cost` remains a pre-probe
+filter, not the authoritative ranking -- same discipline as radix_risk_
+score vs. a confirmed `spill_free=False`), but `estimated_cost` itself no
+longer treats every lane width as free.

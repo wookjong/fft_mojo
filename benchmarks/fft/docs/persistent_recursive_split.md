@@ -142,3 +142,57 @@ execution-strategy comparison the old result never was.
   "not this time" list -- sensitivity was already found small).
 
 No `third_party/m2ndp-detour` source was touched.
+
+## CORRECTION (2026-08-31): the "parity" claim above was measured wrong
+
+The 1587-vs-1594 (N=960) and 7688-vs-7688 (N=1024) numbers in this doc's
+own "Real M2NDP-Detour hardware" table were extracted with `grep
+"Gantt info:.*finished NDP kernel" | grep -oP 'ndp cycle \K[0-9]+' | tail
+-1` (`benchmark_fft_candidates.sh`'s and `planning/spill_probe.py`'s own
+convention at the time) -- confirmed **wrong** for any multi-kernel
+(split) plan: `src/m2ndp.mojo`'s `Self.launch()` spawns a fresh
+`m2ndp_run` *subprocess* per top-level kernel struct (PRE, near leaf,
+MIDDLE, far leaf, POST each their own process), and `M2NDPConfig::
+m_ndp_cycle` restarts at 0 in each one -- confirmed directly in a real run
+log ("Registered task ... ndp cycle 0" once per struct). `tail -1` only
+ever captured the LAST struct's (POST transpose) own standalone duration,
+which is identical whether the near/far leaves are persistent or plain --
+explaining why this table found "parity" in the first place: it was
+comparing the *same* POST-transpose number to itself, not the real
+end-to-end pipeline. Full root cause: `planning/spill_probe.py`'s
+`_parse_ndp_cycles` (fixed 2026-08-31) and
+`docs/active_ndp_units_cost_task.md`'s own writeup.
+
+**Corrected real totals** (sum of each kernel struct's own final cycle
+value, same split/radix/tile/compute_lanes as this doc's original table,
+`benchmark_fft_candidates.sh`/`spill_probe.py` now fixed to compute this
+automatically):
+
+| N | plan | inverse | corrected total ndp cycles |
+|---|---|---|---:|
+| 960 | split, persistent leaves | forward | 39378 |
+| 960 | split, non-persistent (same split) | forward | 48320 |
+| 1024 | split, persistent leaves | inverse | 39730 |
+| 1024 | split, non-persistent (same split) | inverse | 49061 |
+
+Persistent is genuinely **~18-19% faster** than non-persistent at this
+split -- a real, meaningful effect, not the "parity" originally reported
+(nor the old "~50x slower" pre-split-support number this doc's own
+"why the old result doesn't apply" section already retired). Note this
+new comparison used `probe_pool_alignment.py`'s own default `cooperative_
+workers`-free / `persistent_leaf`-only construction, not necessarily
+byte-identical host-generation code to the original table (e.g. inverse
+vs forward differs per row above, matching the original rows) -- treat
+these as a fresh, correctly-measured data point superseding the original
+table's conclusion, not a byte-for-byte re-run of the exact same binaries.
+
+**What this does NOT retire**: the persistent-leaf-inside-a-split
+mechanism itself (Phase 3's own implementation) is unaffected -- this
+correction is entirely about how cycles were *measured* after the plans
+were already built and run correctly. Also see `docs/
+active_ndp_units_cost_task.md`'s Phase 2 dataset: at the same splits,
+**cooperative execution (workers=2/4/8) beats both persistent and
+non-persistent**, e.g. N=1024 coop2=32054 vs. persistent=39730 vs.
+non-persistent=49061 -- a comparison this doc never made at all (it only
+ever compared persistent vs. non-persistent, never against cooperative at
+this split).
