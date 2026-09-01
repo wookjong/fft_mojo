@@ -21,7 +21,8 @@ from planning.fft_plan_recursive import (
     RecursiveFFTPlan,
     flatten_recursive_node,
 )
-from planning.fft_plan_core import FFTCodegenPlan
+from planning.fft_plan_core import FFTCodegenPlan, FFTStagePlan
+from planning.fft_plan_persistent import num_rounds
 from planning.target_profile import TargetProfile
 
 # Composite/prime radices confirmed clean as a leaf's *first* stage
@@ -120,6 +121,19 @@ _ALWAYS_RISKY_RADICES = frozenset({10, 11, 13, 17})
 # genuine middle position has no protection from this yet.
 _RISKY_AS_MIDDLE_RADICES = frozenset({5})
 
+# FLAGGED SUSPECT 2026-08-31, NOT YET RE-VERIFIED: N=1024 needs a real
+# split (multiple kernel structs); every cycle number below was almost
+# certainly measured with the `tail -1`-on-Gantt-log convention `planning.
+# spill_probe._parse_ndp_cycles`'s 2026-08-31 fix retired (it only ever
+# captured the LAST kernel struct's own duration, not the true end-to-end
+# total -- see docs/active_ndp_units_cost_task.md's Phase 1.5 writeup).
+# N=16384 may or may not need a split depending on scratchpad_byte_budget
+# -- not independently checked here. Direction may still hold (tile size
+# is a transpose-only parameter, and the always-last-measured POST
+# transpose kernel's own duration does scale with it), but the exact
+# threshold (2048) has not been rechecked against corrected totals --
+# re-sweep with the now-fixed benchmark_fft_candidates.sh first.
+#
 # Real M2NDP runs (benchmark_fft_candidates.sh, --batch sweep at N=1024 plus
 # one N=16384 point) of a transpose stage's own total_uthreads vs. whether a
 # smaller tile (more, smaller tiles) still wins over a bigger one:
@@ -169,21 +183,59 @@ class PlanMetrics:
     # hardware (N=216) to hide a genuine ~35% cycle difference between
     # those two worker counts.
     worst_worker_utilization: float
-    # `sum(max_batches_per_worker across every leaf stage)` -- see
-    # `StageExecutionMetrics.max_batches_per_worker`'s own docstring. The
-    # busiest worker's own serial batch count, summed over every stage of
-    # every leaf kernel in this plan (stages run sequentially within a
-    # kernel; kernels run sequentially as separate launches -- see
-    # `flatten_recursive_node`'s own execution-order docstring) -- an
-    # absolute proxy for total serial SIMD-iteration time, not a [0,1]
-    # utilization fraction. This is what `_execution_cost` uses (chosen
-    # 2026-08-30 after comparing 4 aggregation models against 55 real
-    # measured candidates -- see docs/execution_cost_model_validation.md):
-    # unlike any utilization-fraction model (worst-case, simple-average,
-    # or work-weighted-average all tried and rejected), this is the one
+    # `sum(max_batches_per_worker * chunks_per_batch across every leaf
+    # stage)` -- see `StageExecutionMetrics.max_batches_per_worker`/
+    # `chunks_per_batch`'s own docstrings. The busiest worker's own serial
+    # batch count, summed over every stage of every leaf kernel in this
+    # plan (stages run sequentially within a kernel; kernels run
+    # sequentially as separate launches -- see `flatten_recursive_node`'s
+    # own execution-order docstring), each stage's batch count weighted by
+    # how many real vector-width chunks codegen actually emits per batch
+    # at that stage's own resolved compute_lanes -- an absolute proxy for
+    # total serial SIMD-*instruction* time, not a [0,1] utilization
+    # fraction and not a raw batch count blind to compute_lanes either
+    # (see `chunks_per_batch`'s own docstring and docs/
+    # compute_lanes_joint_search.md's "Phase 7-1" item this closes out).
+    # This is what `_execution_cost` uses (chosen 2026-08-30 after
+    # comparing 4 aggregation models against 55 real measured candidates
+    # -- see docs/execution_cost_model_validation.md): unlike any
+    # utilization-fraction model (worst-case, simple-average, or
+    # work-weighted-average all tried and rejected), this is the one
     # quantity that actually shrinks when workers_per_fft goes up on an
-    # already-evenly-split stage, which is the entire point.
+    # already-evenly-split stage, which is the entire point; the
+    # `chunks_per_batch` weighting (added 2026-08-31) is what makes it
+    # also grow when compute_lanes narrows on an otherwise-identical
+    # stage, which it could not see before.
     total_worker_stage_batches: int
+    # The subset of `total_worker_stage_batches` contributed by persistent-
+    # software-workgroup leaf stages specifically (`StageExecutionMetrics.
+    # is_persistent`) -- `0` for a plan with no persistent leaf at all.
+    # Kept as its own field rather than folded away so `total_worker_
+    # stage_batches` stays exactly what it always was (every existing
+    # reader of that field, diagnostic or otherwise, sees byte-identical
+    # values); `_execution_cost` reads this one separately because
+    # persistent's own batches carry a different real per-batch cost than
+    # non-cooperative/cooperative's (see `CostWeights.persistent_stage_
+    # batch_multiplier`'s own docstring and docs/
+    # active_ndp_units_cost_task.md's "Mechanism-Aware Correction"
+    # section for the real-hardware matched-pair measurements this is
+    # based on).
+    persistent_worker_stage_batches: int
+    # `_persistent_extra_rounds`'s own return value -- how many EXTRA
+    # host-orchestrated rounds (beyond the first) this plan's own
+    # persistent leaves need, summed across leaves. `0` whenever no leaf
+    # is persistent, or every persistent leaf's own replica count already
+    # fits in one round (`r <= target.num_ndp_units`). This is real,
+    # additional cost `total_worker_stage_batches` cannot see at all --
+    # a persistent leaf's own launch width is architecturally fixed
+    # (`target.num_ndp_units * interleave_chunk_uthreads` uthreads,
+    # independent of replica count), so more replicas than that show up
+    # as more ROUNDS of the same fixed-width launch (preload/stage_N/
+    # writeback repeated), never as more SIMD batches within one round --
+    # see `CostWeights.persistent_extra_round_multiplier`'s own docstring
+    # for the real saturation-sweep measurement (Pearson=1.000 between
+    # this quantity and measured cycles) this term is calibrated against.
+    persistent_extra_rounds: int
     radix_risk_score: float          # 0.0 = every leaf's radix sequence is the confirmed-safe kind
     # How many PRE/MIDDLE/POST transpose stages have a tile that does NOT
     # divide `rows`/`cols` exactly (`rows % tile_rows != 0 or cols %
@@ -255,6 +307,54 @@ class CostWeights:
     # a new one (the old idle_worker_penalty weight this replaced is
     # gone: nothing else read it).
     stage_work: float = 0.1
+    # Derived from reproducible matched-pair measurements (`analyze_
+    # mechanism_correction.py`, real hardware, N in {144, 216, 512, 630,
+    # 960, 1024, 2048}): persistent's own measured cycles-per-batch
+    # (median 355.2 across single-round matched pairs) is LOWER than
+    # cooperative's (620.0) -- meaning a persistent leaf's own `total_
+    # worker_stage_batches` contribution structurally UNDER-represents
+    # its real relative cost (the same batch-count reduction buys less
+    # real speedup for persistent than for cooperative), not the other
+    # way around. `1.746 = 620.0 / 355.2` -- the reciprocal of the naive
+    # ratio, not the ratio itself (easy to get backwards: scaling
+    # persistent's batches DOWN, the naive direction, makes an already-
+    # wrong ranking worse, confirmed by testing it -- see docs/
+    # active_ndp_units_cost_task.md's "Mechanism-Aware Correction"
+    # section for the full derivation and the concrete N=216 regression
+    # this fixes: real best is `cooperative_workers=4`, but the
+    # unweighted model always picks `persistent` there since 9 batches
+    # < 15 regardless of `stage_work`'s own value -- confirmed no
+    # `stage_work` reweight alone can fix this, only a persistent-
+    # specific rate can). Physical interpretation: `total_worker_stage_
+    # batches` counts SIMD-iteration batches within a stage, but a
+    # persistent stage's own preload/writeback round-management work
+    # (see `PersistentWorkgroupPlan`) is real launch cost that metric was
+    # never designed to see, even within a single round.
+    persistent_stage_batch_multiplier: float = 1.746
+    # Derived from the same session's own persistent saturation sweep
+    # (`revalidate_saturation.py`, N=64 fixed leaf, replicas 1-256, real
+    # hardware): once a persistent leaf's own replica count exceeds
+    # `target.num_ndp_units`, extra ROUNDS (not extra batches -- a
+    # persistent launch's own width is architecturally fixed, see
+    # `PlanMetrics.persistent_extra_rounds`'s own docstring) appear, and
+    # each extra round costs ~3900-4200 real cycles (median 3907.5,
+    # stddev 3.5% of the median across 3 independent wave-count
+    # transitions -- about as clean as a real-hardware measurement gets
+    # in this project), while `measured_cycles` correlates with `waves`
+    # at Pearson=1.000 across that same 9-point sweep (`total_worker_
+    # stage_batches` itself is CONSTANT across the whole sweep by
+    # construction, so it cannot see this cost at all). `11.0 = 3907.5 /
+    # 355.2` -- that median per-round cycle cost expressed in the same
+    # batch-equivalent units `persistent_stage_batch_multiplier` uses
+    # (persistent's own measured cycles-per-batch), not a separately
+    # chosen constant. Applied to `PlanMetrics.persistent_extra_rounds`
+    # (`max(0, rounds - 1)`, summed per persistent leaf) -- never to the
+    # first round, which is already covered by `persistent_stage_batch_
+    # multiplier` above, and never to a non-cooperative/cooperative leaf
+    # (neither has a round concept at all -- see docs/
+    # active_ndp_units_cost_task.md's own "execution mechanisms that must
+    # remain distinct" discussion).
+    persistent_extra_round_multiplier: float = 11.0
     # A spill on real hardware is a correctness failure (the kernel panics
     # or silently zeroes its output), not a slowdown -- this must dominate
     # every other term whenever radix_risk_score is nonzero.
@@ -291,30 +391,53 @@ class CostWeights:
     # vs. a confirmed spill_free=False.
     transpose_tail_risk_penalty: float = 20.0
     recursion_depth_penalty: float = 100.0
-    # Real M2NDP runs (this project's own benchmark_fft_candidates.sh
-    # sweeps at N=1024/960/630) show MORE, SMALLER transpose tiles usually
-    # finishing in *fewer* ndp cycles, not more -- e.g. N=1024: 192 tiles
-    # -> 2111 cycles vs. 48 tiles -> 7421-7871 cycles; N=630: 210 tiles ->
-    # 1867 cycles (the fastest of 6 real candidates) vs. the 54-tile
-    # baseline's 4426. The opposite of the usual "more kernel launches =
-    # more overhead" assumption, plausibly because a smaller tile fits
-    # this target's own SIMD/register width more cleanly -- but NOT
-    # cleanly monotonic (N=630's own 46-tile candidate ran *slower*, 5561
-    # cycles, than its 54-tile baseline), so this weight is deliberately
-    # small: before it existed, every split/tile candidate for one N was
-    # an exact estimated_cost tie (total_transpose_tiles was computed in
-    # PlanMetrics but never read here), so ranking among them fell back to
-    # generation-order luck. This only needs to break that exact tie in
-    # the right direction, not carry serious absolute weight -- treat any
-    # single ranking decision it flips as a hint to verify with
-    # benchmark_fft_candidates.sh, not a settled answer.
+    # FLAGGED SUSPECT 2026-08-31, NOT YET RE-VERIFIED (see docs/
+    # active_ndp_units_cost_task.md's Phase 1.5 writeup and planning.
+    # spill_probe._parse_ndp_cycles's own fix comment): every N cited below
+    # (1024, 960, 630) needs a real split, so every one of these cycle
+    # numbers was almost certainly measured with the retired `tail -1`
+    # Gantt-log convention -- confirmed for N=1024 specifically (the
+    # "192 tiles -> 2111 cycles" figure below is byte-for-byte this
+    # project's own old, wrong non-cooperative N=1024 reading; the
+    # corrected total for that exact shape is 49061, not 2111). The
+    # *direction* this weight encodes (more/smaller tiles often faster)
+    # may well still hold -- tile choice is a PRE/MIDDLE/POST-transpose-only
+    # parameter, and `tail -1` happens to land on a POST-transpose kernel,
+    # whose own duration DOES scale with tile size unlike leaf strategy --
+    # but the weight's own magnitude (`-2.0`, picked from these exact
+    # numbers) has not been rechecked against corrected totals. Re-sweep
+    # with `benchmark_fft_candidates.sh` (now fixed) before trusting this
+    # weight's magnitude for anything beyond breaking a near-tie.
+    #
+    # Original (now-suspect) justification, kept for the record: real
+    # M2NDP runs (this project's own benchmark_fft_candidates.sh sweeps at
+    # N=1024/960/630) show MORE, SMALLER transpose tiles usually finishing
+    # in *fewer* ndp cycles, not more -- e.g. N=1024: 192 tiles -> 2111
+    # cycles vs. 48 tiles -> 7421-7871 cycles; N=630: 210 tiles -> 1867
+    # cycles (the fastest of 6 real candidates) vs. the 54-tile baseline's
+    # 4426. The opposite of the usual "more kernel launches = more
+    # overhead" assumption, plausibly because a smaller tile fits this
+    # target's own SIMD/register width more cleanly -- but NOT cleanly
+    # monotonic (N=630's own 46-tile candidate ran *slower*, 5561 cycles,
+    # than its 54-tile baseline), so this weight is deliberately small:
+    # before it existed, every split/tile candidate for one N was an exact
+    # estimated_cost tie (total_transpose_tiles was computed in PlanMetrics
+    # but never read here), so ranking among them fell back to generation-
+    # order luck. This only needs to break that exact tie in the right
+    # direction, not carry serious absolute weight -- treat any single
+    # ranking decision it flips as a hint to verify with benchmark_fft_
+    # candidates.sh, not a settled answer.
     transpose_tile_count: float = -2.0
-    # Counteracts transpose_tile_count once a candidate's own busiest
-    # transpose stage passes _TILE_PARALLELISM_SATURATION_UTHREADS -- see
-    # that constant's own comment for the 4 real data points this is based
-    # on. Sized so that N=1024/batch=4's tile=1x1 candidate (4096 uthreads,
-    # 2048 over threshold) actually ranks behind its own tile=2x2 sibling
-    # (real cycles: 1786 vs. 1560) -- picked as the smallest multiple of 10
+    # FLAGGED SUSPECT 2026-08-31, NOT YET RE-VERIFIED -- same issue as
+    # transpose_tile_count immediately above: N=1024 needs a real split, so
+    # the "1786 vs. 1560" real-cycle citation below almost certainly used
+    # the retired `tail -1` convention too. Counteracts transpose_tile_
+    # count once a candidate's own busiest transpose stage passes
+    # _TILE_PARALLELISM_SATURATION_UTHREADS -- see that constant's own
+    # comment for the 4 real data points this is based on. Sized so that
+    # N=1024/batch=4's tile=1x1 candidate (4096 uthreads, 2048 over
+    # threshold) actually ranks behind its own tile=2x2 sibling (real
+    # cycles: 1786 vs. 1560) -- picked as the smallest multiple of 10
     # that does, not a fitted rate; recheck this weight if more benchmark_
     # fft_candidates.sh data at other N/batch combinations disagrees.
     tile_oversaturation_penalty: float = 10.0
@@ -385,6 +508,54 @@ class StageExecutionMetrics:
     # per_fft always; == workers_per_fft exactly when the round-robin
     # split divides evenly; == 1.0 when not cooperative).
     effective_parallelism: float
+    # `ceil(simd_lanes / stage.compute_lanes)` -- the real number of vector-
+    # width chunks `codegen.lowering.chunk_batch` emits per already-decided
+    # simd_lanes-wide batch of this stage (kept in sync by hand with that
+    # function's own `n_chunks` formula -- this module is deliberately
+    # codegen-free, see module docstring). `1` whenever `stage.compute_lanes`
+    # is `None` (unset -- codegen's own live fallback decides the real
+    # render width from a flat caller argument this plan can't see, so this
+    # counts it as un-narrowed rather than guessing, same discipline as
+    # every other "None means not probed/not decided here" field in this
+    # module) or `>= simd_lanes` (chunk_batch's own no-op threshold). A
+    # narrower compute_lanes means MORE, narrower vector instructions doing
+    # the exact same butterfly work -- e.g. compute_lanes=1 on an
+    # simd_lanes=8 stage emits 8 scalar-width chunks per batch instead of
+    # one 8-wide vector op. See `_stage_chunk_count`'s own comment for why
+    # this, not an arbitrary penalty, is what makes `_execution_cost`
+    # finally differentiate compute_lanes variants (docs/
+    # compute_lanes_joint_search.md's own "Phase 7-1" item).
+    chunks_per_batch: int
+    # `stage.persistent_vector_batches is not None` -- whether this stage
+    # belongs to a persistent-software-workgroup leaf, the same test
+    # `compute_stage_metrics` itself already branches on. Added 2026-09-01
+    # so `estimate_metrics` can split `total_worker_stage_batches` into its
+    # persistent/non-persistent components without re-walking the plan a
+    # second time -- see `PlanMetrics.persistent_worker_stage_batches` and
+    # docs/active_ndp_units_cost_task.md's "Mechanism-Aware Correction"
+    # section for why persistent's own batches need a different per-batch
+    # rate than non-cooperative/cooperative's.
+    is_persistent: bool
+
+
+def _stage_chunk_count(stage: FFTStagePlan, simd_lanes: int) -> int:
+    """`ceil(simd_lanes / stage.compute_lanes)` -- exactly `codegen.lowering.
+    chunk_batch`'s own `n_chunks` formula (`(simd_lanes + compute_lanes - 1)
+    // compute_lanes`, guarded by the same `compute_lanes >= simd_lanes` ->
+    1-chunk no-op case), reimplemented here rather than imported since this
+    module is deliberately codegen/toolchain-free (see module docstring) --
+    kept in sync by hand, the same discipline `_RISKY_RADIX_PAIRS` above
+    already uses for a codegen constant this module needs to know about.
+    `stage.compute_lanes is None` (unset -- the majority of candidates this
+    project's planner builds; see fft_plan_lanes.py's own module docstring)
+    resolves to 1, not a guess at whatever flat compute_lanes codegen might
+    apply at render time -- this plan-level module has no visibility into
+    that caller-supplied value, so an unset stage costs identically to
+    today's un-narrowed baseline, the same "None means not decided here"
+    rule PlanMetrics.spill_free/ndp_cycles already use."""
+    if stage.compute_lanes is None or stage.compute_lanes >= simd_lanes:
+        return 1
+    return (simd_lanes + stage.compute_lanes - 1) // stage.compute_lanes
 
 
 def compute_stage_metrics(plan: RecursiveFFTPlan) -> list[StageExecutionMetrics]:
@@ -471,6 +642,8 @@ def compute_stage_metrics(plan: RecursiveFFTPlan) -> list[StageExecutionMetrics]
                     max_batches_per_worker=max_batches_per_worker,
                     worker_utilization=worker_utilization,
                     effective_parallelism=effective_parallelism,
+                    chunks_per_batch=_stage_chunk_count(stage, node.simd_lanes),
+                    is_persistent=stage.persistent_vector_batches is not None,
                 )
             )
         leaf_index += 1
@@ -482,6 +655,52 @@ def _tree_depth(node: FFTNode) -> int:
         return 0
     assert isinstance(node, FFTRecursiveNodePlan)
     return 1 + _tree_depth(node.far_child)
+
+
+def _leaf_kernels_with_replicas(node: FFTNode) -> list[tuple[FFTCodegenPlan, int]]:
+    """Every leaf `FFTCodegenPlan` in this tree paired with its own
+    `FFTLeafPlan.r` (logical replica count) -- `flatten_recursive_node`
+    itself deliberately drops `r` (its own docstring: "a pure tree walk
+    over already-decided plan data," returning only `FFTCodegenPlan`/
+    `PhysicalTransposePlan`), and a persistent leaf's own real round count
+    depends on replica count, not on anything `StageExecutionMetrics`
+    already carries (a persistent leaf's own `total_uthreads` is a
+    target-fixed launch width, independent of replica count -- see
+    `PersistentWorkgroupPlan`'s own architecture and docs/
+    persistent_recursive_split.md's point 4) -- so this needs its own
+    walk, the same one `planning.fft_unit_utilization` already uses for
+    its own (diagnostic-only, not imported here -- see this module's own
+    docstring on staying free of that module) purposes."""
+    if isinstance(node, FFTLeafPlan):
+        return [(node.kernel, node.r)]
+    assert isinstance(node, FFTRecursiveNodePlan)
+    return [(node.near_fft.kernel, node.near_fft.r)] + _leaf_kernels_with_replicas(
+        node.far_child
+    )
+
+
+def _persistent_extra_rounds(plan: RecursiveFFTPlan, target: TargetProfile) -> int:
+    """`sum(max(0, num_rounds(leaf.r, target.num_ndp_units) - 1))` over
+    every persistent leaf in this plan -- 0 for a plan with no persistent
+    leaf at all, and 0 even for a persistent leaf whose own replica count
+    fits in a single round (`r <= target.num_ndp_units`). `num_rounds`
+    (`fft_plan_persistent.py`) is reused unchanged, not re-derived: a
+    persistent leaf's own round count is already exactly this formula by
+    construction (`ceil(num_logical_blocks / software_group_count)`),
+    confirmed against a real hardware saturation sweep to correlate with
+    measured cycles at Pearson=1.000 (see docs/
+    active_ndp_units_cost_task.md's "Mechanism-Aware Correction" section)
+    -- the `- 1` matches that same sweep's own finding that the FIRST
+    round costs the same as a persistent leaf's own already-counted
+    `total_worker_stage_batches` contribution; only EXTRA rounds beyond
+    the first are additional, unmodeled cost."""
+    total = 0
+    for codegen_plan, replicas in _leaf_kernels_with_replicas(plan.root):
+        if codegen_plan.persistent is None:
+            continue
+        rounds = num_rounds(replicas, target.num_ndp_units)
+        total += max(0, rounds - 1)
+    return total
 
 
 def _leaf_radix_risk(codegen_plan: FFTCodegenPlan) -> float:
@@ -557,9 +776,15 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
     # scales with it, so the DRAM traffic estimate must too or every batch
     # sweep would under-count it identically regardless of batch).
     estimated_dram_bytes = len(stages) * plan.n * plan.batch * 2 * 2 * 4
+    stage_metrics = compute_stage_metrics(plan)
     total_worker_stage_batches = sum(
-        sm.max_batches_per_worker for sm in compute_stage_metrics(plan)
+        sm.max_batches_per_worker * sm.chunks_per_batch for sm in stage_metrics
     )
+    persistent_worker_stage_batches = sum(
+        sm.max_batches_per_worker * sm.chunks_per_batch
+        for sm in stage_metrics if sm.is_persistent
+    )
+    persistent_extra_rounds = _persistent_extra_rounds(plan, target)
 
     return PlanMetrics(
         recursion_depth=_tree_depth(plan.root),
@@ -572,6 +797,8 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
         max_scratchpad_bytes=max_scratchpad_bytes,
         worst_worker_utilization=min(utilizations) if utilizations else 1.0,
         total_worker_stage_batches=total_worker_stage_batches,
+        persistent_worker_stage_batches=persistent_worker_stage_batches,
+        persistent_extra_rounds=persistent_extra_rounds,
         radix_risk_score=radix_risk_score,
         transpose_tail_tile_count=transpose_tail_tile_count,
     )
@@ -650,8 +877,42 @@ def _execution_cost(metrics: PlanMetrics, weights: CostWeights) -> float:
     future real synchronization/barrier/exchange-overhead term to land
     once this project's cost model tracks one (see this module's own
     docstring: every existing term is a static function of the plan,
-    nothing here models cooperative communication cost yet)."""
-    return weights.stage_work * metrics.total_worker_stage_batches
+    nothing here models cooperative communication cost yet).
+
+    Also (2026-08-31) the only place `compute_lanes` reaches the cost
+    model at all: `total_worker_stage_batches` folds in each stage's own
+    `chunks_per_batch` (see that field's own docstring) so a narrower
+    compute_lanes -- more, smaller vector chunks doing the identical
+    butterfly work -- actually costs more here, real emitted-chunk counts
+    rather than an arbitrary penalty (docs/compute_lanes_joint_search.md's
+    own "Phase 7-1" item, closed out by this change).
+
+    Mechanism-aware correction (2026-09-01, docs/
+    active_ndp_units_cost_task.md): a `stage_work` reweight alone was
+    tried and rejected first (real hardware data directly falsified it --
+    persistent has the systematically LOWEST `total_worker_stage_batches`
+    at every N tested yet is not always the fastest, so scaling one
+    positive weight up only entrenches the wrong pick further, never
+    fixes it). `total_worker_stage_batches` is split into its persistent
+    and non-persistent components (`PlanMetrics.persistent_worker_stage_
+    batches`) and re-weighted separately: persistent's own batches at
+    `persistent_stage_batch_multiplier` instead of `1.0`, plus a
+    separate `persistent_extra_round_multiplier * persistent_extra_
+    rounds` term for any persistent leaf whose own replica count needs
+    more than one host-orchestrated round -- see both weights' own
+    docstrings for the real-hardware derivation of each. A plan with no
+    persistent leaf at all (`persistent_worker_stage_batches ==
+    persistent_extra_rounds == 0`) computes byte-identically to before
+    this change."""
+    nonpersistent_worker_stage_batches = (
+        metrics.total_worker_stage_batches - metrics.persistent_worker_stage_batches
+    )
+    weighted_stage_work = (
+        nonpersistent_worker_stage_batches
+        + weights.persistent_stage_batch_multiplier * metrics.persistent_worker_stage_batches
+        + weights.persistent_extra_round_multiplier * metrics.persistent_extra_rounds
+    )
+    return weights.stage_work * weighted_stage_work
 
 
 def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIGHTS) -> float:

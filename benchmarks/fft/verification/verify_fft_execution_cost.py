@@ -38,6 +38,7 @@ from planning.fft_plan_search import (
     generate_candidates,
     generate_radix_execution_joint_candidates,
 )
+from planning.fft_plan_lanes import apply_all_scalar_lanes_to_plan
 from planning.target_profile import DEFAULT_TARGET_PROFILE
 
 
@@ -175,6 +176,47 @@ def check_noncooperative_behavior_preserved() -> None:
           f"worst_worker_utilization unchanged at 1.0")
 
 
+def check_compute_lanes_differentiated_by_chunk_count() -> None:
+    """Phase 7-1 (2026-08-31, docs/compute_lanes_joint_search.md's own
+    "what this does not yet do" item): estimate_cost must finally
+    differentiate a plan's own lane variants from each other and from the
+    unnarrowed baseline, via real emitted-chunk counts
+    (`StageExecutionMetrics.chunks_per_batch`), not an arbitrary penalty.
+
+    N=960, simd_lanes=8, default compute_lanes=4 (min(simd_lanes,
+    target.lmul1_float32_lanes)): every stage here is a genuine first/last
+    stage of its own leaf (narrow_middle_stages has nothing to narrow), so
+    `apply_all_scalar_lanes_to_plan` floors every stage's own
+    compute_lanes from unset (chunk factor 1) straight to 1 (chunk factor
+    8) -- total_worker_stage_batches must scale by exactly that 8x, and
+    estimated_cost must strictly increase in step, both bugs
+    docs/compute_lanes_joint_search.md flagged as unmodeled before this
+    fix (previously: identical cost for every lane variant)."""
+    n = 960
+    baseline = make_recursive_transpose_plan(n, scratchpad_byte_budget=4096, simd_lanes=8)
+    baseline_metrics = estimate_metrics(baseline, DEFAULT_TARGET_PROFILE)
+    baseline_cost = estimate_cost(baseline_metrics)
+
+    all_scalar = apply_all_scalar_lanes_to_plan(baseline)
+    all_scalar_metrics = estimate_metrics(all_scalar, DEFAULT_TARGET_PROFILE)
+    all_scalar_cost = estimate_cost(all_scalar_metrics)
+
+    assert all_scalar_metrics.total_worker_stage_batches == 8 * baseline_metrics.total_worker_stage_batches, (
+        f"expected all_scalar's total_worker_stage_batches to be exactly 8x "
+        f"(simd_lanes=8 / compute_lanes=1) the unnarrowed baseline's: "
+        f"{all_scalar_metrics.total_worker_stage_batches} vs. "
+        f"{8 * baseline_metrics.total_worker_stage_batches}"
+    )
+    assert all_scalar_cost > baseline_cost, (
+        f"expected all_scalar (compute_lanes=1) to cost strictly more than "
+        f"the unnarrowed baseline: {all_scalar_cost} <= {baseline_cost}"
+    )
+    print(f"    OK   N={n}: all_scalar's total_worker_stage_batches "
+          f"({all_scalar_metrics.total_worker_stage_batches}) == 8x baseline's "
+          f"({baseline_metrics.total_worker_stage_batches}), estimated_cost "
+          f"{baseline_cost:.1f} -> {all_scalar_cost:.1f} (previously identical)")
+
+
 def check_existing_correctness_suite() -> None:
     """Delegated to verify_fft_plan.py's own top-level main (run
     separately as part of the full suite) -- recorded here only as an
@@ -255,6 +297,7 @@ def main() -> None:
     check_big_leaf_signal_survives_tiny_leaf()
     check_deterministic_cost()
     check_noncooperative_behavior_preserved()
+    check_compute_lanes_differentiated_by_chunk_count()
     check_existing_correctness_suite()
     check_candidate_count_independent_of_cost_model()
     check_spill_policy_unaffected()

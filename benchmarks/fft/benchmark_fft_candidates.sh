@@ -117,6 +117,48 @@ fi
 
 fail_setup() { printf "${R}error:${N} %s\n" "$1" >&2; exit 1; }
 
+# Sum of each top-level kernel struct's own final "ndp cycle" value, not a
+# single global last-match. FIXED 2026-08-31 (see docs/
+# active_ndp_units_cost_task.md's "Phase 1.5" section and planning/
+# spill_probe.py's own _parse_ndp_cycles, the Python-side twin of this same
+# fix): src/m2ndp.mojo's Self.launch() spawns a brand new m2ndp_run
+# *subprocess* for every top-level kernel struct in a recursive (split)
+# plan (FFTRecPre0, FFTRecNear0, FFTRecMid0, ..., FFTRecPost0 each their
+# own process) -- confirmed in a real run log: "Host 0 Registered task
+# .../task.elf id 0 at core cycle 0 ndp cycle 0" appears once per distinct
+# struct, so M2NDPConfig's own ndp_cycle counter (third_party/m2ndp-detour/
+# src/m2ndp_config.h) restarts at 0 there. Multiple ".launch()"-driven
+# stages of the SAME struct (e.g. one leaf's several stage_N launches) DO
+# share one process/clock and accumulate correctly -- only cross-struct
+# boundaries reset. The old "last Gantt line in the whole log" convention
+# this replaced only ever captured the LAST struct's (typically a POST
+# transpose) own standalone duration: for a real N=630 non-cooperative run
+# this was 1867 while the true sum across all 5 structs is 35246, ~19x
+# larger. A single-kernel plan (no split -- one registered task for the
+# whole run) was never affected by this bug.
+sum_ndp_cycles() {
+    awk '
+      {
+        cyc = ""
+        for (i = 1; i <= NF; i++) {
+          if ($i == "cycle" && $(i-1) == "ndp") { cyc = $(i+1); break }
+        }
+      }
+      /Registered task .* id [0-9]+ at core cycle/ {
+        if (have) total += last
+        have = 0
+        next
+      }
+      /Gantt info:.*finished NDP kernel/ {
+        if (cyc != "") { last = cyc; have = 1; any = 1 }
+      }
+      END {
+        if (have) total += last
+        if (any) print total + 0; else print ""
+      }
+    ' "$1"
+}
+
 [ -x "$MOJO_BIN" ] || fail_setup "Mojo not found ($MOJO_BIN). Run ./scripts/setup.sh first."
 [ -x "$LLC" ] || fail_setup "llc not found ($LLC). Run ./scripts/build-llvm.sh, or set LLC/M2NDP_ROOT."
 [ -d "$DET" ] || fail_setup "Detour not found ($DET). Set M2NDP_DET or M2NDP_ROOT."
@@ -224,14 +266,10 @@ for ((i = 0; i < RUN_COUNT; i++)); do
         FAIL_N=$((FAIL_N + 1)); RESULTS+=("$K $COST FAILED $CHOICES"); continue
     fi
 
-    # The simulator's own "Gantt info: ... finished NDP kernel ..." lines
-    # print each launched kernel's completion in "ndp cycle" terms; kernels
-    # in one recursive plan launch strictly one after another from a single
-    # host main() (confirmed in a real run log: launch id k+1's own "Gate
-    # info: ... launched ..." line always comes after launch id k's
-    # "finished" line), so the *last* one's ndp cycle is the whole plan's
-    # own total simulated device time.
-    CYCLES="$(grep "Gantt info:.*finished NDP kernel" "$RUN_LOG" | grep -oP 'ndp cycle \K[0-9]+' | tail -1)"
+    # See sum_ndp_cycles's own comment (near the top of this script) for
+    # why this must sum each top-level kernel struct's own final cycle
+    # value, not just the last Gantt line in the whole log.
+    CYCLES="$(sum_ndp_cycles "$RUN_LOG")"
     if [ -z "$CYCLES" ]; then
         printf "${R}[NO CYCLE COUNT FOUND]${N}%b\n" "$SPILL_NOTE"
         tail -10 "$RUN_LOG" | sed 's/^/    /'

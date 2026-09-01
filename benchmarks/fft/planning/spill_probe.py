@@ -55,17 +55,55 @@ _SPILL_RE = re.compile(
 # launch id 1 at core cycle 0 ndp cycle 14659 at CXL 0` -- printed by the
 # M2NDP-Detour simulator itself (not the generated kernel), once per
 # `launch_parallel` call, so it appears regardless of `reference_check`.
-# Mirrors benchmark_fft_candidates.sh's own extraction exactly (`grep
-# "Gantt info:.*finished NDP kernel" | grep -oP 'ndp cycle \K[0-9]+' | tail
-# -1`): each kernel's own "ndp cycle" is that kernel's *completion* cycle on
-# a shared simulated timeline, so the *last* launch in a run is the whole
-# plan's own total cycle count, not any single kernel's individual cost.
+#
+# FIXED 2026-08-31 (real-hardware root cause, see docs/
+# active_ndp_units_cost_task.md's "Phase 1.5" section): the previous
+# comment here ("the *last* launch in a run is the whole plan's own total
+# cycle count") is WRONG for any multi-kernel (split) plan, confirmed by
+# reading `src/m2ndp.mojo`'s own `Self.launch()` -- it `_run()`s a brand
+# new `m2ndp_run` *subprocess* for every top-level kernel struct
+# (`FFTRecPre0`, `FFTRecNear0`, `FFTRecMid0`, ..., `FFTRecPost0` each
+# their own process), and `M2NDPConfig::m_ndp_cycle` (third_party/
+# m2ndp-detour/src/m2ndp_config.h:360) starts at 0 in each fresh process --
+# confirmed directly in a real run log: `Host 0 Registered task
+# .../task.elf id 0 at core cycle 0 ndp cycle 0` appears once per DISTINCT
+# top-level struct, and the cycle values only accumulate *within* one such
+# group (multiple `.launch()`-driven stages of the SAME struct, e.g. a
+# leaf's several stage_N launches, genuinely share one process/clock), not
+# across groups. The old `tail -1` (equivalently: last regex match) only
+# ever captured the LAST struct's (typically a POST transpose) own
+# standalone duration -- for a real N=630 non-cooperative run this was
+# 1867 while the true sum across all 5 groups (Pre0=1872, Near0=26517,
+# Mid0=2428, Leaf1=2562, Post0=1867) is 35246, ~19x larger. A single-kernel
+# plan (no split at all -- one registered task for the whole run) was
+# never affected: `tail -1`/"sum of one group" coincide there.
+#
+# Correct extraction: a NEW "Registered task" line starts a new process/
+# clock group; within a group, only the LAST "ndp cycle" value is real
+# (later launches in that same group already include earlier ones on the
+# shared clock); the plan's true total is the SUM of each group's own last
+# value, not a single global last-match.
+_TASK_REGISTERED_RE = re.compile(r"Registered task \S+ id \d+ at core cycle \d+ ndp cycle \d+")
 _NDP_CYCLE_RE = re.compile(r"Gantt info:.*finished NDP kernel.*\bndp cycle (\d+)")
 
 
 def _parse_ndp_cycles(log: str) -> int | None:
-    matches = _NDP_CYCLE_RE.findall(log)
-    return int(matches[-1]) if matches else None
+    total = 0
+    current_group_last: int | None = None
+    any_seen = False
+    for line in log.splitlines():
+        if _TASK_REGISTERED_RE.search(line):
+            if current_group_last is not None:
+                total += current_group_last
+            current_group_last = None
+            continue
+        m = _NDP_CYCLE_RE.search(line)
+        if m:
+            current_group_last = int(m.group(1))
+            any_seen = True
+    if current_group_last is not None:
+        total += current_group_last
+    return total if any_seen else None
 
 
 @dataclass(frozen=True)

@@ -719,7 +719,7 @@ def generate_recursive_fft_kernels(
     plan: RecursiveFFTPlan, *, compute_lanes: int | None = None,
     narrow_middle_stages: bool = False, loop_stages: bool = True,
     reference_check: bool = True, target: TargetProfile = DEFAULT_TARGET_PROFILE,
-    spread_across_units: bool = False,
+    spread_across_units: bool = False, debug_print_pool_alignment: bool = False,
 ) -> str:
     """Render a full make_recursive_transpose_plan tree as a flat, ordered
     Mojo-ish kernel sequence chained through DRAM from one host main().
@@ -793,6 +793,17 @@ def generate_recursive_fft_kernels(
     ever asked for more than that many microthreads in one `.launch()`
     call). `target`: only consulted for `num_ndp_units`/
     `interleave_chunk_uthreads` when this flag is on.
+
+    `debug_print_pool_alignment`: `False` (the default) unchanged output.
+    `True` adds one `print()` per stage's own `pool{i}` right after it is
+    allocated, dumping the real runtime address mod 64/128/256/2048 --
+    ad hoc instrumentation for `planning/fft_unit_utilization.py`'s own
+    Phase 1 runtime-alignment audit (docs/active_ndp_units_cost_task.md),
+    same "probe kernel, not a planning/codegen decision" spirit as the
+    standalone `id_dump.mojo`. Never changes which pool a stage actually
+    gets (added strictly after the existing alloc/align logic, whichever
+    branch that already is) -- observation only, no simulator source
+    touched, no alignment behavior touched.
     """
     stages = flatten_recursive_node(plan.root)
     e = Emitter()
@@ -1041,6 +1052,19 @@ def generate_recursive_fft_kernels(
             )
         else:
             e.add(f"    var pool{i} = cxl_alloc[Float32](pool{i}_elems)")
+        if debug_print_pool_alignment:
+            kind = "transpose" if isinstance(stage, PhysicalTransposePlan) else (
+                "persistent" if stage.persistent is not None
+                else "cooperative" if stage.cooperation is not None
+                else "non_cooperative"
+            )
+            e.add(f"    var pool{i}_check_addr = Int(pool{i})")
+            e.add(
+                f'    print("[pool_align] stage", {i}, "kind", "{kind}", '
+                f'"addr", pool{i}_check_addr, "mod64", pool{i}_check_addr % 64, '
+                f'"mod128", pool{i}_check_addr % 128, "mod256", pool{i}_check_addr % 256, '
+                f'"mod2048", pool{i}_check_addr % 2048)'
+            )
     e.add()
 
     e.add("    seed(0)")
