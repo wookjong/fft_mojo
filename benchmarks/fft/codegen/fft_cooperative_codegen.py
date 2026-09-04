@@ -61,7 +61,26 @@ def _emit_cooperative_prelude(
     `stage_{id}_tail` pattern for the plain per-uthread case. Nothing here
     depends on which worker is running or what stage.worker_batches holds
     -- purely the primitive reads (local_uthread_id/global_uthread_id) and
-    the two DRAM base expressions, safe to compute twice."""
+    the two DRAM base expressions, safe to compute twice.
+
+    `spad_base`: `fft_slot * scratchpad_uthread_stride` in general, but when
+    `coop.fft_slots_per_group == 1` this group can only ever hold slot 0 (the
+    `fft_slot >= fft_slots_per_group` guard just above already forces that),
+    so `fft_slot` is always 0 too -- yet LLVM cannot see that from the guard
+    alone, and a genuinely *dynamic* `spad_base` register threaded through
+    every scratchpad address in the stage body is a real, confirmed cause of
+    register-pressure spills that a compile-time-constant `spad_base` does
+    not share. Isolated by a real-hardware 2x2 ablation (dynamic/constant
+    spad_base x independent-if/if-elif worker dispatch, N=64 radices=(4,4,4)
+    workers_per_fft=2 compute_lanes=4, the exact configuration that spills
+    FFTRecLeaf0.stage_1 with a 16-byte frame at HEAD): only the constant-
+    spad_base variants (B, D) were spill-free; the dynamic-spad_base
+    variants (A, C) both spilled, and forcing if/elif dispatch on top of a
+    still-dynamic spad_base (C) made it *worse* (48-byte frame, up from
+    16). So the constant specialization below -- not the dispatch keyword
+    change in `_emit_cooperative_stage` -- is what removes this spill;
+    `fft_slots_per_group > 1` keeps the original dynamic expression
+    unchanged, since slot 0 is not the only slot sharing that group there."""
     e.add(f"        comptime WORKERS_PER_FFT = {coop.workers_per_fft}")
     e.add("        var local_id = local_uthread_id()")
     e.add("        var fft_slot = local_id // WORKERS_PER_FFT")
@@ -69,7 +88,10 @@ def _emit_cooperative_prelude(
     e.add(f"        if fft_slot >= {coop.fft_slots_per_group}:")
     e.add("            return")
     if plan.scratchpad_buffers:
-        e.add(f"        var spad_base = fft_slot * {plan.scratchpad_uthread_stride}")
+        if coop.fft_slots_per_group == 1:
+            e.add("        var spad_base = 0")
+        else:
+            e.add(f"        var spad_base = fft_slot * {plan.scratchpad_uthread_stride}")
     e.add("        var logical_fft_id = global_uthread_id() // WORKERS_PER_FFT")
     if is_first:
         e.add(
@@ -198,8 +220,20 @@ def _emit_cooperative_stage(
     assert coop is not None
     _emit_cooperative_prelude(e, plan=plan, coop=coop, is_first=is_first, is_last=is_last)
 
+    # `if/elif` instead of independent `if`s only where the real-hardware
+    # 2x2 ablation referenced in `_emit_cooperative_prelude`'s own
+    # `spad_base` comment actually confirmed it safe to pair with: variant C
+    # (if/elif, spad_base still dynamic) spilled *worse* than variant A
+    # (independent `if`s, same dynamic spad_base) -- 48-byte frame vs.
+    # 16-byte -- so this keyword change is applied only alongside the
+    # constant-spad_base specialization above (variant D, the one
+    # confirmed both spill-free and faster than variant B's own if/if),
+    # never on its own against a still-dynamic spad_base.
+    use_elif = coop.fft_slots_per_group == 1
+
     assert stage.worker_batches is not None
     tail_by_worker: dict[int, SIMDBatchPlan] = {}
+    emitted_any = False
     for worker_id, batches in enumerate(stage.worker_batches):
         if not batches:
             continue
@@ -217,7 +251,9 @@ def _emit_cooperative_stage(
                 tail_by_worker[worker_id] = loop_plan.tail_batch
         else:
             _emit_stage_batches(sub, plan=plan, stage=stage, batches=batches, compute_lanes=compute_lanes)
-        e.add(f"        if worker_id == {worker_id}:")
+        keyword = "if" if not (use_elif and emitted_any) else "elif"
+        emitted_any = True
+        e.add(f"        {keyword} worker_id == {worker_id}:")
         for line in sub.lines:
             e.add("    " + line if line else "")
     e.add()
@@ -236,10 +272,13 @@ def _emit_cooperative_stage(
     e.add(f"        comptime SIMD_ITERS = {stage.simd_iteration_count}")
     e.add()
     _emit_cooperative_prelude(e, plan=plan, coop=coop, is_first=is_first, is_last=is_last)
+    emitted_any = False
     for worker_id, tail_batch in tail_by_worker.items():
         sub = Emitter()
         _emit_stage_batches(sub, plan=plan, stage=stage, batches=(tail_batch,), compute_lanes=compute_lanes)
-        e.add(f"        if worker_id == {worker_id}:")
+        keyword = "if" if not (use_elif and emitted_any) else "elif"
+        emitted_any = True
+        e.add(f"        {keyword} worker_id == {worker_id}:")
         for line in sub.lines:
             e.add("    " + line if line else "")
     e.add()
