@@ -26,13 +26,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planning.fft_cost_model import (
+from planning.search.fft_cost_model import (
     DEFAULT_COST_WEIGHTS,
     estimate_cost,
     estimate_metrics,
 )
-from planning.fft_plan_recursive import make_recursive_transpose_plan
-from planning.target_profile import DEFAULT_TARGET_PROFILE
+from planning.strategies.fft_plan_recursive import make_recursive_transpose_plan
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 
 
 def _plan(n: int, **kwargs):

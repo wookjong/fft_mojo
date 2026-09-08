@@ -13,7 +13,7 @@ import types
 
 import numpy as np
 
-from planning.fft_plan_balanced import (
+from planning.strategies.fft_plan_balanced import (
     BalancedTransposeFFTPlan,
     make_balanced_plan,
     make_balanced_transpose_plan,

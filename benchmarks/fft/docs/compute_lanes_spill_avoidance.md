@@ -88,7 +88,7 @@ done this pass (no new cost weight, per this investigation's own scope).
 ## Persistent execution: the actual answer for N=216
 
 While investigating this, a third, already-implemented execution model
-(`planning.fft_plan_persistent`, `docs/persistent_leaf_design.md`) turned
+(`planning.execution.fft_plan_persistent`, `docs/persistent_leaf_design.md`) turned
 out to dominate both cooperative rescues for the same N/radix outright,
 with *no* narrowing needed:
 

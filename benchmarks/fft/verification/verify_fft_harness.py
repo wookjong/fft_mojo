@@ -24,7 +24,7 @@ import types
 import numpy as np
 
 from codegen.fft_codegen import Emitter, _LOOP_MIN_FULL_BATCHES, _emit_stage
-from planning.fft_plan_core import FFTCodegenPlan
+from planning.core.fft_plan_core import FFTCodegenPlan
 
 _VAR_RE = re.compile(r"^(\s*)var ")
 _COMPTIME_RE = re.compile(r"^(\s*)comptime ")

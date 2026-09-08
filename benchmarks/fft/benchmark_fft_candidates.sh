@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Build + run every candidate planning.fft_plan_search.generate_candidates(N)
+# Build + run every candidate planning.search.fft_plan_search.generate_candidates(N)
 # finds (via make_fft_kernel.py --plan-index), against the real M2NDP
 # simulator, with --no-reference-check (see run_fft_test.sh's own --no-
 # reference-check help). Compares each candidate's actual simulated cycle
@@ -42,7 +42,7 @@ usage() {
 Usage: $(basename "$0") N [options]
 
   N                            the single FFT length to compare candidates
-                                for (planning.fft_plan_search.generate_
+                                for (planning.search.fft_plan_search.generate_
                                 candidates(N) -- one N per run, unlike
                                 run_fft_test.sh's several)
   --inverse                    generate the inverse FFT

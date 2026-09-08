@@ -20,8 +20,8 @@ see that file's own comment).
 
 import numpy as np
 
-from planning.fft_plan_core import _build_plan, layouts_for_radices, pingpong_needed
-from planning.fft_plan_simple import make_decomposed_plan
+from planning.core.fft_plan_core import _build_plan, layouts_for_radices, pingpong_needed
+from planning.strategies.fft_plan_simple import make_decomposed_plan
 from verification.verify_fft_harness import Ptr, _make_large_twiddle_table, run_kernel
 
 

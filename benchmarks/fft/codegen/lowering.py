@@ -25,7 +25,7 @@ inline inside fft_codegen.py's own emit functions do:
 
 from dataclasses import dataclass
 
-from planning.fft_plan_core import (
+from planning.core.fft_plan_core import (
     LoadPlan,
     OutputPlan,
     SIMDBatchPlan,

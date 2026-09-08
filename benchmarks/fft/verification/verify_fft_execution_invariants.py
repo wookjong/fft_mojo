@@ -21,12 +21,12 @@ did not exist anywhere in this suite before.
 
 import numpy as np
 
-from planning.fft_plan_core import FFTCodegenPlan, _build_plan, layouts_for_radices, pingpong_needed
-from planning.fft_plan_cooperative import make_cooperative_leaf_plan
-from planning.fft_plan_lanes import apply_compute_lanes, generate_compute_lane_candidates
-from planning.fft_plan_persistent import make_persistent_leaf_plan
-from planning.fft_plan_recursive import flatten_recursive_node, make_recursive_transpose_plan
-from planning.target_profile import DEFAULT_TARGET_PROFILE
+from planning.core.fft_plan_core import FFTCodegenPlan, _build_plan, layouts_for_radices, pingpong_needed
+from planning.execution.fft_plan_cooperative import make_cooperative_leaf_plan
+from planning.execution.fft_plan_lanes import apply_compute_lanes, generate_compute_lane_candidates
+from planning.execution.fft_plan_persistent import make_persistent_leaf_plan
+from planning.strategies.fft_plan_recursive import flatten_recursive_node, make_recursive_transpose_plan
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 from codegen.fft_codegen import _stage_compute_lanes, generate_fft_kernel
 from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
 from verification.verify_fft_cooperative import run_cooperative_kernel
@@ -426,7 +426,7 @@ def main() -> None:
 
     print()
     print("  Regression guard: workers_per_fft=8 offered by default (Phase 1 fix):")
-    from planning.fft_plan_cooperative import choose_workers_per_fft, worker_candidates_per_fft
+    from planning.execution.fft_plan_cooperative import choose_workers_per_fft, worker_candidates_per_fft
 
     candidates = worker_candidates_per_fft(128, (4, 4, 4, 2))
     tag = "worker_candidates_per_fft(128, (4,4,4,2)) includes 8 by default"

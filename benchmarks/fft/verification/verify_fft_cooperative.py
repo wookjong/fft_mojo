@@ -21,7 +21,7 @@ splits into), mirroring `run_kernel`'s own `plan.total_uthreads // plan.max_uthr
 
 import numpy as np
 
-from planning.fft_plan_core import FFTCodegenPlan
+from planning.core.fft_plan_core import FFTCodegenPlan
 from verification.verify_fft_harness import Ptr, run_kernel
 
 
@@ -97,8 +97,8 @@ def verify_cooperative_leaf(
     function's own signature gained these. Pass `False`/explicit widths to
     compare against the old shape deliberately.
     """
-    from planning.fft_plan_cooperative import make_cooperative_leaf_plan
-    from planning.target_profile import DEFAULT_TARGET_PROFILE
+    from planning.execution.fft_plan_cooperative import make_cooperative_leaf_plan
+    from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 
     if compute_lanes is None:
         compute_lanes = min(simd_lanes, DEFAULT_TARGET_PROFILE.lmul1_float32_lanes)

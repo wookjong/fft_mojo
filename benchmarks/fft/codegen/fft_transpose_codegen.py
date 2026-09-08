@@ -50,9 +50,9 @@ from codegen.common import (
 )
 from codegen.fft_codegen import emit_kernel as _emit_kernel
 from codegen.fft_persistent_codegen import emit_persistent_kernel_struct
-from planning.fft_plan_balanced import BalancedTransposeFFTPlan, FFTTransposePlan
-from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
-from planning.fft_plan_recursive import (
+from planning.strategies.fft_plan_balanced import BalancedTransposeFFTPlan, FFTTransposePlan
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from planning.strategies.fft_plan_recursive import (
     PhysicalTransposePlan,
     RecursiveFFTPlan,
     flatten_recursive_node,

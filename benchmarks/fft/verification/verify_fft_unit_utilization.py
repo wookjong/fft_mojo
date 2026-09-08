@@ -26,11 +26,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planning.fft_plan_persistent import make_persistent_leaf_plan
-from planning.fft_plan_recursive import make_recursive_transpose_plan
-from planning.fft_plan_search import _root_split_length
-from planning.fft_unit_utilization import compute_unit_utilization, distinct_active_units
-from planning.target_profile import DEFAULT_TARGET_PROFILE
+from planning.execution.fft_plan_persistent import make_persistent_leaf_plan
+from planning.strategies.fft_plan_recursive import make_recursive_transpose_plan
+from planning.search.fft_plan_search import _root_split_length
+from planning.diagnostics.fft_unit_utilization import compute_unit_utilization, distinct_active_units
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 
 
 def _brute_force_units(base_packet_index: int, count: int, *, chunk: int, num_units: int) -> int:
@@ -96,7 +96,7 @@ def check_cooperative_persistent_report_exact_alignment() -> None:
     plain non-cooperative leaf and every transpose stage must report
     `alignment_exact=False` with a genuine best/worst range whenever their
     own launch width isn't already chunk-aligned."""
-    from planning.fft_plan_search import generate_radix_execution_joint_candidates
+    from planning.search.fft_plan_search import generate_radix_execution_joint_candidates
 
     n = 960
     baseline = make_recursive_transpose_plan(
@@ -155,7 +155,7 @@ def check_unsplit_persistent_pathology_reproduced_as_sanity_check_only() -> None
         n, radices=(4, 4, 4, 3, 5), num_logical_blocks=1,
         simd_lanes=8, inverse=False, target=DEFAULT_TARGET_PROFILE,
     )
-    from planning.fft_unit_utilization import _persistent_leaf_estimate
+    from planning.diagnostics.fft_unit_utilization import _persistent_leaf_estimate
 
     estimate = _persistent_leaf_estimate(
         unsplit_persistent, 1, leaf_index=0, target=DEFAULT_TARGET_PROFILE,

@@ -11,8 +11,8 @@ re-execution vs. numpy.
 """
 
 from codegen.fft_codegen import _mapping_base_expr
-from planning.fft_plan_core import MultiKernelFFTPlan
-from planning.fft_plan_multikernel import make_multi_kernel_plan
+from planning.core.fft_plan_core import MultiKernelFFTPlan
+from planning.strategies.fft_plan_multikernel import make_multi_kernel_plan
 from verification.verify_fft_harness import _run_multi_kernel_plan
 
 

@@ -44,8 +44,8 @@ from codegen.fft_persistent_codegen import (
     emit_stage_phase,
     generate_persistent_fft_kernel,
 )
-from planning.fft_plan_core import FFTCodegenPlan
-from planning.fft_plan_persistent import make_persistent_leaf_plan, num_rounds
+from planning.core.fft_plan_core import FFTCodegenPlan
+from planning.execution.fft_plan_persistent import make_persistent_leaf_plan, num_rounds
 from verification.verify_fft_harness import Ptr, SimdVec, _simd, _translate_emitted_lines
 
 
@@ -260,7 +260,7 @@ def check_plan_equivalence(
     """
     from dataclasses import replace as _replace
 
-    from planning.fft_plan_core import _build_plan, layouts_for_radices, pingpong_needed
+    from planning.core.fft_plan_core import _build_plan, layouts_for_radices, pingpong_needed
 
     normal = _build_plan(
         length=length, inverse=inverse, total_uthreads=1, simd_lanes=8,
@@ -326,7 +326,7 @@ def _check_target_invariant_rejections() -> None:
     a mapping that doesn't match the target."""
     from dataclasses import replace as _replace
 
-    from planning.target_profile import DEFAULT_TARGET_PROFILE
+    from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 
     # Only these two are independently-supplied TargetProfile fields whose
     # *mutual* consistency make_persistent_leaf_plan can actually check --

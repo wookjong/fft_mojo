@@ -53,7 +53,7 @@ from codegen.lowering import (
     chunk_batch as _chunk_batch,
     try_build_loop_stage as _try_build_loop_stage,
 )
-from planning.fft_plan_core import (
+from planning.core.fft_plan_core import (
     AddressMapping,
     AddressMappingKind,
     FFTCodegenPlan,
@@ -66,12 +66,12 @@ from planning.fft_plan_core import (
     StorePlan,
     TwiddlePlan,
 )
-from planning.fft_plan_lanes import (
+from planning.execution.fft_plan_lanes import (
     _ALWAYS_NARROW_RADICES,
     _RISKY_RADIX_PAIRS,
     resolve_stage_compute_lanes as _resolve_stage_compute_lanes,
 )
-from planning.fft_plan_simple import DecomposedFFTPlan
+from planning.strategies.fft_plan_simple import DecomposedFFTPlan
 
 
 def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
@@ -607,7 +607,7 @@ def _emit_batch(
 
 
 # _ALWAYS_NARROW_RADICES/_RISKY_RADIX_PAIRS (imported above) and the
-# real-hardware evidence behind each MOVED to planning.fft_plan_lanes --
+# real-hardware evidence behind each MOVED to planning.execution.fft_plan_lanes --
 # see that module's own docstring for why (compute_lanes became a
 # *planning* decision, not a codegen one) and its own copy of this
 # comment for the full N=11/13/17/N=54 evidence. Both names stay
@@ -622,7 +622,7 @@ def _stage_compute_lanes(
 ) -> int | None:
     """Fallback-only now: computes a stage's own render width live, the
     way every call site here used to before `FFTStagePlan.compute_lanes`
-    existed. A thin wrapper around `planning.fft_plan_lanes.
+    existed. A thin wrapper around `planning.execution.fft_plan_lanes.
     resolve_stage_compute_lanes` (moved there verbatim, same three
     reasons/same evidence -- see that function's own docstring), kept
     here under its old name/signature so every existing call site below

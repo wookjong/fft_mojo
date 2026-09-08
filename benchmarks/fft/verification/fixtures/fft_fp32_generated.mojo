@@ -409,30 +409,12 @@ struct FFTFP32(NDPTask):
             FFTFP32.buf_b.store(spad_base + 0, or0)
             FFTFP32.buf_b.store(spad_base + 64 + 0, oi0)
 
-            var twr1 = SIMD[DType.float32, 4](Float32(1), Float32(1), Float32(1), Float32(1))
-            var twi1 = SIMD[DType.float32, 4](Float32(0), Float32(0), Float32(0), Float32(0))
-            var tr1 = or1 * twr1 - oi1 * twi1
-            var ti1 = or1 * twi1 + oi1 * twr1
-            or1 = tr1
-            oi1 = ti1
             FFTFP32.buf_b.store(spad_base + 4, or1)
             FFTFP32.buf_b.store(spad_base + 64 + 4, oi1)
 
-            var twr2 = SIMD[DType.float32, 4](Float32(1), Float32(1), Float32(1), Float32(1))
-            var twi2 = SIMD[DType.float32, 4](Float32(0), Float32(0), Float32(0), Float32(0))
-            var tr2 = or2 * twr2 - oi2 * twi2
-            var ti2 = or2 * twi2 + oi2 * twr2
-            or2 = tr2
-            oi2 = ti2
             FFTFP32.buf_b.store(spad_base + 8, or2)
             FFTFP32.buf_b.store(spad_base + 64 + 8, oi2)
 
-            var twr3 = SIMD[DType.float32, 4](Float32(1), Float32(1), Float32(1), Float32(1))
-            var twi3 = SIMD[DType.float32, 4](Float32(0), Float32(0), Float32(0), Float32(0))
-            var tr3 = or3 * twr3 - oi3 * twi3
-            var ti3 = or3 * twi3 + oi3 * twr3
-            or3 = tr3
-            oi3 = ti3
             FFTFP32.buf_b.store(spad_base + 12, or3)
             FFTFP32.buf_b.store(spad_base + 64 + 12, oi3)
 
@@ -536,12 +518,9 @@ struct FFTFP32(NDPTask):
             FFTFP32.buf_b.store(spad_base + 36, or1)
             FFTFP32.buf_b.store(spad_base + 64 + 36, oi1)
 
-            var twr2 = SIMD[DType.float32, 4](Float32(0), Float32(0), Float32(0), Float32(0))
-            var twi2 = SIMD[DType.float32, 4](Float32(-1), Float32(-1), Float32(-1), Float32(-1))
-            var tr2 = or2 * twr2 - oi2 * twi2
-            var ti2 = or2 * twi2 + oi2 * twr2
+            var tr2 = oi2
+            oi2 = -or2
             or2 = tr2
-            oi2 = ti2
             FFTFP32.buf_b.store(spad_base + 40, or2)
             FFTFP32.buf_b.store(spad_base + 64 + 40, oi2)
 

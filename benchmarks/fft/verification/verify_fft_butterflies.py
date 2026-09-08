@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codegen.fft_butterflies import emit_butterfly
 from codegen.fft_codegen import generate_fft_kernel, generate_multi_kernel_fft_kernels
-from planning.fft_plan_simple import make_444_plan
-from planning.fft_plan_multikernel import factor_into_kernel_chunks, make_multi_kernel_plan
+from planning.strategies.fft_plan_simple import make_444_plan
+from planning.strategies.fft_plan_multikernel import factor_into_kernel_chunks, make_multi_kernel_plan
 from radix_spec import SUPPORTED_RADICES
 
 _VAR_RE = re.compile(r"^(\s*)var ")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Regression coverage for `planning.spill_probe._parse_ndp_cycles`'s
+"""Regression coverage for `planning.diagnostics.spill_probe._parse_ndp_cycles`'s
 2026-08-31 fix -- see that function's own comment and
 docs/active_ndp_units_cost_task.md's "Phase 1.5" section for the full
 root-cause writeup. Synthetic log snippets only (no real toolchain
@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planning.spill_probe import _parse_ndp_cycles
+from planning.diagnostics.spill_probe import _parse_ndp_cycles
 
 
 def _registered(path: str) -> str:

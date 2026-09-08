@@ -177,7 +177,7 @@ unchanged after this edit.
 
 The compute_lanes spill-avoidance investigation (see docs/
 compute_lanes_spill_avoidance.md) surfaced a third execution model this
-project had already implemented (`planning.fft_plan_persistent`,
+project had already implemented (`planning.execution.fft_plan_persistent`,
 `docs/persistent_leaf_design.md`) but never wired into `generate_
 candidates` at all -- every candidate up to this point was either plain
 or cooperative-worker. Real measurement (N=216, single fused leaf,

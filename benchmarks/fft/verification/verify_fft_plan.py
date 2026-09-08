@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from codegen.fft_codegen import _mapping_base_expr
 from codegen.lowering import _chunk_store
 from radix_spec import SUPPORTED_RADICES
-from planning.fft_plan_core import (
+from planning.core.fft_plan_core import (
     StorePlan,
     _make_store,
     _prime_factors_supported,
@@ -36,11 +36,11 @@ from planning.fft_plan_core import (
     max_effective_stride,
     summarize_multi_kernel_plan,
 )
-from planning.fft_plan_simple import make_decomposed_plan
-from planning.fft_plan_multikernel import _choose_side_chunks, factor_into_kernel_chunks, make_multi_kernel_plan
-from planning.fft_plan_balanced import _build_batched_side, make_balanced_plan, make_balanced_transpose_plan
+from planning.strategies.fft_plan_simple import make_decomposed_plan
+from planning.strategies.fft_plan_multikernel import _choose_side_chunks, factor_into_kernel_chunks, make_multi_kernel_plan
+from planning.strategies.fft_plan_balanced import _build_batched_side, make_balanced_plan, make_balanced_transpose_plan
 from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
-from planning.fft_plan_recursive import _build_physical_transpose, make_recursive_transpose_plan
+from planning.strategies.fft_plan_recursive import _build_physical_transpose, make_recursive_transpose_plan
 from verification.verify_fft_simple import verify_decomposed_plan, verify_radix_sequence_plan
 from verification.verify_fft_multikernel import verify_boundary_consistency, verify_layout_bijection, verify_multi_kernel_plan
 from verification.verify_fft_balanced import (

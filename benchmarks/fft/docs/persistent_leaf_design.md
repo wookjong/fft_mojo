@@ -1389,7 +1389,7 @@ expected_unit
 Run:
 
 ```text
-planning.spill_probe.probe_spill_free
+planning.diagnostics.spill_probe.probe_spill_free
 ```
 
 against the actual generated persistent kernel.

@@ -76,8 +76,8 @@ from codegen.common import (
     spad as _spad,
 )
 from codegen.fft_codegen import _emit_stage_batches, _stage_compute_lanes
-from planning.fft_plan_core import FFTCodegenPlan, FFTStagePlan
-from planning.fft_plan_persistent import num_rounds
+from planning.core.fft_plan_core import FFTCodegenPlan, FFTStagePlan
+from planning.execution.fft_plan_persistent import num_rounds
 
 
 def _worker_body(
@@ -356,7 +356,7 @@ def emit_persistent_kernel_struct(
     self-contained host `main()`, unchanged in output for every existing
     caller.
 
-    `plan` must come from `planning.fft_plan_persistent.
+    `plan` must come from `planning.execution.fft_plan_persistent.
     make_persistent_leaf_plan` (i.e. `plan.persistent is not None`);
     `num_logical_blocks` must match what that call was given (checked
     below, not re-derived, since `plan.host.total_elems` only encodes

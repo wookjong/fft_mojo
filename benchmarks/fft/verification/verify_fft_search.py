@@ -16,7 +16,7 @@ distinct candidates, that per-leaf worker sequences are genuinely per-leaf
 (([w0, None] vs [None, w0] are distinct, not collapsed), that an illegal
 combination is rejected before it ever reaches cost scoring rather than
 crashing the whole search, that no duplicate candidate survives, and that
-planning.spill_probe.probe_and_rerank_candidates (which pre-dates this
+planning.diagnostics.spill_probe.probe_and_rerank_candidates (which pre-dates this
 search axis) works unmodified against candidates this axis produces.
 """
 
@@ -26,9 +26,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planning.fft_plan_core import FFTCodegenPlan
-from planning.fft_plan_recursive import _recursive_split_candidates, flatten_recursive_node, make_recursive_transpose_plan
-from planning.fft_plan_search import (
+from planning.core.fft_plan_core import FFTCodegenPlan
+from planning.strategies.fft_plan_recursive import _recursive_split_candidates, flatten_recursive_node, make_recursive_transpose_plan
+from planning.search.fft_plan_search import (
     FFTPlanCandidate,
     PlanChoices,
     _leaf_kernels_in_order,
@@ -39,7 +39,7 @@ from planning.fft_plan_search import (
     generate_radix_execution_joint_candidates,
     generate_radix_tiers,
 )
-from planning.target_profile import DEFAULT_TARGET_PROFILE
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 
 
 # A target with a second (wide) radix tier available, purely for exercising
@@ -192,7 +192,7 @@ def check_illegal_combination_rejected_not_crashed() -> None:
     generate_radix_execution_joint_candidates -- "obviously bad candidates
     are pruned before cost ranking," this module's own stated discipline,
     now covering this axis too."""
-    import planning.fft_plan_search as search_mod
+    import planning.search.fft_plan_search as search_mod
 
     n = 960
     near = _find_balanced_split(n)
@@ -283,7 +283,7 @@ def check_cross_step_duplicates_removed() -> None:
     exercises `generate_radix_execution_joint_candidates`'s own narrower,
     single-step dedup only).
     """
-    from planning.fft_plan_search import _plan_signature
+    from planning.search.fft_plan_search import _plan_signature
 
     n = 960
     cands = generate_candidates(n, target=DEFAULT_TARGET_PROFILE, max_candidates=200)
@@ -332,7 +332,7 @@ def check_generate_candidates_includes_step9() -> None:
 
 
 def check_probe_and_rerank_accepts_joint_candidates() -> None:
-    """planning.spill_probe.probe_and_rerank_candidates pre-dates this
+    """planning.diagnostics.spill_probe.probe_and_rerank_candidates pre-dates this
     search axis -- confirm it type-checks/accepts a candidate list that
     includes step-9 entries without needing any change on its own side
     (it only reads candidate.plan/candidate.metrics, both of which every
@@ -342,7 +342,7 @@ def check_probe_and_rerank_accepts_joint_candidates() -> None:
     exercised by verify_end_to_end_numeric below and by this session's
     own hardware runs, not by this fast check.
     """
-    from planning.spill_probe import probe_and_rerank_candidates
+    from planning.diagnostics.spill_probe import probe_and_rerank_candidates
 
     # See check_generate_candidates_includes_step9's own docstring for why
     # N=144 + a wide-tier-capable target, and why "non-default tier" (not
@@ -426,10 +426,10 @@ def check_lane_variant_signature_distinct_from_baseline() -> None:
 
 def check_probe_accepts_lane_variant_candidates() -> None:
     """Same discipline as check_probe_and_rerank_accepts_joint_candidates
-    above, for step 11's own candidates: planning.spill_probe.probe_and_
+    above, for step 11's own candidates: planning.diagnostics.spill_probe.probe_and_
     rerank_candidates only reads candidate.plan/candidate.metrics, both
     already well-formed on a lane-variant candidate."""
-    from planning.spill_probe import probe_and_rerank_candidates
+    from planning.diagnostics.spill_probe import probe_and_rerank_candidates
 
     n = 960
     cands = generate_candidates(n, scratchpad_byte_budget=32 * 16, max_candidates=200)

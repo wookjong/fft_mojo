@@ -12,7 +12,7 @@ this writing).
 `N=64`, `radices=(4,4,4)`, `workers_per_fft=2`, `compute_lanes=4`,
 `narrow_middle_stages=True` (make_fft_kernel.py's own defaults), single
 leaf (`num_logical_blocks=1` / `total_ffts=1`, so `fft_slots_per_group=1` --
-see `planning.fft_plan_cooperative.make_cooperative_leaf_plan`, `base.
+see `planning.execution.fft_plan_cooperative.make_cooperative_leaf_plan`, `base.
 max_uthread` capped by `total_ffts` itself here):
 
 ```

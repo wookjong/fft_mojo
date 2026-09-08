@@ -8,7 +8,7 @@ Nothing here decides an address, a radix, or a twiddle value -- see each
 module's own docstring for what those modules *do* decide.
 """
 
-from planning.fft_plan_core import LargeTwiddlePlan
+from planning.core.fft_plan_core import LargeTwiddlePlan
 
 
 class Emitter:

@@ -1,7 +1,7 @@
 # Persistent vs. cooperative FFT leaf: real-hardware comparison findings
 
 Answers docs/persistent_vs_cooperative_comparison_task.md. All numbers below
-are real M2NDP-Detour build+run results (`planning.spill_probe.probe_source_
+are real M2NDP-Detour build+run results (`planning.diagnostics.spill_probe.probe_source_
 spill_free`), not estimates. Forward transforms only; N=32/64/128, radices
 chosen by this project's own existing planner (`make_recursive_transpose_plan`
 for cooperative, the same radix sequence passed to `make_persistent_leaf_plan`

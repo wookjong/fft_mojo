@@ -25,21 +25,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planning.fft_cost_model import (
+from planning.search.fft_cost_model import (
     CostWeights,
     DEFAULT_COST_WEIGHTS,
     compute_stage_metrics,
     estimate_cost,
     estimate_metrics,
 )
-from planning.fft_plan_recursive import make_recursive_transpose_plan
-from planning.fft_plan_search import (
+from planning.strategies.fft_plan_recursive import make_recursive_transpose_plan
+from planning.search.fft_plan_search import (
     _root_split_length,
     generate_candidates,
     generate_radix_execution_joint_candidates,
 )
-from planning.fft_plan_lanes import apply_all_scalar_lanes_to_plan
-from planning.target_profile import DEFAULT_TARGET_PROFILE
+from planning.execution.fft_plan_lanes import apply_all_scalar_lanes_to_plan
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 
 
 def _cooperative_plan(n: int, seq: tuple[int | None, ...], *, tier: str = "default"):
@@ -236,7 +236,7 @@ def check_candidate_count_independent_of_cost_model() -> None:
     must produce the exact same candidate COUNT, only a possibly
     different top-K selection. Confirms the execution-cost rework could
     not have silently changed how many candidates a caller gets back."""
-    import planning.fft_plan_search as search_mod
+    import planning.search.fft_plan_search as search_mod
 
     n = 144
     max_candidates = 40
@@ -265,7 +265,7 @@ def check_spill_policy_unaffected() -> None:
     unchanged in meaning: same weights, same formula, same real-probe
     hard-exclusion policy this doesn't touch at all (see
     [[fft-spill-hard-filter]])."""
-    from planning.fft_cost_model import _resource_cost
+    from planning.search.fft_cost_model import _resource_cost
 
     weights = DEFAULT_COST_WEIGHTS
     assert not hasattr(weights, "idle_worker_penalty"), (

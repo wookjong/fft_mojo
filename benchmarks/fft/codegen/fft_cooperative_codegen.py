@@ -28,8 +28,8 @@ from codegen.lowering import (
     LOOP_MIN_FULL_BATCHES as _LOOP_MIN_FULL_BATCHES,
     try_build_loop_stage as _try_build_loop_stage,
 )
-from planning.fft_plan_core import AddressMapping, AddressMappingKind, FFTCodegenPlan, FFTStagePlan, SIMDBatchPlan
-from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from planning.core.fft_plan_core import AddressMapping, AddressMappingKind, FFTCodegenPlan, FFTStagePlan, SIMDBatchPlan
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
 
 def _cooperative_mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:

@@ -39,21 +39,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from codegen.fft_transpose_codegen import generate_recursive_fft_kernels
-from planning.fft_cost_model import estimate_cost, estimate_metrics
-from planning.fft_plan_recursive import (
+from planning.search.fft_cost_model import estimate_cost, estimate_metrics
+from planning.strategies.fft_plan_recursive import (
     PhysicalTransposePlan,
     RecursiveFFTPlan,
     flatten_recursive_node,
     make_recursive_transpose_plan,
 )
-from planning.fft_plan_search import (
+from planning.search.fft_plan_search import (
     FFTPlanCandidate,
     PlanChoices,
     format_plan_summary,
     generate_candidates,
     rank_candidates,
 )
-from planning.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
 
 def _no_tail_tile_suggestions(plan: RecursiveFFTPlan) -> str:
@@ -94,6 +94,81 @@ def _no_tail_tile_suggestions(plan: RecursiveFFTPlan) -> str:
     return "\n".join(lines)
 
 
+GPU_BASELINE_PLANNERS = (
+    "gpu-clfft",
+    # "gpu-rocfft" is kept as the pre-existing name for the offline-tuner
+    # port (see planning.gpu_baseline.rocfft's own module docstring);
+    # "gpu-rocfft-tuned" is an explicit alias for the same thing, added
+    # once the Phase-4 baseline audit found that ordinary rocFFT plan
+    # creation runs a MATERIALLY DIFFERENT mechanism -- see "gpu-rocfft-
+    # default" (planning.gpu_baseline.rocfft_default), which is NOT an
+    # alias, it is a separate module porting that separate mechanism.
+    "gpu-rocfft",
+    "gpu-rocfft-tuned",
+    "gpu-rocfft-default",
+    "gpu-vkfft",
+)
+
+
+class GPUBaselineUnsupportedError(RuntimeError):
+    """Raised by `make_fft_kernel(planner="gpu-*")` when the requested GPU
+    baseline cannot represent `n` on this M2NDP target at all (see
+    planning.gpu_baseline.common.BaselineStatus) -- carries the baseline's
+    own full diagnostics, including the ORIGINAL GPU-chosen configuration
+    it could not map, per that package's own "never silently substitute"
+    rule. A caller comparing baselines wants this failure surfaced, not
+    swallowed into a fallback plan."""
+
+
+def _make_gpu_baseline_fft_kernel(
+    n: int, *, planner: str, inverse: bool, batch: int, target: TargetProfile,
+    output_path: str | Path | None, reference_check: bool, compute_lanes: int | None,
+    narrow_middle_stages: bool, simd_lanes: int, spread_across_units: bool,
+) -> Path:
+    """`make_fft_kernel`'s own GPU-baseline path -- see that function's
+    `planner` docstring. Builds the baseline plan via planning.
+    gpu_baseline.{clfft,rocfft,vkfft}.plan(...), then renders it through
+    the SAME codegen this project's own M2NDP-aware planner uses
+    (codegen.fft_transpose_codegen.generate_recursive_fft_kernels) --
+    planning still decides everything (this project's pre-existing
+    invariant, unchanged); codegen only ever emits an already-fully-
+    decided plan, GPU baseline or not."""
+    from planning.gpu_baseline import clfft, rocfft, rocfft_default, vkfft
+    from planning.gpu_baseline.common import BaselineStatus
+
+    baseline_module = {
+        "gpu-clfft": clfft,
+        "gpu-rocfft": rocfft,
+        "gpu-rocfft-tuned": rocfft,
+        "gpu-rocfft-default": rocfft_default,
+        "gpu-vkfft": vkfft,
+    }[planner]
+    result = baseline_module.plan(n, batch=batch, inverse=inverse, target=target)
+    if result.status is not BaselineStatus.OK:
+        raise GPUBaselineUnsupportedError(
+            f"planner={planner!r} cannot represent n={n} (batch={batch}, "
+            f"inverse={inverse}) on this M2NDP target:\n{result.diagnostics}"
+        )
+
+    if compute_lanes is None:
+        compute_lanes = min(simd_lanes, target.lmul1_float32_lanes)
+
+    source = generate_recursive_fft_kernels(
+        result.plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+        reference_check=reference_check, target=target, spread_across_units=spread_across_units,
+    )
+
+    if output_path is None:
+        suffix = "_inverse" if inverse else ""
+        planner_suffix = planner.replace("gpu-", "_")
+        output_path = Path(__file__).resolve().parent / f"fft_fp32_N{n}{suffix}{planner_suffix}_generated.mojo"
+    else:
+        output_path = Path(output_path)
+
+    output_path.write_text(source, encoding="utf-8")
+    return output_path
+
+
 def make_fft_kernel(
     n: int,
     *,
@@ -116,6 +191,7 @@ def make_fft_kernel(
     spread_across_units: bool = True,
     mojo_root: str | None = None,
     m2ndp_root: str | None = None,
+    planner: str = "current",
 ) -> Path:
     """Plan and render a length-`n` FFT kernel, write it to `output_path`
     (default: `fft_fp32_N{n}{_inverse}_generated.mojo` next to this file),
@@ -131,7 +207,7 @@ def make_fft_kernel(
     `plan_index`: `None` (the default) keeps today's exact single-heuristic
     plan (`make_recursive_transpose_plan` called directly, as if this
     parameter never existed). A given index instead builds candidate
-    `plan_index` from `planning.fft_plan_search.generate_candidates` /
+    `plan_index` from `planning.search.fft_plan_search.generate_candidates` /
     `rank_candidates` (index 0 = lowest estimated cost) -- see that
     module's own docstring for what a candidate varies. When given,
     `cooperative_workers`/`tile_rows`/`tile_cols` are ignored: the chosen
@@ -246,7 +322,7 @@ def make_fft_kernel(
     `verify_spill_free`: `False` (the default) keeps this function exactly
     what its own module docstring promises -- instant, toolchain-free,
     "just give it a number." `True` instead builds+runs the resolved plan
-    against the real M2NDP-Detour toolchain (planning.spill_probe.
+    against the real M2NDP-Detour toolchain (planning.diagnostics.spill_probe.
     probe_spill_free) before writing anything, closing the one gap every
     fix in narrow_middle_stages/_ALWAYS_NARROW_RADICES still leaves open:
     those eliminate every *known* spill-driven correctness liability, but
@@ -267,7 +343,7 @@ def make_fft_kernel(
       is free, a spill should never be needed) says shouldn't exist.
     * Otherwise (the fully default heuristic path): searches
       `fft_plan_search.generate_candidates`'s own ranked candidates (split/
-      radix-tier/tile/worker axes together) via planning.spill_probe.
+      radix-tier/tile/worker axes together) via planning.diagnostics.spill_probe.
       probe_and_rerank_candidates(top_k=spill_probe_top_k) for the
       cheapest *confirmed* spill-free one, and writes that plan instead of
       the bare heuristic pick if it differs. Still raises
@@ -287,7 +363,7 @@ def make_fft_kernel(
     probed, so it is whichever candidate the static cost model liked
     first that also happened to pass, not necessarily the fastest one on
     real hardware (estimated_cost is a cheap pre-filter, not a promise
-    its order matches measured cycles -- see planning.spill_probe.
+    its order matches measured cycles -- see planning.diagnostics.spill_probe.
     probe_and_rerank_candidates' own `rank_by_cycles` docstring for the
     concrete N=16384 mismatch this is based on). `True` instead picks
     whichever of the probed candidates has the lowest real measured
@@ -323,7 +399,47 @@ def make_fft_kernel(
     `None` picks the same defaults `scripts/env.sh` does (see that
     function's own docstring); override only to probe against a different
     toolchain build (e.g. a `git worktree`).
+
+    `planner`: `"current"` (the default) is this exact function's own
+    prior behavior, unchanged -- the M2NDP-aware recursive planner
+    (optionally its own candidate search / spill-verified path, see
+    `plan_index`/`verify_spill_free` above). One of `GPU_BASELINE_PLANNERS`
+    (`"gpu-clfft"`, `"gpu-rocfft"`, `"gpu-vkfft"`) instead builds the
+    corresponding GPU-derived BASELINE plan (planning.gpu_baseline.*) --
+    see that package's own module docstrings for what each one ports and
+    from where. A GPU baseline planner IGNORES every M2NDP-search-specific
+    parameter above (`scratchpad_byte_budget`, `plan_index`,
+    `cooperative_workers`, `tile_rows`/`tile_cols`, `verify_spill_free`,
+    `spill_probe_top_k`, `rank_by_cycles`) -- those are M2NDP-aware tuning
+    knobs this baseline must stay independent of (see gpu_baseline/
+    common.py's own non-negotiable-rule docstring); passing any of them
+    together with a GPU `planner` raises rather than silently ignoring
+    the conflict. A GPU baseline that cannot represent `n` on this target
+    (see planning.gpu_baseline.common.BaselineStatus) raises a
+    `GPUBaselineUnsupportedError` carrying the full diagnostic, rather
+    than silently falling back to `"current"`.
     """
+    if planner in GPU_BASELINE_PLANNERS:
+        conflicting = {
+            "scratchpad_byte_budget": scratchpad_byte_budget,
+            "plan_index": plan_index,
+            "cooperative_workers": cooperative_workers,
+            "verify_spill_free": verify_spill_free or None,
+        }
+        set_conflicts = {k: v for k, v in conflicting.items() if v not in (None, False)}
+        if set_conflicts:
+            raise ValueError(
+                f"planner={planner!r} is a GPU baseline and must stay independent of "
+                f"M2NDP-aware tuning knobs, but these were also given: {set_conflicts} "
+                f"-- see make_fft_kernel's own `planner` docstring"
+            )
+        return _make_gpu_baseline_fft_kernel(
+            n, planner=planner, inverse=inverse, batch=batch, target=target,
+            output_path=output_path, reference_check=reference_check,
+            compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+            simd_lanes=simd_lanes, spread_across_units=spread_across_units,
+        )
+
     if n < 2:
         # A length-1 "FFT" needs zero radix stages, which _build_plan/
         # _check_layouts (planning/fft_plan_core.py) has never supported --
@@ -366,7 +482,7 @@ def make_fft_kernel(
         # paths) must keep working with no toolchain present at all -- see
         # planning/spill_probe.py's own module docstring for the same
         # "toolchain-free unless a caller opts in" discipline.
-        from planning.spill_probe import NoSpillFreeCandidateError, probe_and_rerank_candidates, probe_spill_free
+        from planning.diagnostics.spill_probe import NoSpillFreeCandidateError, probe_and_rerank_candidates, probe_spill_free
 
         if explicit_choice:
             result = probe_spill_free(
@@ -473,6 +589,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Generate a working M2NDP FFT Mojo kernel for length N."
     )
     parser.add_argument("n", type=int, help="FFT length (any product of supported radices)")
+    parser.add_argument(
+        "--planner", type=str, default="current",
+        choices=("current", *GPU_BASELINE_PLANNERS),
+        help='"current" (default): this project\'s own M2NDP-aware recursive planner. '
+        '"gpu-clfft"/"gpu-rocfft"/"gpu-vkfft": build a GPU-derived BASELINE plan instead '
+        "(planning.gpu_baseline.*), ignoring every M2NDP-search-specific flag below -- "
+        "see make_fft_kernel's own `planner` docstring. Raises GPUBaselineUnsupportedError "
+        "if the requested baseline cannot represent this N on this target at all.",
+    )
     parser.add_argument("--inverse", action="store_true", help="generate the inverse FFT")
     parser.add_argument(
         "--scratchpad-byte-budget", type=int, default=None,
@@ -547,7 +672,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-o", "--output", type=str, default=None, help="output .mojo path")
     parser.add_argument(
         "--dump-candidates", action="store_true",
-        help="print every candidate plan planning.fft_plan_search.generate_candidates "
+        help="print every candidate plan planning.search.fft_plan_search.generate_candidates "
         "finds for N (ranked by estimated cost, see format_plan_summary) and exit "
         "without writing a .mojo file",
     )
@@ -635,6 +760,7 @@ def main() -> None:
         spill_probe_top_k=args.spill_probe_top_k,
         rank_by_cycles=args.rank_by_cycles,
         spread_across_units=not args.no_spread_across_units,
+        planner=args.planner,
     )
     print(f"generated: {path}")
 

@@ -16,7 +16,7 @@ import types
 
 import numpy as np
 
-from planning.fft_plan_recursive import (
+from planning.strategies.fft_plan_recursive import (
     FFTLeafPlan,
     FFTRecursiveNodePlan,
     PhysicalTransposePlan,

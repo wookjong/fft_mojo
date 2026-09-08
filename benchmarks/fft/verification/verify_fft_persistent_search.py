@@ -18,14 +18,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planning.fft_plan_recursive import FFTLeafPlan
-from planning.fft_plan_search import (
+from planning.strategies.fft_plan_recursive import FFTLeafPlan
+from planning.search.fft_plan_search import (
     _plan_signature,
     generate_candidates,
     generate_persistent_leaf_candidates,
 )
-from planning.spill_probe import _probe_plan
-from planning.target_profile import DEFAULT_TARGET_PROFILE
+from planning.diagnostics.spill_probe import _probe_plan
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 
 
 def check_persistent_candidate_generated_for_feasible_n() -> None:
@@ -95,8 +95,8 @@ def check_split_persistent_reachable_where_unsplit_is_gated() -> None:
     unsplit trap: every surviving split+persistent candidate for N=960/
     1024 must actually be split (more than one leaf), never a single
     persistent leaf covering the whole N."""
-    from planning.fft_plan_recursive import flatten_recursive_node
-    from planning.fft_plan_core import FFTCodegenPlan
+    from planning.strategies.fft_plan_recursive import flatten_recursive_node
+    from planning.core.fft_plan_core import FFTCodegenPlan
 
     for n in (960, 1024):
         cands = generate_candidates(n, target=DEFAULT_TARGET_PROFILE, max_candidates=300)
