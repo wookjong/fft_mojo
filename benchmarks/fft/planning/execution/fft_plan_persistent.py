@@ -30,7 +30,7 @@ workers instead of running as one implicit worker (see
 `_partition_vector_scalar`).
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Literal
 
 from planning.core.fft_plan_core import (

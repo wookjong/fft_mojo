@@ -239,7 +239,6 @@ def verify_persistent_immune_to_spread_across_units(
     sizes_narrow = pool_sizes(text_narrow)
     sizes_spread = pool_sizes(text_spread)
 
-    leaves = [s for s in flatten_recursive_node(plan.root) if isinstance(s, FFTCodegenPlan)]
     persistent_stage_indices = {
         i for i, s in enumerate(flatten_recursive_node(plan.root)) if isinstance(s, FFTCodegenPlan) and s.persistent is not None
     }

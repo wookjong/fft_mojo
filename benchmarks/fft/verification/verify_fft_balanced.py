@@ -125,7 +125,6 @@ def verify_transpose_bijection(transpose) -> None:
         prefix = tile_id % transpose.digit_multiplier_near
         rest = tile_id // transpose.digit_multiplier_near
         for ef in range(transpose.ki_far):
-            row_near = transpose.n_b * prefix + ef * transpose.divisor_far + rest
             for en in range(transpose.ki_near):
                 row_far = prefix + transpose.digit_multiplier_near * en + transpose.n_a * rest
                 target = row_far * transpose.ki_far + ef

@@ -25,7 +25,6 @@ matching this module's own `CandidateResult` fields.
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 import tempfile
@@ -36,7 +35,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from planning.search.fft_cost_model import (
     DEFAULT_COST_WEIGHTS,
-    CostWeights,
     _execution_cost,
     _memory_cost,
     estimate_cost,

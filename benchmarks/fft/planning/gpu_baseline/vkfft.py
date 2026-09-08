@@ -95,7 +95,6 @@ section 7) as the exact boundary of what this baseline attempts.
 """
 
 import math
-from dataclasses import dataclass
 
 from planning.strategies.fft_plan_recursive import (
     FFTLeafPlan,

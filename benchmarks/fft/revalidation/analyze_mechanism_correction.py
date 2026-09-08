@@ -10,7 +10,6 @@ strict Occam's-razor order, whether the smallest possible correction
 Usage: python3 analyze_mechanism_correction.py
 """
 import csv
-import json
 import math
 from collections import defaultdict
 from pathlib import Path
@@ -20,7 +19,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from planning.execution.fft_plan_persistent import num_rounds
-from planning.strategies.fft_plan_recursive import make_recursive_transpose_plan, flatten_recursive_node, FFTLeafPlan, FFTRecursiveNodePlan
+from planning.strategies.fft_plan_recursive import make_recursive_transpose_plan, FFTLeafPlan, FFTRecursiveNodePlan
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE as T
 
 REVALIDATION = "docs/cost_model_revalidation.csv"
@@ -66,7 +65,6 @@ def persistent_round_increment(spec_n: int, plan_kwargs: dict) -> tuple[int, boo
 # ---------------------------------------------------------------------
 
 def pearson(xs, ys):
-    n = len(xs)
     mx, my = mean(xs), mean(ys)
     sxx = sum((x - mx) ** 2 for x in xs)
     syy = sum((y - my) ** 2 for y in ys)

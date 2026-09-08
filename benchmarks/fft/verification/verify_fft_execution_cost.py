@@ -26,7 +26,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from planning.search.fft_cost_model import (
-    CostWeights,
     DEFAULT_COST_WEIGHTS,
     compute_stage_metrics,
     estimate_cost,

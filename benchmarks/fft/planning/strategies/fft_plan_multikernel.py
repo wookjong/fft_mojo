@@ -17,7 +17,6 @@ side of a balanced N=N_A*N_B split, where an outer `batch_count` (the
 every internal kernel's own write-seed `a`.
 """
 
-from dataclasses import dataclass
 from math import prod
 
 from planning.core.fft_plan_core import (
@@ -283,32 +282,6 @@ def _choose_side_chunks(
         tuple(factors[boundaries[k] : boundaries[k + 1]])
         for k in range(len(boundaries) - 1)
     )
-
-
-@dataclass(frozen=True)
-class MultiKernelHostPlan:
-    n: int
-    inverse: bool
-    tolerance: float
-
-
-@dataclass(frozen=True)
-class MultiKernelFFTPlan:
-    """N run as a chain of M>=1 kernels (see factor_into_kernel_chunks /
-    make_multi_kernel_plan), each itself a layouts_for_radices multi-stage
-    FFT. M=1 is exactly a single-kernel plan. M=2 no longer matches
-    make_decomposed_plan's own addressing field-for-field (that function
-    is untouched, still SPLIT/contiguous-based); this one's non-last
-    kernels use AddressMappingKind.PEELED instead, chosen so every kernel
-    after the first gets a vector (not scalar) DRAM read -- both are
-    independently numpy-verified correct, they just lay the intermediate
-    array out differently. See AddressMappingKind.PEELED.
-    """
-
-    n: int
-    inverse: bool
-    kernels: tuple[FFTCodegenPlan, ...]
-    host: MultiKernelHostPlan
 
 
 def make_multi_kernel_plan(

@@ -258,8 +258,6 @@ def check_plan_equivalence(
     "Mathematical plan-equivalence test" section. Raises AssertionError
     with a specific mismatch on failure; returns normally on success.
     """
-    from dataclasses import replace as _replace
-
     from planning.core.fft_plan_core import _build_plan, layouts_for_radices, pingpong_needed
 
     normal = _build_plan(

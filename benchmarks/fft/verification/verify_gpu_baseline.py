@@ -181,7 +181,6 @@ def verify_rocfft_factorize() -> None:
         "GetMaxRadicesSize(24): min factor count is 2 (e.g. (4,6)), +2 = 4",
     )
     # length==336's hardcoded -1 exception (tuning_kernel_tuner.cpp lines 499-500).
-    normal = rocfft.get_max_radices_size(rocfft.factorize(300), length=300)
     special = rocfft.get_max_radices_size(rocfft.factorize(336), length=336)
     min_336 = min(len(f) for f in rocfft.factorize(336))
     check(special == min_336 + 2 - 1, f"GetMaxRadicesSize(336) should be (min+2)-1={min_336 + 1}, got {special}")

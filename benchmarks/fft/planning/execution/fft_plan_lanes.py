@@ -25,7 +25,7 @@ can decide every stage's own width before codegen ever sees it.
 
 from dataclasses import replace
 
-from planning.core.fft_plan_core import FFTCodegenPlan, FFTStagePlan
+from planning.core.fft_plan_core import FFTCodegenPlan
 from planning.strategies.fft_plan_recursive import FFTLeafPlan, FFTNode, FFTRecursiveNodePlan, RecursiveFFTPlan
 
 # See codegen.fft_codegen's own former copy of this comment (moved here

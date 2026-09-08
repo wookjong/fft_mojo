@@ -132,7 +132,6 @@ PROVENANCE = BaselineProvenance(
 CLFFT_MAX_WGS = 256
 CLFFT_LDS_BYTES = 32768
 CLFFT_ELEM_BYTES = 8  # sizeof(std::complex<float>) -- this project is FP32-only
-CLFFT_LARGE1D_THRESHOLD = 4096  # floor_po2(32768 / 8) -- see GetMax1DLengthStockham
 
 # generator.stockham.cpp DetermineSizes, lines 399-417: only these primes are
 # ever considered when factoring a length; anything else trips the source's
@@ -638,7 +637,7 @@ def choose_large1d_split(length: int, threshold: int) -> tuple[int, int]:
     byte-for-byte behavior for an input clFFT itself does not handle
     correctly, not a silent improvement to the ALGORITHM'S real answers.
     """
-    if is_pow2 := (length & (length - 1)) == 0:
+    if (length & (length - 1)) == 0:
         if length <= CLFFT_BLOCK_COMPUTE_GATE_SINGLE and length in CLFFT_BLOCK_COMPUTE_TABLE_SINGLE:
             b = CLFFT_BLOCK_COMPUTE_TABLE_SINGLE[length]
             return length // b, b

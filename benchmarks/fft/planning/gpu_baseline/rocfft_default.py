@@ -823,13 +823,6 @@ def decide_scheme(length: int, *, batch: int = 1) -> SchemeDecision:
     return SchemeDecision(scheme="CS_L1D_TRTRT", div_length1=div_length1)
 
 
-def get_default_config(length: int) -> DefaultConfig | None:
-    """Back-compat direct table lookup (used by tests/tooling that only
-    care about the single-kernel case) -- `decide_scheme` is the real,
-    complete entry point `plan()` itself uses."""
-    return SBRR_TABLE.get(length)
-
-
 def plan(
     length: int,
     *,

@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planning.search.fft_cost_model import DEFAULT_COST_WEIGHTS, estimate_metrics
+from planning.search.fft_cost_model import estimate_metrics
 from planning.execution.fft_plan_persistent import num_rounds
 from planning.strategies.fft_plan_recursive import make_recursive_transpose_plan
 from planning.diagnostics.fft_unit_utilization import compute_unit_utilization

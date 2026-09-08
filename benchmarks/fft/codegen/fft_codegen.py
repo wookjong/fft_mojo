@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Pure code emission from a fully lowered FFTCodegenPlan / DecomposedFFTPlan.
+"""Pure code emission from a fully lowered FFTCodegenPlan / MultiKernelFFTPlan.
 
 No FFT planning is performed here.  In particular this module does not:
 
@@ -17,12 +17,13 @@ No FFT planning is performed here.  In particular this module does not:
 * build host reference FFT values.
 
 All of those decisions are already materialized in fft_plan_core.FFTCodegenPlan
-/ fft_plan_simple.DecomposedFFTPlan. A decomposed FFT is two ordinary
-FFTCodegenPlan kernels (see fft_plan_simple's module docstring); this module
-renders each exactly as it would a single-kernel plan, and additionally
-threads the large-twiddle table and the two kernels' DRAM hand-off through
-one combined main() -- there is no separate "transpose kernel" abstraction
-to emit.
+/ fft_plan_core.MultiKernelFFTPlan. A multi-kernel FFT is M ordinary
+FFTCodegenPlan kernels chained through DRAM (see fft_plan_multikernel's
+module docstring; M=1/M=2 are exact generalizations of the single-kernel and
+decomposed N=N0*N1 cases); this module renders each exactly as it would a
+single-kernel plan, and additionally threads the large-twiddle table and
+each kernel's DRAM hand-off through one combined main() -- there is no
+separate "transpose kernel" abstraction to emit.
 
 Two *rendering-shape* choices this module used to decide inline -- whether a
 stage's per-batch code loops or unrolls, and how a batch splits into
@@ -33,11 +34,8 @@ text emission either, so they get their own module rather than blurring
 this one's own "no planning" contract.
 """
 
-from dataclasses import dataclass
-
 from codegen.common import (
     Emitter,
-    emit_array_dump as _emit_array_dump,
     emit_large_twiddle_table_precompute as _emit_large_twiddle_table_precompute,
     emit_prelude as _emit_prelude,
     emit_reference_check as _emit_reference_check,
@@ -58,7 +56,6 @@ from planning.core.fft_plan_core import (
     AddressMappingKind,
     FFTCodegenPlan,
     FFTStagePlan,
-    LargeTwiddlePlan,
     LoadPlan,
     MultiKernelFFTPlan,
     OutputPlan,
@@ -67,11 +64,8 @@ from planning.core.fft_plan_core import (
     TwiddlePlan,
 )
 from planning.execution.fft_plan_lanes import (
-    _ALWAYS_NARROW_RADICES,
-    _RISKY_RADIX_PAIRS,
     resolve_stage_compute_lanes as _resolve_stage_compute_lanes,
 )
-from planning.strategies.fft_plan_simple import DecomposedFFTPlan
 
 
 def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
@@ -606,15 +600,6 @@ def _emit_batch(
     e.add()
 
 
-# _ALWAYS_NARROW_RADICES/_RISKY_RADIX_PAIRS (imported above) and the
-# real-hardware evidence behind each MOVED to planning.execution.fft_plan_lanes --
-# see that module's own docstring for why (compute_lanes became a
-# *planning* decision, not a codegen one) and its own copy of this
-# comment for the full N=11/13/17/N=54 evidence. Both names stay
-# importable from here too (re-exported) only because nothing in this
-# repo has swept every historical comment that still names them -- new
-# code should reference `fft_plan_lanes._ALWAYS_NARROW_RADICES` directly.
-
 
 def _stage_compute_lanes(
     *, compute_lanes: int | None, is_first: bool, is_last: bool, radix: int,
@@ -996,137 +981,19 @@ def generate_fft_kernel(
     return e.text()
 
 
-def generate_decomposed_fft_kernels(
-    plan: DecomposedFFTPlan, *, compute_lanes: int | None = None
-) -> str:
-    """Render a decomposed (N = N0*N1) plan: two NDPTask structs, chained
-    through DRAM the way two_tasks.mojo chains Scale/AddB -- launched one
-    after the other from one host main(), never through a shared
-    scratchpad. This function performs no FFT planning: which kernel owns
-    which factor, every AddressMapping, and the large-twiddle table shape
-    are already decided in `plan`. `compute_lanes`: see `_chunk_batch`;
-    `None` (the default) keeps today's output unchanged.
-    """
-    e = Emitter()
-    _emit_prelude(e)
-    e.add(f"comptime N0 = {plan.n0}")
-    e.add(f"comptime N1 = {plan.n1}")
-    e.add(f"comptime N = {plan.n}")
-    e.add()
-
-    emit_kernel(e, plan=plan.kernel0, compute_lanes=compute_lanes)
-    emit_kernel(e, plan=plan.kernel1, compute_lanes=compute_lanes)
-
-    host = plan.host
-    k0 = plan.kernel0
-    k1 = plan.kernel1
-
-    e.add("def main() raises:")
-    e.add(f"    if {k0.kernel_name}.emit_ir_if_asked():")
-    e.add("        return")
-    e.add()
-    e.add(f"    var n = {host.n}")
-    e.add("    var input_real = cxl_alloc[Float32](n)")
-    e.add("    var input_imag = cxl_alloc[Float32](n)")
-    e.add("    var mid_real = cxl_alloc[Float32](n)")
-    e.add("    var mid_imag = cxl_alloc[Float32](n)")
-    e.add("    var output_real = cxl_alloc[Float32](n)")
-    e.add("    var output_imag = cxl_alloc[Float32](n)")
-    e.add("    var ref_real = cxl_alloc[Float32](n)")
-    e.add("    var ref_imag = cxl_alloc[Float32](n)")
-    e.add()
-
-    assert plan.kernel0.large_twiddle is not None
-    lt = plan.kernel0.large_twiddle
-    e.add(f"    var large_twiddle_real = cxl_alloc[Float32](n)")
-    e.add(f"    var large_twiddle_imag = cxl_alloc[Float32](n)")
-    e.add("    var lt_pi = Float64(3.141592653589793)")
-    e.add(f"    var lt_sign = Float64({1.0 if lt.inverse else -1.0})")
-    e.add("    var r = 0")
-    e.add(f"    while r < {lt.row_count}:")
-    e.add("        var c1 = 0")
-    e.add(f"        while c1 < {lt.output_count}:")
-    e.add(
-        "            var angle = lt_sign * 2.0 * lt_pi * Float64(r) * Float64(c1) / "
-        f"Float64({lt.full_length})"
-    )
-    e.add(f"            large_twiddle_real[r * {lt.output_count} + c1] = Float32(host_cos(angle))")
-    e.add(f"            large_twiddle_imag[r * {lt.output_count} + c1] = Float32(host_sin(angle))")
-    e.add("            c1 += 1")
-    e.add("        r += 1")
-    e.add()
-
-    e.add(f"    var pool0_elems = {k0.simd_lanes * k0.total_uthreads}")
-    e.add(f"    var pool1_elems = {k1.simd_lanes * k1.total_uthreads}")
-    e.add("    var pool0 = cxl_alloc[Float32](pool0_elems)")
-    e.add("    var pool1 = cxl_alloc[Float32](pool1_elems)")
-    e.add()
-
-    e.add("    seed(0)")
-    e.add("    for i in range(n):")
-    e.add("        input_real[i] = Float32(random_float64(-1.0, 1.0))")
-    e.add("        input_imag[i] = Float32(random_float64(-1.0, 1.0))")
-    e.add("        mid_real[i] = Float32(0)")
-    e.add("        mid_imag[i] = Float32(0)")
-    e.add("        output_real[i] = Float32(0)")
-    e.add("        output_imag[i] = Float32(0)")
-    e.add("        ref_real[i] = Float32(0)")
-    e.add("        ref_imag[i] = Float32(0)")
-    e.add()
-
-    e.add(f"    var rc0 = {k0.kernel_name}.launch(")
-    e.add("        PooledRange.over(pool0, pool0_elems),")
-    e.add(
-        f"        {k0.kernel_name}Params(input_real, input_imag, mid_real, mid_imag, "
-        "large_twiddle_real, large_twiddle_imag),"
-    )
-    e.add("    )")
-    e.add("    if rc0 != 0:")
-    e.add('        print("[host] FFT kernel0 failed, exit", rc0)')
-    e.add("        return")
-    e.add()
-
-    e.add(f"    var rc1 = {k1.kernel_name}.launch(")
-    e.add("        PooledRange.over(pool1, pool1_elems),")
-    e.add(
-        f"        {k1.kernel_name}Params(mid_real, mid_imag, output_real, output_imag),"
-    )
-    e.add("    )")
-    e.add("    if rc1 != 0:")
-    e.add('        print("[host] FFT kernel1 failed, exit", rc1)')
-    e.add("        return")
-    e.add()
-
-    _emit_reference_check(
-        e,
-        n=plan.n,
-        batch_count=1,
-        inverse=plan.inverse,
-        input_real="input_real",
-        input_imag="input_imag",
-        output_real="output_real",
-        output_imag="output_imag",
-        ref_real="ref_real",
-        ref_imag="ref_imag",
-        tolerance=host.tolerance,
-        label="decomposed FFT",
-    )
-
-    return e.text()
-
-
 def generate_multi_kernel_fft_kernels(
     plan: MultiKernelFFTPlan, *, compute_lanes: int | None = None
 ) -> str:
     """Render an M-kernel chained plan (see fft_plan_multikernel.make_multi_kernel_plan):
     M NDPTask structs, chained through DRAM one launch after another from
     one host main(), each non-last kernel's own large-twiddle table
-    precomputed alongside it. Generalizes generate_decomposed_fft_kernels
-    (exactly M=2, one bare radix per kernel) to any M>=1 and to each
-    kernel's own layouts_for_radices multi-stage structure. This function
-    performs no FFT planning: every AddressMapping and LargeTwiddlePlan is
-    already decided in `plan`. `compute_lanes`: see `_chunk_batch`; `None`
-    (the default) keeps today's output unchanged.
+    precomputed alongside it. M=2 (one bare radix per kernel) is exactly
+    the old decomposed N=N0*N1 case (see fft_plan_simple's own module
+    docstring); this generalizes it to any M>=1 and to each kernel's own
+    layouts_for_radices multi-stage structure. This function performs no
+    FFT planning: every AddressMapping and LargeTwiddlePlan is already
+    decided in `plan`. `compute_lanes`: see `_chunk_batch`; `None` (the
+    default) keeps today's output unchanged.
     """
     e = Emitter()
     _emit_prelude(e)

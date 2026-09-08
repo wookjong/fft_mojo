@@ -35,7 +35,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from planning.gpu_baseline import clfft, rocfft_default, vkfft
-from planning.gpu_baseline.common import BaselineStatus
 
 _FAILURES: list[str] = []
 

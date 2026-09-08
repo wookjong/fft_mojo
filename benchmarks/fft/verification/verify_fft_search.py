@@ -29,7 +29,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from planning.core.fft_plan_core import FFTCodegenPlan
 from planning.strategies.fft_plan_recursive import _recursive_split_candidates, flatten_recursive_node, make_recursive_transpose_plan
 from planning.search.fft_plan_search import (
-    FFTPlanCandidate,
     PlanChoices,
     _leaf_kernels_in_order,
     _plan_signature,

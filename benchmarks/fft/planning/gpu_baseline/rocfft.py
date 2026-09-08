@@ -51,7 +51,7 @@ planning.search.fft_cost_model.estimate_cost.
 """
 
 import itertools
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from typing import Callable
 
 from planning.core.fft_plan_core import FFTCodegenPlan
@@ -138,11 +138,6 @@ assert set(SUPPORTED_FACTORS) <= SUPPORTED_RADICES, (
 # ---------------------------------------------------------------------------
 MIN_WGS = 64
 MAX_WGS = 512
-
-
-class RocfftUnsupportedLengthError(Exception):
-    """Raised when `length` has no factorization at all into
-    `SUPPORTED_FACTORS` (rocFFT's own "Prime number" case)."""
 
 
 # ---------------------------------------------------------------------------
