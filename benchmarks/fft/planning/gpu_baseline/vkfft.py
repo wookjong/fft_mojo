@@ -69,11 +69,14 @@ section's own docstring, not silently dropped): a divisibility-fix loop
 and a power-of-2 bank-conflict axis-swap, both keyed on a "total
 remaining sequence count" this baseline's per-leaf model does not track
 the same way VkFFT's own whole-FFTPlan model does. The register input
-(`min_registers_per_thread`) is EXACT for power-of-2 lengths (reusing
-this module's own already-exact pow2 stage-grouping scheduler) and a
-documented proxy (`min(radices)`) for non-power-of-2 lengths, since the
-real source's full register table was not exhaustively extracted for
-every 2/3/5/7-multiplier combination.
+(`min_registers_per_thread`) is EXACT for both power-of-2 lengths
+(`min_registers_per_thread_pow2`, reusing this module's own already-exact
+pow2 stage-grouping scheduler) and every other length this baseline's own
+direct-radix vocabulary can produce, since the 2026-09-09 source-fidelity
+re-audit ported `VkFFTGetRegistersPerThreadQuad`'s complete base `{2,3,5,
+7}` table (`registers_per_thread_base_table`) -- replacing an earlier
+`min(radices)` proxy that was reachable from a `BaselineStatus.OK` result
+and is no longer used anywhere.
 
 `registerBoost`/`registerBoost4Step` (deliberately using MORE registers
 than the arithmetic minimum to emulate more shared memory -- Structs.h's
@@ -137,7 +140,8 @@ PROVENANCE = BaselineProvenance(
     ),
     baseline_version="gpu-baseline-v1",
     source_functions={
-        "registers_per_thread_for": "vkFFT_Scheduler.h: VkFFTGetRegistersPerThread (2,3,5,7-all-present branch only)",
+        "registers_per_thread_for": "vkFFT_Scheduler.h: VkFFTGetRegistersPerThread (full classification)",
+        "registers_per_thread_base_table": "vkFFT_Scheduler.h: VkFFTGetRegistersPerThreadQuad, base {2,3,5,7} table (lines 32-283)",
         "choose_pow2_grouping_radix": "vkFFT_Scheduler.h: the pow2 stage/radix grouping scheduler (active_threads_y/x, final_loc_multipliers_pow2)",
         "choose_num_passes": "vkFFT_Scheduler.h: the numPasses estimate (reorderFourStep=True default branch)",
         "split_pow2_2pass/_3pass": "vkFFT_Scheduler.h: pow2 axis-split branches (maxPow8SharedMemory preference)",
@@ -158,14 +162,20 @@ VKFFT_ACTIVE_THREADS_X_FLOOR = 128  # vkFFT_Scheduler.h: `active_threads_x >= 12
 VKFFT_MIN_SPLIT_DIM = 64  # `if (locAxisSplit[1] < 64) locAxisSplit[1] = 64`
 
 # Direct-radix-kernel vocabulary this baseline attempts for the non-power-
-# of-2 leaf case -- see module docstring's KNOWN FIDELITY GAP: the real
-# source's full registers_per_thread_per_radix table (covering derived
-# composites up to 17) was not exhaustively extracted, so this baseline
-# uses a conservative, explicitly-scoped subset overlapping both the
-# register table's explicitly-quoted prime coverage {2,3,5,7} and
-# M2NDP's own SUPPORTED_RADICES -- anything needing a larger prime factor
-# is treated as needing Rader/Bluestein (UNSUPPORTED_GPU_ALGORITHM), matching
-# VkFFT's own real `tempSequence != 1` boundary.
+# of-2 leaf case: every composite of the register table's own {2,3,5,7}
+# prime coverage that is also in M2NDP's own SUPPORTED_RADICES. This is
+# still a real, documented SCOPE LIMIT (not the register-table gap, which
+# is now fully ported -- see registers_per_thread_base_table): real VkFFT
+# can also plan radices 11, 13, 17 directly, and this baseline cannot
+# (11/13/17 are outside the {2,3,5,7} register table this function's own
+# min_registers_per_thread_for now ports exactly, and this baseline's
+# direct_radix_sequence's own greedy scan is not a faithful port of the
+# real scheduler's own decision between direct-radix/Rader/Bluestein for
+# such residuals -- see task section 5B, not yet addressed). Anything
+# needing a larger prime factor than this vocabulary covers is reported
+# UNSUPPORTED_GPU_ALGORITHM, matching VkFFT's own real `tempSequence != 1`
+# boundary in spirit, though not (yet) its own real Rader-vs-Bluestein
+# selection logic.
 _DIRECT_RADIX_ORDER = (10, 9, 8, 7, 6, 5, 4, 3, 2)
 assert set(_DIRECT_RADIX_ORDER) <= SUPPORTED_RADICES
 
@@ -186,37 +196,122 @@ class VkfftUnsupportedError(Exception):
 # baseline toward VkFFT's own Bluestein padded-length search later.
 # ---------------------------------------------------------------------------
 
-# The real table (vkFFT_Scheduler.h lines ~25-297) is a large nested-if
-# cascade keyed on how many factors of 2/3/5/7 a sequence has; the research
-# pass fully quoted only the all-four-present branch as a worked example.
-# This baseline ports that one confirmed branch faithfully and documents
-# the rest as unimplemented (not guessed) -- `registers_per_thread_for`
-# raises if asked about a combination outside it.
-_REGISTERS_PER_THREAD_2357: dict[int, int] = {2: 6, 3: 6, 5: 5, 7: 7}
+# The real table (vkFFT_Scheduler.h lines 32-283 at the pinned commit
+# 066a17c17068c0f11c9298d848c2976c71fad1c1) is a nested-if cascade keyed
+# on PRESENCE of factors of 2/3/5/7 (plus, in two branches, the actual
+# COUNT of factor-2's: 1, 2, or >=3) -- fetched and read in full during
+# the 2026-09-09 source-fidelity re-audit (an earlier version of this
+# module only ported the all-four-present branch, a single worked example
+# quoted in the original research report, and fell back to a `min(radices)`
+# proxy for every other combination on the M2NDP-mapping path -- a proxy
+# reachable from a BaselineStatus.OK result, which is no longer acceptable
+# once the real table is available). `registers_per_thread_base_table`
+# below ports every branch literally.
+#
+# The real source also derives composite-radix entries (registers_per_
+# thread_per_radix[4,6,8,9,10,12,14,15,16,32], lines 285-297) from these
+# four base values. They are deliberately NOT reproduced here: every one
+# is provably either 0 or EXACTLY EQUAL to one of the four base entries
+# (each derivation is a plain `min(a, b)` of two base entries, or a
+# modulus-gated copy of a single base entry -- never a genuinely new
+# value) -- so including or excluding them cannot change the min/max this
+# module's own callers compute. Concretely: `r[4]=r[8]=r[16]=r[32]` are
+# each either 0 or exactly `r[2]`; `r[6]=min(r[2],r[3])`; `r[9]` is 0 or
+# exactly `r[3]`; `r[10]=min(r[2],r[5])`; `r[12]` (when its own >=12 gate
+# passes) equals `r[6]`; `r[14]=min(r[2],r[7])`; `r[15]=min(r[3],r[5])`.
+def registers_per_thread_base_table(
+    count2: int, count3: int, count5: int, count7: int,
+) -> dict[int, int]:
+    """`VkFFTGetRegistersPerThreadQuad`'s own base `{2,3,5,7}` register
+    table, ported literally in full (see module comment above for why the
+    derived composite entries are provably redundant and omitted).
+    `count2`/`count3`/`count5`/`count7`: how many times each prime factor
+    appears across this sequence's own radix stages (`loc_multipliers[p]`
+    in the real source) -- only presence (`> 0`) matters, EXCEPT in the
+    two branches noted below, which switch on the actual count of 2's.
+
+    Returns `{2: ..., 3: ..., 5: ..., 7: ...}` (0 where the real table
+    leaves that entry unset for this exact combination). Does NOT handle
+    the pure-power-of-two case (only 2 present) -- that has its own exact
+    scheduler-search formula, already ported as
+    `min_registers_per_thread_pow2`/`choose_pow2_grouping_radix`; nor the
+    "none of 2/3/5/7 present" Rader-only case (`min_registers_per_thread`
+    hardcoded to 2 in the real source) -- this baseline never reaches
+    either through this function, since its own direct-radix vocabulary
+    (`_DIRECT_RADIX_ORDER`) always contributes at least one prime factor
+    of 2, 3, 5, or 7 alongside at least one other prime when this function
+    is actually called (see `min_registers_per_thread_for`'s own dispatch).
+    """
+    has2, has3, has5, has7 = count2 > 0, count3 > 0, count5 > 0, count7 > 0
+    r = {2: 0, 3: 0, 5: 0, 7: 0}
+    if has2:
+        if has3:
+            if has5:
+                if has7:
+                    r[2], r[3], r[5], r[7] = 6, 6, 5, 7
+                else:
+                    r[2], r[3], r[5] = 6, 6, 5
+            elif has7:
+                if count2 in (1, 2):
+                    r[2], r[3], r[7] = 6, 6, 7
+                else:
+                    r[2], r[3], r[7] = 8, 6, 7
+            else:
+                r[2], r[3] = 6, 6
+        elif has5:
+            if has7:
+                r[2], r[5], r[7] = (6, 5, 7) if count2 == 1 else (8, 5, 7)
+            else:
+                r[2], r[5] = 4, 5
+        elif has7:
+            r[2], r[7] = 8, 7
+        else:
+            raise ValueError(
+                "registers_per_thread_base_table: pure power-of-2 (only factor "
+                "2 present) is handled by min_registers_per_thread_pow2 instead"
+            )
+    else:
+        if has3:
+            if has5:
+                if has7:
+                    r[3], r[5], r[7] = 6, 5, 7
+                else:
+                    r[3], r[5] = 3, 5
+            elif has7:
+                r[3], r[7] = 6, 7
+            else:
+                r[3] = 3 if count3 == 1 else 9
+        elif has5:
+            r[5], r[7] = (5, 7) if has7 else (5, 0)
+        elif has7:
+            r[7] = 7
+        else:
+            raise ValueError(
+                "registers_per_thread_base_table: no factor of 2/3/5/7 present "
+                "at all is a Rader-only sequence in the real source "
+                "(min_registers_per_thread fixed at 2) -- this baseline's own "
+                "direct-radix vocabulary never produces one"
+            )
+    return r
 
 
 def registers_per_thread_for(loc_multipliers: dict[int, int]) -> tuple[int, int, bool]:
     """`VkFFTGetRegistersPerThread`'s own classification (vkFFT_Scheduler.h
-    lines 299-304, verbatim): scans a per-radix register-requirement table
-    for the min and max non-zero entries, then `isGoodSequence = not
+    lines 299-304, verbatim): scans the per-radix register-requirement
+    table for the min and max non-zero entries, then `isGoodSequence = not
     (registers_per_thread > 16 or registers_per_thread >= 2 *
-    min_registers_per_thread)`.
-
-    Only the branch where factors of 2, 3, 5, AND 7 are all present is
-    implemented here (the one branch the research pass fully quoted from
-    source -- see module comment above); raises `NotImplementedError` for
-    any other combination rather than guessing at un-quoted table entries.
-    """
-    if not (loc_multipliers.get(2, 0) and loc_multipliers.get(3, 0)
-            and loc_multipliers.get(5, 0) and loc_multipliers.get(7, 0)):
-        raise NotImplementedError(
-            "registers_per_thread_for only ports the 2&3&5&7-all-present "
-            "branch of VkFFTGetRegistersPerThread's real table -- see this "
-            "module's own docstring for why the rest was not guessed"
-        )
-    table = _REGISTERS_PER_THREAD_2357
-    min_r = min(table.values())
-    max_r = max(table.values())
+    min_registers_per_thread)`. `loc_multipliers`: `{prime: count}` for
+    whichever of 2/3/5/7 appear (a pure power-of-2 sequence, or one with
+    no factor of 2/3/5/7 at all, must go through
+    `min_registers_per_thread_pow2` / the real source's own Rader-only
+    fixed value instead -- see `registers_per_thread_base_table`'s own
+    docstring)."""
+    table = registers_per_thread_base_table(
+        loc_multipliers.get(2, 0), loc_multipliers.get(3, 0),
+        loc_multipliers.get(5, 0), loc_multipliers.get(7, 0),
+    )
+    nonzero = [v for v in table.values() if v != 0]
+    min_r, max_r = min(nonzero), max(nonzero)
     is_good = not (max_r > 16 or max_r >= 2 * min_r)
     return max_r, min_r, is_good
 
@@ -601,21 +696,36 @@ def min_registers_per_thread_pow2(fft_length: int, max_rhs: int) -> int:
     return grouping_radix if total_bits > group_bits else fft_length
 
 
+def _prime_multiplicities(radices: tuple[int, ...]) -> dict[int, int]:
+    """`loc_multipliers[p]` -- how many times each prime factor of 2, 3, 5,
+    or 7 appears across every radix stage in `radices` (this baseline's
+    own direct-radix vocabulary, `_DIRECT_RADIX_ORDER = {2,3,4,5,6,7,8,9,
+    10}`, is exactly the set of composites of these four primes it ever
+    plans, so no other prime can appear here)."""
+    counts = {2: 0, 3: 0, 5: 0, 7: 0}
+    factor_map = {2: {2: 1}, 3: {3: 1}, 4: {2: 2}, 5: {5: 1}, 6: {2: 1, 3: 1},
+                  7: {7: 1}, 8: {2: 3}, 9: {3: 2}, 10: {2: 1, 5: 1}}
+    for radix in radices:
+        for prime, count in factor_map[radix].items():
+            counts[prime] += count
+    return counts
+
+
 def min_registers_per_thread_for(length: int, radices: tuple[int, ...], max_rhs: int) -> int:
     """`min_registers_per_thread`, VkFFT's own per-leaf register-count
     input to `axisblock_threads_per_transform` below. Exact for pure
-    power-of-2 (`min_registers_per_thread_pow2`, reusing this module's
-    own already-exact pow2 stage-grouping scheduler). For non-power-of-2:
-    a documented, explicitly-flagged proxy (`min(radices)`) -- the real
-    source's full `registers_per_thread_per_radix` table covering every
-    2/3/5/7-multiplier combination was not exhaustively extracted (see
-    this module's own earlier KNOWN FIDELITY GAP note); VkFFT's own table
-    generally scales register need with radix value, so the smallest
-    radix actually used is a reasonable, bounded proxy, never claimed
-    exact for this branch."""
+    power-of-2 (`min_registers_per_thread_pow2`, reusing this module's own
+    already-exact pow2 stage-grouping scheduler) and, since the 2026-09-09
+    source-fidelity re-audit, exact for every other combination too: the
+    full base `{2,3,5,7}` register table (`registers_per_thread_base_
+    table`) is now ported literally (replacing the earlier `min(radices)`
+    proxy, which sat on a path this baseline can return
+    `BaselineStatus.OK` from and was never acceptable there)."""
     if length & (length - 1) == 0:
         return min_registers_per_thread_pow2(length, max_rhs)
-    return min(radices)
+    counts = _prime_multiplicities(radices)
+    table = registers_per_thread_base_table(counts[2], counts[3], counts[5], counts[7])
+    return min(v for v in table.values() if v != 0)
 
 
 def axisblock_threads_per_transform(fft_dim: int, min_registers_per_thread: int) -> int:

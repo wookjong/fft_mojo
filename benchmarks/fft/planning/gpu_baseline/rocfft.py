@@ -8,13 +8,40 @@ rocFFT` repo is deprecated), fetched and read directly (not recalled from
 memory) at commit `bee97df517907c771de17189cb867d3c401285ae` of the
 `develop` branch. Every table entry, formula, and threshold below carries
 a citation into that source. See `docs/gpu_baseline_rocfft_research.md`
-(a copy of the research report this module was built from) for the full
-verification trail, including two confirmed comment-vs-code discrepancies
-in the real source (reported here, never silently "corrected" to match
-the comment instead of the executable code -- section 8 of the task this
-package was built from is explicit that the source comment and
-implementation for "largest 33% TPT" are inconsistent, and instructs
-treating the executable source as authoritative):
+(a copy of the research report this module was built from) for the
+original verification trail, and the 2026-09-09 source-fidelity re-audit
+(re-fetched `tuning_kernel_tuner.cpp` directly at the pinned commit and
+diffed it line-by-line against this module) that found and fixed two
+real control-flow gaps the original research-report-driven port had
+introduced by reconstructing `SupportedKernelConfigs` from its own
+documented bullet points instead of the literal source:
+
+* The min/max-WGS-bucket sweep is missing a `tpt < wgs` guard
+  (tuning_kernel_tuner.cpp line 552): a given `tpt` only ever participates
+  at buckets strictly larger than itself. The original port instead swept
+  the *full* `[min_wgs, max_wgs]` range unconditionally for every `tpt`,
+  and additionally started that sweep at a raw, un-rounded
+  `min(length, MIN_WGS)` floor -- the real source rounds that floor DOWN
+  to a 64-multiple afterward (`min_wgs = (min_wgs % 64 == 0) ? min_wgs :
+  max(0, min_wgs - (min_wgs % 64))`), which for e.g. length=8 lowers the
+  floor to 0, not 8. Both are now ported literally
+  (`_supported_kernel_configs`'s own docstring has the full derivation).
+* The three pruning passes (tpt==length + bad TPB values; bad-utilization
+  TPTs; phase-0's "largest half of TPTs") are scoped, in the real source,
+  to the ENTIRE set of factorizations/orderings passed into one
+  `SupportedKernelConfigs` call -- i.e. to a whole phase, not to one
+  ordering at a time. The original port ran `_configs_for_ordering` (now
+  `_supported_kernel_configs`) once per ordering with its own local
+  pruning state, which silently narrows every pruning decision to a
+  one-ordering-wide view. Phase 0/1 now each make exactly one call over
+  every ordering they consider, matching the real per-node call scope.
+
+Two confirmed comment-vs-code discrepancies in the real source are also
+reported here, never silently "corrected" to match the comment instead of
+the executable code (section 8 of the original baseline-freeze task is
+explicit that the source comment and implementation for "largest 33%
+TPT" are inconsistent, and instructs treating the executable source as
+authoritative):
 
 * The "remove the largest 33% tpt" comment (tuning_kernel_tuner.cpp) is
   computed as `num_tpts_to_remove = (n-1)//2`, which is 33% only at n=3
@@ -98,7 +125,7 @@ PROVENANCE = BaselineProvenance(
         "is_bad_utilization": "tuning_kernel_tuner.cpp: GetUtilizationRate + SupportedKernelConfigs's own rejection site",
         "derive_max_tpb": "tuning_kernel_tuner.cpp: DeriveMaxTPB",
         "conservative_max_tpb": "tuning_kernel_tuner.cpp: ConservativeMaxTPB",
-        "_configs_for_ordering": "tuning_kernel_tuner.cpp: SupportedKernelConfigs",
+        "_supported_kernel_configs": "tuning_kernel_tuner.cpp: SupportedKernelConfigs",
         "get_all_factorizations_for_phase1": "tuning_kernel_tuner.cpp: GetAllFactorizationsForPhase1",
         "propagate_best_factors_to_next_phase": "tuning_helper.cpp: TuningBenchmarker::PropagateBestFactorsToNextPhase",
         "tune": "rocfft_offline_tuner.cpp: offline_tune_problems + tuning_helper.cpp: FindWinnerForCurrNode",
@@ -343,105 +370,155 @@ class KernelConfig:
     use_3steps_large_twd: bool = False
 
 
-def _configs_for_ordering(
-    length: int, factors: tuple[int, ...], *, is_phase0: bool,
+def _supported_kernel_configs(
+    length: int, factorizations: list[tuple[int, ...]], *, is_phase0: bool,
 ) -> list[KernelConfig]:
-    """One ordering's worth of `KernelConfig`s -- `SupportedKernelConfigs`'s
-    body for a single already-decided `factors` sequence: TPT candidates
-    (power set), utilization-rate pruning, then for each surviving TPT a
-    workgroup-size-bucket sweep deriving TPB (section 8's items a-e; the
-    exact wgs-bucket loop is reconstructed from the research report's own
-    documented bullet points -- max_tpb via DeriveMaxTPB, reject if it
-    exceeds ConservativeMaxTPB, try at most `max_tpb` and `max_tpb+1`,
-    accept only if the resulting `final_wgs` lands within the current
-    64-wide bucket, respects `length>=64 => final_wgs>=64`, and a
-    power-of-2 length requires `length % final_wgs == 0`).
+    """Literal port of `SupportedKernelConfigs` (tuning_kernel_tuner.cpp
+    lines 459-757), verified directly against the pinned commit's real
+    source (not reconstructed from comments/research-doc summaries), fixed
+    to this baseline's own scope: `is_single=True`, `is_sbcc=is_sbrc=
+    is_sbcr=False`, `large1D=0` (SBRR single leaf-kernel only -- see module
+    SCOPE LIMIT). Consequences of that fixed scope, confirmed from source:
+    `has_ltwd_mul = is_sbcc and (large1D>0)` is always False, so the real
+    `use_ltwd_3steps in {True, False}` loop only ever survives at `False`;
+    `can_do_intrinsic = is_sbcc or is_sbcr` is always False, so the real
+    `intrinsic in {True, False}` loop only ever survives at `False`; the
+    real `direct_to_from_reg in {True /*, False*/}` loop only ever tries
+    `True` (commented out in the real source itself). None of these three
+    ever produce a second distinct candidate in this baseline's scope, so
+    they are not modeled as loops here -- every `KernelConfig` this
+    function builds carries their fixed values via the dataclass defaults.
 
-    `is_phase0`: gates the radix-count cap (`get_max_radices_size`, only
-    applied in phase 0 -- see that function's own docstring) and the
-    "largest ~half of distinct TPTs" pruning (section 8d, phase-0 only).
+    `factorizations`: EVERY ordering to search in ONE call -- phase 0 passes
+    every un-permuted factorization of `length` (`Factorize`); phase 1
+    passes the UNION of every permutation/shift-fallback ordering across
+    every one of the (up to 3) propagated best factor families. This is
+    not a per-ordering convenience grouping: the real source's own
+    `tpbs_to_remove`/`tpts_with_bad_util_rate`/`all_tpts` bookkeeping, and
+    the pruning that consumes it (below), are scoped to the WHOLE
+    `factorizations` set passed into one `SupportedKernelConfigs` call --
+    e.g. one ordering's own bad-utilization TPT can suppress a config built
+    from a DIFFERENT ordering that happens to reuse the same TPT value.
+    Splitting this per-ordering (as an earlier version of this port did)
+    silently narrows every pruning step to a one-ordering-wide view and is
+    NOT source-equivalent.
+
+    `is_phase0`: gates the per-factorization radix-count cap
+    (`max_radices_size`, only checked in phase 0) and the final "largest
+    half of TPTs" global pruning step (phase-0 only in the real source).
+    The real source's own permutation `do`/`while(no_permutation == false
+    && next_permutation(...))` loop is unconditionally skipped in both
+    phases (`no_permutation` is `is_phase0` in phase 0, forced `True` again
+    for phase 1 at the top of the `is_phase0 == false` branch) -- so the
+    real source, too, only ever processes each `factorizations` entry
+    exactly once here; permutation happens entirely in the caller
+    (`Factorize`/`GetAllFactorizationsForPhase1`), never inside this
+    function, matching this port's own single pass per entry.
     """
-    if is_phase0:
-        all_factors = factorize(length)
-        max_radices = get_max_radices_size(all_factors, length=length)
-        if len(factors) > max_radices:
-            return []
+    max_radices_size = get_max_radices_size(factorize(length), length=length)
+    conservative_tpb = conservative_max_tpb(length)
 
-    tpts = supported_threads_per_transform(factors)
-    bad = {tpt for tpt in tpts if is_bad_utilization(length, factors, tpt)}
-    if bad and len(tpts) > len(bad):
-        tpts = [t for t in tpts if t not in bad]
+    tpbs_to_remove: set[int] = set()
+    tpts_with_bad_util_rate: set[int] = set()
+    all_tpts: set[int] = set()
 
-    if is_phase0 and len(tpts) > 0:
-        num_to_remove = (len(tpts) - 1) // 2
-        if num_to_remove > 0:
-            sorted_tpts = sorted(tpts)
-            keep = set(sorted_tpts[: len(sorted_tpts) - num_to_remove])
-            tpts = [t for t in tpts if t in keep]
+    # min/max WGS normalization -- tuning_kernel_tuner.cpp lines 484-492,
+    # ported literally (including the length-based floor AND its own
+    # separate round-DOWN-to-a-64-multiple step, confirmed from source: an
+    # earlier version of this port only had the floor, which is why N=8/
+    # N=16 produced zero candidates -- the real code's rounded floor for
+    # N=8 is 0, not 8).
+    min_wgs = length if length < MIN_WGS else MIN_WGS
+    min_wgs = min_wgs if min_wgs % 64 == 0 else max(0, min_wgs - (min_wgs % 64))
+    max_wgs = MAX_WGS if MAX_WGS % 64 == 0 else MAX_WGS - (MAX_WGS % 64)
 
     configs: list[KernelConfig] = []
-    tpb_to_remove: set[int] = set()
-    tpt_is_length: set[int] = set()
 
-    # FIDELITY FIX (found during the Phase-1-through-6 baseline audit,
-    # 2026-09-08): the first version of this loop always started the
-    # wgs-bucket sweep at the fixed MIN_WGS=64 -- this produced ZERO
-    # surviving candidates for short power-of-two lengths (8, 16), which
-    # was originally (wrongly) reported as evidence that real rocFFT must
-    # route such lengths through a separate hand-written kernel path. A
-    # dedicated source re-check (docs/gpu_baseline_rocfft_default_research
-    # .md) found real rocFFT's own tuner (tuning_kernel_tuner.cpp:490-491)
-    # actually LOWERS min_wgs for a length smaller than it: `min_wgs =
-    # (length < min_wgs) ? length : min_wgs`. The exact 64-rounding order
-    # around that line was not pinned down by that research pass, so this
-    # is a best-effort, explicitly-flagged reconstruction of the
-    # confirmed DIRECTION (the floor shrinks for short lengths), not a
-    # byte-for-byte port of an unseen exact formula.
-    effective_min_wgs = length if length < MIN_WGS else MIN_WGS
-    for tpt in tpts:
-        if tpt == length:
-            tpt_is_length.add(tpt)
-        for half_lds in (False, True):
-            for wgs_bucket in range(effective_min_wgs, MAX_WGS + 1, 64):
-                max_tpb = derive_max_tpb(length, half_lds=half_lds, tpt=tpt, wgs_bound=wgs_bucket)
-                if max_tpb < 1:
+    for factorization in factorizations:
+        if is_phase0 and len(factorization) > max_radices_size:
+            continue
+
+        tpts = supported_threads_per_transform(factorization)
+
+        for tpt in tpts:
+            if is_bad_utilization(length, factorization, tpt):
+                tpts_with_bad_util_rate.add(tpt)
+
+        wgs = min_wgs
+        while wgs <= max_wgs:
+            for tpt in tpts:
+                # tuning_kernel_tuner.cpp line 552: `if(tpt < wgs)` -- a
+                # given tpt only ever participates at wgs buckets strictly
+                # larger than itself; NOT an optional optimization (an
+                # earlier version of this port omitted this and instead
+                # tried every tpt at every bucket unconditionally, which is
+                # not what the real source does).
+                if not (tpt < wgs):
                     continue
-                if max_tpb > conservative_max_tpb(length):
-                    continue
-                num_tpb_try = 1 if tpt * max_tpb == wgs_bucket else 2
-                for delta in range(num_tpb_try):
-                    tpb = max_tpb + delta
-                    if tpb < 1:
-                        continue
-                    final_wgs = tpt * tpb
-                    if final_wgs <= wgs_bucket - 64:
-                        continue
-                    if final_wgs > MAX_WGS:
-                        continue
-                    if length >= 64 and final_wgs < 64:
-                        continue
-                    if _is_po2(length) and length % final_wgs != 0:
-                        continue
+                for half_lds in (True, False):
+                    max_tpb = derive_max_tpb(length, half_lds=half_lds, tpt=tpt, wgs_bound=wgs)
                     if tpt == length:
-                        tpb_to_remove.add(tpb)
-                    configs.append(
-                        KernelConfig(
-                            factors=factors, threads_per_transform=tpt,
-                            transforms_per_block=tpb, workgroup_size=final_wgs,
-                            half_lds=half_lds,
+                        tpbs_to_remove.add(max_tpb)
+                    num_tpb_try = 1 if tpt * max_tpb == wgs else 2
+                    for delta in range(num_tpb_try):
+                        tpb = max_tpb + delta
+                        final_wgs = tpt * tpb
+                        if final_wgs > max_wgs:
+                            continue
+                        if final_wgs <= wgs - 64:
+                            continue
+                        if tpb > conservative_tpb:
+                            continue
+                        if length >= 64 and final_wgs < 64:
+                            continue
+                        if _is_po2(length) and length % final_wgs != 0:
+                            continue
+                        all_tpts.add(tpt)
+                        configs.append(
+                            KernelConfig(
+                                factors=factorization, threads_per_transform=tpt,
+                                transforms_per_block=tpb, workgroup_size=final_wgs,
+                                half_lds=half_lds,
+                            )
                         )
-                    )
+            wgs += 64
 
-    # Section 8b: if there is at least one TPT choice besides tpt==length,
-    # drop every tpt==length config AND every config elsewhere that shares
-    # one of those "bad" TPB values.
-    if tpt_is_length and len(tpts) >= 2 and tpb_to_remove:
+    # Global post-generation pruning -- tuning_kernel_tuner.cpp lines
+    # 675-754, in the exact order the real source applies them (each step
+    # consumes `all_tpts` as left by the previous one).
+
+    # (1) if there is at least one TPT choice besides tpt==length, drop
+    # every tpt==length config AND every config elsewhere that shares one
+    # of those "bad" TPB values -- checked against the ORIGINAL all_tpts
+    # (before this step's own removals).
+    if len(all_tpts) >= 2 and tpbs_to_remove:
         configs = [
             c for c in configs
-            if c.threads_per_transform != length and c.transforms_per_block not in tpb_to_remove
+            if c.threads_per_transform != length and c.transforms_per_block not in tpbs_to_remove
         ]
+        all_tpts.discard(length)
 
-    return configs
+    # (2) drop bad-utilization TPTs, but only if doing so would not empty
+    # every TPT choice.
+    if len(all_tpts) > len(tpts_with_bad_util_rate):
+        configs = [c for c in configs if c.threads_per_transform not in tpts_with_bad_util_rate]
+        all_tpts -= tpts_with_bad_util_rate
+
+    # (3) phase-0 only: drop the largest `(len(all_tpts)-1)//2` TPTs (the
+    # real comment says "largest 33%"; the real code computes this -- see
+    # module docstring's own note on the comment/code discrepancy).
+    if all_tpts and is_phase0:
+        num_to_remove = (len(all_tpts) - 1) // 2
+        if num_to_remove > 0:
+            sorted_tpts = sorted(all_tpts)
+            to_remove = set(sorted_tpts[len(sorted_tpts) - num_to_remove :])
+            configs = [c for c in configs if c.threads_per_transform not in to_remove]
+
+    # The real source stores configs in a std::set (deduped, sorted); dedupe
+    # here too (order doesn't matter downstream -- every candidate is
+    # independently mapped/benchmarked) so a repeated combination is never
+    # benchmarked twice.
+    return list(dict.fromkeys(configs))
 
 
 # ---------------------------------------------------------------------------
@@ -450,13 +527,11 @@ def _configs_for_ordering(
 
 
 def phase0_candidates(length: int) -> list[KernelConfig]:
-    """Phase 0: every un-permuted (ascending, as `factorize` returns it)
-    factorization of `length`, each producing its own `_configs_for_
-    ordering` candidates."""
-    configs: list[KernelConfig] = []
-    for factors in sorted(factorize(length)):
-        configs.extend(_configs_for_ordering(length, factors, is_phase0=True))
-    return configs
+    """Phase 0: one `_supported_kernel_configs` call over every un-permuted
+    (ascending, as `factorize` returns it) factorization of `length` --
+    matching the real source's own single `SupportedKernelConfigs` call
+    per node in phase 0 (`factorizations = Factorize(length)` there)."""
+    return _supported_kernel_configs(length, sorted(factorize(length)), is_phase0=True)
 
 
 def get_all_factorizations_for_phase1(good_factors: tuple[int, ...]) -> list[tuple[int, ...]]:
@@ -509,16 +584,20 @@ def propagate_best_factors_to_next_phase(
 
 
 def phase1_candidates(good_factor_families: list[tuple[int, ...]], length: int) -> list[KernelConfig]:
-    """Phase 1: for each of the (up to 3) best un-ordered factorizations
-    propagated from phase 0, every permutation `get_all_factorizations_
-    for_phase1` returns, each producing its own `_configs_for_ordering`
-    candidates (`is_phase0=False` -- no radix-count cap, no "largest half"
-    pruning, matching the real source's own `no_permutation` gating)."""
-    configs: list[KernelConfig] = []
+    """Phase 1: one `_supported_kernel_configs` call over the UNION of every
+    permutation/shift-fallback ordering across every one of the (up to 3)
+    propagated best factor families -- matching the real source's own
+    `GetAllFactorizationsForPhase1(target_factors)` being handed the WHOLE
+    per-node target-factors set at once (`target_factors_strs[node_id]`,
+    a set of up to 3 families) and `SupportedKernelConfigs` being called
+    ONCE on that combined result, not once per family. `is_phase0=False`:
+    no radix-count cap, no "largest half" pruning, matching the real
+    source's own `is_phase0` gating."""
+    all_orderings: dict[tuple[int, ...], None] = {}
     for family in good_factor_families:
         for ordering in get_all_factorizations_for_phase1(family):
-            configs.extend(_configs_for_ordering(length, ordering, is_phase0=False))
-    return configs
+            all_orderings.setdefault(ordering)
+    return _supported_kernel_configs(length, list(all_orderings), is_phase0=False)
 
 
 # ---------------------------------------------------------------------------

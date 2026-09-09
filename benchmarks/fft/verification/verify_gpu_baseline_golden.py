@@ -175,12 +175,27 @@ def verify_vkfft_golden() -> None:
 def verify_rocfft_tuned_golden() -> None:
     from planning.gpu_baseline import rocfft
 
+    # 2026-09-09 source-fidelity re-audit: these golden numbers were
+    # recomputed after `_supported_kernel_configs` was rewritten to port
+    # SupportedKernelConfigs (tuning_kernel_tuner.cpp) literally -- adding
+    # the `tpt < wgs` guard (line 552) and the min_wgs 64-rounding (line
+    # 491) it was missing, and rescoping the tpbs_to_remove/bad-utilization/
+    # "largest half of TPTs" pruning to the WHOLE phase-0 call instead of
+    # per-ordering (see that function's own docstring). Cross-checked via
+    # an independent from-scratch re-transliteration of the same pinned
+    # source (not derived from this production code) that reproduces the
+    # same count and factor-set shape for N=24 (and N=8/16/64/336/1024).
+    # The (4, 6) factor multiset -- present in the pre-fix golden value --
+    # is now correctly pruned entirely: with pruning scoped globally across
+    # every N=24 factorization at once, (4,6)'s own surviving TPTs land
+    # among the globally-largest half removed by the phase-0 "largest half
+    # of TPTs" step, which a per-ordering-scoped view could not detect.
     print("GOLDEN: rocFFT-tuned deterministic candidate-generation shape, N=24")
     configs = rocfft.phase0_candidates(24)
-    check(len(configs) == 178, f"rocfft.phase0_candidates(24) should produce exactly 178 configs, got {len(configs)}")
+    check(len(configs) == 105, f"rocfft.phase0_candidates(24) should produce exactly 105 configs, got {len(configs)}")
     factor_sets = sorted({tuple(sorted(c.factors)) for c in configs})
     check(
-        factor_sets == [(2, 2, 2, 3), (2, 2, 6), (2, 3, 4), (3, 8), (4, 6)],
+        factor_sets == [(2, 2, 2, 3), (2, 2, 6), (2, 3, 4), (3, 8)],
         f"rocfft.phase0_candidates(24) factor multisets = {factor_sets}",
     )
 

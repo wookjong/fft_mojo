@@ -473,19 +473,54 @@ def verify_clfft_multiple_of_chunk_is_current_codegen_not_hardware() -> None:
         )
 
 
-def verify_rocfft_min_wgs_fix() -> None:
-    print("rocFFT: MIN_WGS fix -- N=8/N=16 now produce surviving KernelConfig candidates")
+def verify_rocfft_min_wgs_rounding() -> None:
+    """2026-09-09 source-fidelity re-audit finding: `SupportedKernelConfigs`
+    rounds its length-lowered `min_wgs` floor DOWN to a 64-multiple
+    (tuning_kernel_tuner.cpp line 491), and separately requires `tpt < wgs`
+    (line 552) before a given TPT participates in a wgs bucket at all. For
+    N=8/N=16, EVERY supported TPT (a divisor of the length itself, since
+    both are powers of two) is small enough to hit the `wgs=64` bucket
+    exactly (`tpt * max_tpb == 64` for every candidate TPT here, since 64
+    is itself a multiple of every TPT in {2,4,8,16}), which forces
+    `final_wgs == 64` -- and the real source's own power-of-2 rule
+    (`IsPo2(length) && length % final_wgs != 0`) then rejects every one of
+    them, since 64 does not divide 8 or 16. This traces back to a real,
+    verified property of `SupportedKernelConfigs` itself under this
+    baseline's fixed MIN_WGS=64/MAX_WGS=512 bounds -- not a bug in this
+    port -- confirmed by hand-tracing tuning_kernel_tuner.cpp's own control
+    flow line by line for N=8 (see rocfft.py's `_supported_kernel_configs`
+    docstring). An earlier, non-literal version of this port's own
+    "min_wgs fix" lacked the `tpt < wgs` guard and the 64-rounding, and so
+    incorrectly produced nonempty candidate sets (and an OK winner) for
+    both lengths -- this test used to assert THAT (wrong) outcome; it now
+    asserts the literal-source-confirmed one instead. Real rocFFT's own
+    shipped default kernel for these lengths comes from a compiled-in
+    table (gpu-rocfft-default), never from this offline-tuner search
+    space -- see this module's own module docstring and
+    verify_rocfft_default_table below.
+    """
+    print("rocFFT: literal MIN_WGS rounding + tpt<wgs guard -- N=8/N=16 tuner search space is genuinely empty")
     for length in (8, 16):
         configs = rocfft.phase0_candidates(length)
-        check(len(configs) > 0, f"rocfft phase0_candidates({length}) should be non-empty after the MIN_WGS fix")
+        check(
+            len(configs) == 0,
+            f"rocfft phase0_candidates({length}) should be empty under the literal SupportedKernelConfigs "
+            f"port (every candidate TPT here forces final_wgs=64, which fails the po2 divisibility rule "
+            f"for length={length}), got {len(configs)}",
+        )
 
         def fake_bench(plan, target):
             return rocfft.BenchmarkOutcome(ok=True, ndp_cycles=plan.length * 7 + len(plan.stages) * 13, spill_free=True)
 
-        result, _ = rocfft.tune(length, total_ffts=4, benchmark_fn=fake_bench)
+        result, outcomes = rocfft.tune(length, total_ffts=4, benchmark_fn=fake_bench)
         check(
-            result.status is BaselineStatus.OK,
-            f"rocfft.tune({length}) should find an OK winner after the MIN_WGS fix, got {result.status}",
+            result.status is BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN,
+            f"rocfft.tune({length}) should report UNSUPPORTED_CURRENT_CODEGEN (the tuner's own search "
+            f"space is empty for this length), got {result.status}",
+        )
+        check(
+            len(outcomes) == 0,
+            f"rocfft.tune({length}) should have zero candidate outcomes to report, got {len(outcomes)}",
         )
 
 
@@ -597,7 +632,7 @@ def main() -> None:
     verify_provenance_metadata()
     verify_three_way_mapping_classification()
     verify_clfft_multiple_of_chunk_is_current_codegen_not_hardware()
-    verify_rocfft_min_wgs_fix()
+    verify_rocfft_min_wgs_rounding()
     verify_rocfft_default_table()
     verify_vkfft_four_step_reordering()
     verify_vkfft_num_passes_fix()

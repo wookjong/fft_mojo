@@ -1,12 +1,57 @@
 # gpu-baseline-v1 -- frozen GPU-derived FFT baseline
 
-**Status: FROZEN, 2026-09-08.** Every item tracked below is resolved. From this point,
-`planning/gpu_baseline/{common,clfft,rocfft,rocfft_default,vkfft,solution_map}.py` and
-`radix_spec.SUPPORTED_RADICES` (as consumed by these modules) are a fixed research
-reference. A future change to any GOLDEN value in `verification/
-verify_gpu_baseline_golden.py` requires an explicit, documented GPU-source-fidelity
-justification (a real upstream research finding, cited the same way every fix in this
-baseline's own history already is) -- never an M2NDP-performance-driven change.
+**Status: FROZEN, 2026-09-08; re-audited 2026-09-09.** Every item tracked below is
+resolved. From this point, `planning/gpu_baseline/{common,clfft,rocfft,rocfft_default,
+vkfft,solution_map}.py` and `radix_spec.SUPPORTED_RADICES` (as consumed by these
+modules) are a fixed research reference. A future change to any GOLDEN value in
+`verification/verify_gpu_baseline_golden.py` requires an explicit, documented
+GPU-source-fidelity justification (a real upstream research finding, cited the same way
+every fix in this baseline's own history already is) -- never an M2NDP-performance-
+driven change.
+
+## 2026-09-09 source-fidelity re-audit
+
+A dedicated re-verification pass re-fetched the pinned upstream C++ source directly
+(not relying on the original research reports' own summaries) for `rocFFT`-tuned,
+`clFFT`, and `VkFFT`, and found three real fidelity gaps the original port had
+introduced -- fixed here, each independently cross-checked against a from-scratch
+Python re-transliteration of the same source written without reference to this
+repository's own implementation (see `verification/verify_gpu_baseline_source_
+fidelity.py`):
+
+- **rocFFT-tuned `SupportedKernelConfigs`** (`rocfft.py`) was missing the real
+  source's own `tpt < wgs` guard and its own `min_wgs` 64-rounding step, and scoped its
+  three pruning passes per-ordering instead of per-phase-call (see that module's own
+  updated docstring and `_supported_kernel_configs`'s docstring for the full
+  derivation). Fixed; `phase0_candidates(24)` changed from 178 to 105 candidates
+  (verified-correct), and N=8/N=16's own tuner search space is now correctly empty
+  (`UNSUPPORTED_CURRENT_CODEGEN`) rather than spuriously non-empty.
+- **clFFT block-compute (SBCC)** was being silently planned as a four-step (Bailey)
+  decomposition for power-of-two lengths in `(4096, 262144]` -- the split VALUES came
+  from the real block-compute table, but the resulting M2NDP plan used the four-step
+  pre/middle/post-transpose structure, an architecturally different real clFFT scheme,
+  and reported `OK`. Fixed: `is_block_compute_length` now gates `_plan_leaf_or_recurse`
+  before the four-step tree is built; such lengths now report
+  `UNSUPPORTED_CURRENT_CODEGEN` with `scheme=block_compute` and the real split preserved
+  as diagnostics. (This supersedes the "documented, not ported" bullet this file
+  previously carried under "Intentionally unsupported upstream GPU behavior" -- the
+  scheme is now correctly *detected*, even though M2NDP still has no fused
+  block-compute codegen to execute it.)
+- **VkFFT's register-per-thread table** (`vkfft.py`) used a `min(radices)` proxy for
+  every non-power-of-two length, reachable from a `BaselineStatus.OK` result. The real
+  `VkFFTGetRegistersPerThreadQuad`'s complete base `{2,3,5,7}` table is now ported in
+  full (`registers_per_thread_base_table`) -- every composite-radix entry the real
+  source derives from that base table is provably either 0 or exactly equal to one of
+  the four base values (see that function's own docstring for the proof), so the base
+  table alone is sufficient; the `min(radices)` proxy is gone from every path.
+
+Not resolved by this pass (see each module's own docstring and the task report this
+audit was built from for the full gap description): rocFFT-default's real
+`ApplySolution`/solution-map layer (a real, ~44KB-per-arch shipped data file plus
+token-derivation logic, not yet located and parsed); VkFFT's real Rader-vs-Bluestein
+selection boundary (this baseline still only determines "neither is implemented," not
+which one real VkFFT would pick); VkFFT's `AxisBlockSplitter` divisibility-fix loop and
+power-of-2 bank-conflict axis-swap (unchanged from the original freeze, see below).
 
 ## What "frozen" means here
 
@@ -65,8 +110,10 @@ more of the real upstream source), never by M2NDP performance.
 - **Real-to-complex / complex-to-real transforms** -- out of scope for this whole
   repository, not just these baselines.
 - **2D/3D FFT planning** -- out of scope (see "Exact domain covered" above).
-- **clFFT's block-compute (SBCC) pipeline** for very large power-of-2 sizes --
-  documented, not ported (the large-1D four-step path is ported instead).
+- **clFFT's block-compute (SBCC) pipeline** for very large power-of-2 sizes -- the
+  scheme itself and its exact split are now correctly DETECTED (`is_block_compute_
+  length`, 2026-09-09 re-audit), reported `UNSUPPORTED_CURRENT_CODEGEN` with the real
+  split preserved as diagnostics; only the actual fused M2NDP kernel is unimplemented.
 - **rocFFT's 2D-single kernel scheme** (`Supported2DKernelConfigs`) -- materially
   different (uwide/wide TPT, no power-set/utilization-rate machinery) and out of scope
   since this repository is 1D-only.

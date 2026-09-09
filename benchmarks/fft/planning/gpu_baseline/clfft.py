@@ -122,6 +122,7 @@ PROVENANCE = BaselineProvenance(
         "get_max_1d_length": "generator.stockham.cpp: FFTPlan::GetMax1DLengthStockham",
         "is_1d_possible": "plan.h: FFTPlan::Is1DPossible",
         "choose_large1d_split": "plan.cpp: clfftBakePlan's po2 (BitScanF bit-balance + block-compute table) and non-po2 (literal 490-entry supported[] table) branches -- EXACT_SOURCE_SELECTION, see docs/gpu_baseline_clfft_large1d_split_deepdive.md",
+        "is_block_compute_length": "plan.cpp: clfftBakePlan's block-compute (SBCC) eligibility gate, lines 646-648",
         "_plan_leaf_or_recurse": "plan.cpp: clfftBakePlan's recursive planTX/planX/planTY/planY/planTZ construction",
     },
 )
@@ -609,6 +610,42 @@ def _bit_scan_f(n: int) -> int:
     return (n & -n).bit_length() - 1
 
 
+def is_block_compute_length(length: int) -> bool:
+    """`clfftBakePlan`'s block-compute (SBCC) eligibility gate (plan.cpp
+    lines 646-648), reduced to this baseline's own fixed assumptions
+    (complex-to-complex, out-of-place, unit strides, single `CLFFT_1D`
+    plan, `CLFFT_REQUEST_LIB_NOMEMALLOC` unset -- see this module's own
+    FIXED IMPLEMENTATION PARAMETERS): `IsPo2(length) and length <=
+    262144/PrecisionWidth(precision)` (262144 for this project's FP32-only
+    precision) `and length in` the real block-compute column-length table.
+
+    2026-09-09 source-fidelity re-audit finding: a power-of-2 length in
+    this range is a COMPLETELY DIFFERENT clFFT scheme from the large-1D
+    four-step (Bailey) decomposition `choose_large1d_split` implements --
+    a single fused SBCC kernel, not a pre-transpose/near-FFT/twiddle/
+    post-transpose chain -- even though `choose_large1d_split`'s own po2
+    branch happens to read the SAME literal table for its `b` value (see
+    that function's own docstring). Before this fix, `_plan_leaf_or_
+    recurse` called `choose_large1d_split` unconditionally for any length
+    failing `is_1d_possible`, silently building a four-step-shaped M2NDP
+    plan (`FFTRecursiveNodePlan` with real pre/middle/post physical
+    transposes) for lengths where real clFFT would never build that
+    structure at all -- reporting `status=OK` for an algorithm clFFT
+    itself does not use. This function is the gate `_plan_leaf_or_recurse`
+    now checks FIRST, so those lengths report `UNSUPPORTED_CURRENT_CODEGEN`
+    (this baseline never implements a true fused block-compute M2NDP
+    kernel -- planner fidelity has priority over executable coverage, see
+    the task this fix was built from) with the real block-compute split
+    preserved as diagnostic metadata, instead of being silently planned
+    as four-step.
+    """
+    return (
+        (length & (length - 1)) == 0
+        and length <= CLFFT_BLOCK_COMPUTE_GATE_SINGLE
+        and length in CLFFT_BLOCK_COMPUTE_TABLE_SINGLE
+    )
+
+
 def choose_large1d_split(length: int, threshold: int) -> tuple[int, int]:
     """`clfftBakePlan`'s CLFFT_1D large-1D split selection (plan.cpp
     lines 633-771), ported EXACTLY -- see docs/
@@ -729,6 +766,30 @@ def _plan_leaf_or_recurse(
     except ClfftUnsupportedLengthError as exc:
         gpu_config = GPUKernelConfig(source="clfft", length=m, radices=())
         return None, unsupported(BaselineStatus.UNSUPPORTED_GPU_ALGORITHM, gpu_config, str(exc))
+
+    if is_block_compute_length(m):
+        # Real clFFT builds a fused block-compute (SBCC) kernel here, not
+        # the four-step pre/middle/post transpose chain below -- see
+        # `is_block_compute_length`'s own docstring. This baseline has no
+        # M2NDP codegen for that fused scheme, so it must refuse rather
+        # than silently substitute the four-step structure just because
+        # the split VALUES (a, b) happen to come from the same table.
+        gpu_config = GPUKernelConfig(
+            source="clfft", length=m, radices=(),
+            extra={
+                "scheme": "block_compute",
+                "clfft_row_length_a": a,
+                "clfft_column_length_b": b,
+            },
+        )
+        return None, unsupported(
+            BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN, gpu_config,
+            f"length={m}: real clFFT selects block-compute (SBCC, a fused single-kernel "
+            f"scheme) here, not the large-1D four-step decomposition -- this baseline has "
+            f"no M2NDP codegen for a fused block-compute kernel. Preserved GPU-side split "
+            f"(a={a}, b={b}) is the real clFFT column-length table value, provided for "
+            f"diagnostics only; it must never be used to build a four-step-shaped plan.",
+        )
 
     tile = max(1, min(8, a, b))
     pre = _build_physical_transpose(
