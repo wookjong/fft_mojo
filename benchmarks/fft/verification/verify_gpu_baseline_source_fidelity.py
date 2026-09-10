@@ -21,7 +21,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planning.gpu_baseline import clfft, rocfft
+import json
+import re
+
+from planning.gpu_baseline import clfft, rocfft, rocfft_default
+from planning.gpu_baseline import rocfft_upstream_solution_map as usm
 from planning.gpu_baseline.common import BaselineStatus
 
 _FAILURES: list[str] = []
@@ -356,6 +360,298 @@ def verify_rocfft_tuned_phase1_pools_all_families_in_one_call() -> None:
 
 
 # ============================================================================
+# VkFFT: complete VkFFTSplitAxisBlock axis_upload_id==0 continuation
+# (vkFFT_AxisBlockSplitter.h lines 301-364 at the pinned commit
+# 066a17c17068c0f11c9298d848c2976c71fad1c1), independently re-derived --
+# written fresh from the fetched source, not from vkfft.py's own
+# `_postprocess_axis_upload0`.
+# ============================================================================
+
+_VKFFT_AIM_THREADS = 128
+_VKFFT_MAX_THREADS_NUM = 1024
+_VKFFT_MAX_COMPUTE_WORKGROUP_SIZE = 1024
+_VKFFT_NUM_SHARED_BANKS = 32
+_VKFFT_MAX_BATCH_COALESCED = 32 // 8  # coalescedMemory / complexSize
+
+
+def _ref_floor_po2(x: int) -> int:
+    return (1 << (x.bit_length() - 1)) if x > 0 else 0
+
+
+def _ref_axisblock_postprocess(
+    axis_block0: int, seed_batch: int, fft_dim: int, *, num_passes: int, max_rhs: int,
+    original_length: int, shared_bytes: int, complex_bytes: int = 8,
+) -> tuple[int, int]:
+    max_seq_shared = shared_bytes // complex_bytes
+    max_seq_shared_pow2 = _ref_floor_po2(shared_bytes) // complex_bytes
+    batch = seed_batch
+
+    if (
+        (fft_dim % 2 == 0 or axis_block0 < _VKFFT_NUM_SHARED_BANKS // 4)
+        and batch > 1 and batch * fft_dim < max_seq_shared_pow2
+    ):
+        p = 0
+        while (1 << p) < batch:
+            p += 1
+        batch = 1 << p
+
+    if num_passes > 1:
+        cap = -(-original_length // fft_dim)
+        if cap < batch:
+            batch = cap
+
+    if num_passes == 1 and max_rhs < batch:
+        batch = max_rhs
+
+    while batch * axis_block0 >= 2 * _VKFFT_AIM_THREADS and batch > _VKFFT_MAX_BATCH_COALESCED:
+        batch //= 2
+        if batch < _VKFFT_MAX_BATCH_COALESCED:
+            batch = _VKFFT_MAX_BATCH_COALESCED
+
+    if batch > _VKFFT_MAX_COMPUTE_WORKGROUP_SIZE:
+        batch = _VKFFT_MAX_COMPUTE_WORKGROUP_SIZE
+
+    if axis_block0 * batch > _VKFFT_MAX_THREADS_NUM:
+        for i in range(1, batch + 1):
+            if (batch // i) * axis_block0 <= _VKFFT_MAX_THREADS_NUM:
+                batch //= i
+                break
+
+    while batch * fft_dim > max_seq_shared and batch > 1:
+        batch //= 2
+
+    if (
+        (fft_dim % 2 == 0 or axis_block0 < _VKFFT_NUM_SHARED_BANKS // 4)
+        and batch > 1 and batch * fft_dim < max_seq_shared
+    ):
+        axis_block0, batch = batch, axis_block0
+
+    return axis_block0, max(batch, 1)
+
+
+def _ref_divisibility_loop_literal(axis_block1_before, guard_fn, shared_mem_allows_fn):
+    """Literal re-transliteration of vkFFT_AxisBlockSplitter.h lines
+    301-307's own control flow (see docstring in vkfft.py's module-level
+    comment for the annotated source)."""
+    current = axis_block1_before
+    axis_block1 = axis_block1_before
+    i = current
+    while i < 2 * current:
+        if guard_fn(axis_block1):
+            if shared_mem_allows_fn(i):
+                axis_block1 = i
+            i = 2 * current
+        else:
+            i += 1
+    return axis_block1
+
+
+def verify_vkfft_divisibility_loop_is_proven_noop() -> None:
+    """Task's own required proof for an omitted rule that cannot change
+    the result: the "divisibility-fix loop" (lines 301-307) is a
+    confirmed no-op in the real source at this pinned commit for EVERY
+    possible guard/shared-mem-allows outcome, not just a hand-picked one
+    -- so omitting it from vkfft.py cannot silently affect any result."""
+    print("VkFFT: divisibility-fix loop (lines 301-307) is a proven no-op -- exhaustive proof")
+    for before in (1, 2, 3, 5, 8, 16, 100, 257):
+        for guard_always in (True, False):
+            for mem_always in (True, False):
+                after = _ref_divisibility_loop_literal(
+                    before, lambda x, g=guard_always: g, lambda i, s=mem_always: s,
+                )
+                check(
+                    after == before,
+                    f"before={before} guard={guard_always} mem={mem_always}: "
+                    f"loop should be a no-op, got after={after}",
+                )
+
+
+def verify_vkfft_axisblock_postprocess_matches_independent_reference() -> None:
+    print("VkFFT: AxisBlockSplitter axis_upload_id==0 continuation vs. independent re-derivation")
+    from planning.gpu_baseline import vkfft
+    from planning.core.target_profile import DEFAULT_TARGET_PROFILE as T
+
+    mismatches = 0
+    checked = 0
+    for fft_dim in (2, 3, 4, 5, 7, 8, 9, 16, 32, 64, 128, 256, 512, 1000, 1024):
+        for axis_block0 in (1, 2, 3, 4, 5, 7, 8, 16, 32, 64, 128, 256):
+            for seed_batch in (1, 2, 3, 4, 5, 7, 8, 16, 32, 64, 128):
+                for num_passes in (1, 2, 3):
+                    for max_rhs in (1, 2, 4, 8, 16, 64):
+                        for original_length in (fft_dim, fft_dim * 2, fft_dim * 4):
+                            checked += 1
+                            got = vkfft._postprocess_axis_upload0(
+                                axis_block0, seed_batch, fft_dim, T,
+                                num_passes=num_passes, max_rhs=max_rhs, original_length=original_length,
+                            )
+                            exp = _ref_axisblock_postprocess(
+                                axis_block0, seed_batch, fft_dim, num_passes=num_passes,
+                                max_rhs=max_rhs, original_length=original_length,
+                                shared_bytes=T.spad_capacity_bytes,
+                            )
+                            if got != exp:
+                                mismatches += 1
+    check(checked > 50000, f"expected a large combination sweep, only checked {checked}")
+    check(mismatches == 0, f"{mismatches}/{checked} combinations mismatched the independent reference")
+
+
+def verify_vkfft_axisblock_swap_and_upload_cases() -> None:
+    """Source-fidelity tests specifically constructed to trigger: the
+    bank-conflict axis swap (reachable -- N=128 under DEFAULT_TARGET_
+    PROFILE), single upload, first multi-upload, and later multi-upload
+    (task's own explicit list; the divisibility correction is proven
+    unreachable-in-effect above, so no trigger case exists for it)."""
+    print("VkFFT: AxisBlockSplitter swap + single/first/later-upload cases exercised end-to-end")
+    from planning.gpu_baseline import vkfft
+    from planning.core.target_profile import DEFAULT_TARGET_PROFILE as T
+
+    # Bank-conflict swap fires for N=128 (single pass): verified directly
+    # against the golden-confirmed (4, 16) pair (pre-fix would have been
+    # (16, 8) -- see verify_gpu_baseline_golden.py's own 2026-09-09 note).
+    radices = vkfft.leaf_radix_sequence(128, 4)
+    min_regs = vkfft.min_registers_per_thread_for(128, radices, 4)
+    axis_block0 = vkfft.axisblock_threads_per_transform(128, min_regs)
+    seed = vkfft.axisblock_batch_single_pass(128, axis_block0, T)
+    final0, final1 = vkfft._postprocess_axis_upload0(
+        axis_block0, seed, 128, T, num_passes=1, max_rhs=4, original_length=128,
+    )
+    check((final0, final1) == (4, 16), f"N=128 single-upload should trigger the swap to (4,16), got {(final0, final1)}")
+    check(
+        (axis_block0, seed) != (final0, final1),
+        "the swap should have actually changed the pre-swap (axis_block0, seed) pair for N=128",
+    )
+
+    result = vkfft.plan(128, batch=4)
+    check(result.status is BaselineStatus.OK, f"vkfft.plan(128) should be OK post-fix, got {result.status}")
+    cooperation = result.plan.root.kernel.cooperation
+    check(
+        cooperation is not None and cooperation.workers_per_fft == 4,
+        f"vkfft.plan(128)'s own built kernel should use the swapped workers_per_fft=4, got {cooperation}",
+    )
+
+    # Single upload (num_passes==1): any length handled entirely by
+    # axisblock_batch_single_pass -- N=64 (already the module's own
+    # numeric round-trip candidate).
+    result64 = vkfft.plan(64, batch=4)
+    check(
+        result64.status is BaselineStatus.OK and result64.gpu_config.extra.get("num_passes") == 1,
+        f"N=64 should be a single-upload (num_passes==1) OK case, got {result64.status}/{result64.gpu_config.extra}",
+    )
+
+    # First multi-upload (num_passes>1, upload_id==0) and later multi-
+    # upload (upload_id>0): N=16384 needs 2 passes (choose_num_passes),
+    # exercising both axisblock_batch_multipass_first (the near_fft leaf,
+    # upload_id==0) and axisblock_batch_multipass_later (every leaf after
+    # it, upload_id>0) within the same plan.
+    num_passes_16384 = vkfft.choose_num_passes(16384, non_strided=True, target=T)
+    check(num_passes_16384 > 1, f"N=16384 should need >1 pass to exercise first/later-upload, got {num_passes_16384}")
+    result16384 = vkfft.plan(16384, batch=4)
+    check(
+        result16384.gpu_config.extra.get("upload_id") == 0,
+        f"vkfft.plan(16384)'s own reported leaf should be upload_id=0 (near_fft, first upload), "
+        f"got {result16384.gpu_config.extra}",
+    )
+    # Directly exercise a later-upload leaf (upload_id=1) for the same
+    # length via axisblock_for_leaf, confirming it takes the
+    # multipass_later path (no swap applied there -- see module docstring:
+    # the real source's own axis_upload_id>0 branch has none).
+    later_tpt, later_batch = vkfft.axisblock_for_leaf(
+        64, vkfft.leaf_radix_sequence(64, 4), max_rhs=4, num_passes=num_passes_16384,
+        upload_id=1, original_length=16384, target=T,
+    )
+    check(later_tpt > 0 and later_batch > 0, f"later-upload leaf should produce a valid pair, got {(later_tpt, later_batch)}")
+
+
+# ============================================================================
+# VkFFT: Rader-vs-Bluestein PLANNING DECISION (task section 5C /
+# vkFFT_AppManagement/vkFFT_InitializeApp.h's own vendor/precision-keyed
+# defaults, lines 1257-1292 at the pinned commit), independently re-derived.
+# ============================================================================
+
+_REF_DIRECT_KERNEL_PRIMES = frozenset({2, 3, 5, 7, 11, 13})
+_REF_FIX_MAX_RADER_PRIME_FFT = 16384  # NVIDIA/single-precision default, all vendors
+
+
+def _ref_prime_factors(n: int) -> list[int]:
+    factors = []
+    d = 2
+    while d * d <= n:
+        while n % d == 0:
+            factors.append(d)
+            n //= d
+        d += 1
+    if n > 1:
+        factors.append(n)
+    return factors
+
+
+def _ref_classify_residual(residual: int) -> str:
+    worst = "direct"
+    for p in _ref_prime_factors(residual):
+        if p in _REF_DIRECT_KERNEL_PRIMES:
+            c = "direct"
+        elif p < _REF_FIX_MAX_RADER_PRIME_FFT:
+            c = "rader"
+        else:
+            c = "bluestein"
+        if c == "bluestein" or (c == "rader" and worst == "direct"):
+            worst = c
+    return worst
+
+
+def verify_vkfft_rader_bluestein_classification_matches_independent_reference() -> None:
+    print("VkFFT: Rader-vs-Bluestein residual classification vs. independent InitializeApp.h re-derivation")
+    from planning.gpu_baseline import vkfft
+
+    # Every prime up to a representative sample, plus composites straddling
+    # the direct/Rader/Bluestein boundaries (17 = fixMinRaderPrimeMult,
+    # 16384 = fixMaxRaderPrimeFFT).
+    samples = list(range(2, 200)) + [16383, 16384, 16385, 17389, 11 * 13, 11 * 11, 13 * 13, 2 * 17389]
+    for residual in samples:
+        got = vkfft.classify_vkfft_residual_scheme(residual)
+        expected = _ref_classify_residual(residual)
+        check(
+            got["scheme"] == expected,
+            f"classify_vkfft_residual_scheme({residual})['scheme'] = {got['scheme']!r}, expected {expected!r}",
+        )
+
+    # Named boundary checks (task's own explicit examples).
+    check(vkfft.classify_vkfft_residual_scheme(11)["scheme"] == "direct", "11 is a real VkFFT built-in kernel prime")
+    check(vkfft.classify_vkfft_residual_scheme(13)["scheme"] == "direct", "13 is a real VkFFT built-in kernel prime")
+    check(vkfft.classify_vkfft_residual_scheme(17)["scheme"] == "rader", "17 == fixMinRaderPrimeMult should be Rader")
+    check(
+        vkfft.classify_vkfft_residual_scheme(16383)["scheme"] == "rader",
+        "16383 < fixMaxRaderPrimeFFT should be Rader (via its own prime factors)",
+    )
+    check(
+        vkfft.classify_vkfft_residual_scheme(17389)["scheme"] == "bluestein",
+        "17389 (prime, > fixMaxRaderPrimeFFT) should be Bluestein",
+    )
+
+    # End-to-end: the classification must never make an unsupported length
+    # silently OK, and must be attached to the actual refusal diagnostics.
+    # A Bluestein-tier residual (prime >= 16384) cannot appear in this
+    # check: it would need a single-kernel leaf length >= 16384, which
+    # already exceeds this target's own max_sequence_length_shared_memory
+    # (15360) -- any length that large is refused earlier, at the
+    # axis-split stage, before direct_radix_sequence's own residual check
+    # ever runs (confirmed directly: length=2*17389 fails with "no legal
+    # non-power-of-2 2-pass axis split found," never reaching a residual
+    # classification at all). The classifier itself is still proven
+    # correct in isolation above; only end-to-end reachability differs.
+    for length, expected_scheme in ((34, "rader"), (22, "direct")):
+        result = vkfft.plan(length, batch=4)
+        check(
+            result.status is BaselineStatus.UNSUPPORTED_GPU_ALGORITHM,
+            f"length={length} should still be UNSUPPORTED_GPU_ALGORITHM (no algorithm invented), got {result.status}",
+        )
+        check(
+            result.gpu_config.extra.get("scheme") == expected_scheme,
+            f"length={length} should report scheme={expected_scheme!r} in diagnostics, got {result.gpu_config.extra}",
+        )
+
+
+# ============================================================================
 # clFFT: block-compute (SBCC) scheme detection, independently re-derived
 # from plan.cpp lines 646-682 at the pinned commit
 # c59712e136fa6207956af22f5c0e4cee7d05340e (single precision, this
@@ -517,6 +813,158 @@ def verify_vkfft_register_table_is_a_real_behavior_change() -> None:
     check(changed >= 5, f"expected the fix to change the result for most sampled radix pairs, only {changed}/8 differed")
 
 
+# ============================================================================
+# rocFFT-default: the real solution-map layer (ApplySolution), verified
+# directly against the shipped gfx908 data file (planning/gpu_baseline/
+# data/gfx908_rocfft_solution_map.dat, a verbatim copy of library/
+# solution_map/gfx908_rocfft_solution_map.dat at the pinned commit) -- read
+# with plain json.load here, independently of usm's own parser, wherever a
+# check can be phrased directly against the raw file.
+# ============================================================================
+
+
+def _raw_gfx908_data() -> dict:
+    return json.loads(usm._DATA_PATH.read_text(encoding="utf-8"))
+
+
+def verify_rocfft_solution_map_token_format() -> None:
+    """`get_node_token`/`GenerateProbKeys`'s own token format, checked
+    against a real key actually present in the shipped file (not merely
+    self-consistency of this module's own formula)."""
+    print("rocFFT-default: get_node_token format matches a real shipped key exactly")
+    min_token, full_token = usm.get_node_token(
+        4096, precision="single", placement="ip", inverse=False, batch=1,
+        in_stride=(1,), out_stride=(1,), i_dist=4096, o_dist=4096,
+    )
+    check(min_token == "4096_sp_ip_complex", f"min_token = {min_token!r}, expected '4096_sp_ip_complex'")
+    check(
+        full_token == "4096_sp_ip_complex_fwd_batch_1_istride_1_ostride_1_idist_4096_odist_4096_ioffset_0_ooffset_0",
+        f"full_token = {full_token!r}",
+    )
+    raw = _raw_gfx908_data()
+    real_tokens = {e["Problem"]["token"] for e in raw["Data"]}
+    check(min_token in real_tokens, f"{min_token!r} should be a real key present in the shipped gfx908 file")
+
+
+def verify_rocfft_solution_map_root_dummy_falls_back() -> None:
+    """At least one root whose option 0 is SOL_DUMMY, and therefore falls
+    back to decide_scheme (task's own required test case)."""
+    print("rocFFT-default: SOL_DUMMY root (option 0) correctly yields no override")
+    raw = _raw_gfx908_data()
+    dummy_lengths = []
+    for e in raw["Data"]:
+        tok = e["Problem"]["token"]
+        m = re.fullmatch(r"(\d+)_sp_ip_complex", tok)
+        if m and e["Solutions"][0]["sol_node_type"] == "SOL_DUMMY":
+            dummy_lengths.append(m.group(1))
+    check(len(dummy_lengths) >= 3, f"expected several SOL_DUMMY single-precision roots, found {dummy_lengths}")
+    for length_str in dummy_lengths:
+        length = int(length_str)
+        result = usm.apply_solution(
+            length, placement="ip", inverse=False, batch=1,
+            in_stride=(1,), out_stride=(1,), i_dist=length, o_dist=length,
+        )
+        check(result is None, f"length={length}: SOL_DUMMY root should yield apply_solution()==None, got {result}")
+
+
+def verify_rocfft_solution_map_real_internal_node() -> None:
+    """At least one real non-dummy solution-map root that is itself an
+    internal (CS_L1D_*) decomposition, with exact child_option/kernel
+    config checks -- the task's own two remaining required test cases."""
+    print("rocFFT-default: real non-dummy CS_L1D_TRTRT solution tree (N=16777216) resolves exactly")
+    length = 16777216
+    node = usm.apply_solution(
+        length, placement="ip", inverse=False, batch=1,
+        in_stride=(1,), out_stride=(1,), i_dist=length, o_dist=length,
+    )
+    check(node is not None, f"length={length}: expected a real non-dummy solution-map match")
+    check(node.sol_node_type == "SOL_INTERNAL_NODE", f"sol_node_type = {node.sol_node_type}")
+    check(node.using_scheme == "CS_L1D_TRTRT", f"using_scheme = {node.using_scheme}")
+    check(len(node.children) == 5, f"expected 5 children (T-R-T-R-T), got {len(node.children)}")
+
+    expected_shapes = [
+        ("SOL_LEAF_NODE", "CS_KERNEL_TRANSPOSE", None),
+        ("SOL_LEAF_NODE", "CS_KERNEL_STOCKHAM", 1),
+        ("SOL_LEAF_NODE", "CS_KERNEL_TRANSPOSE", None),
+        ("SOL_LEAF_NODE", "CS_KERNEL_STOCKHAM", 2),
+        ("SOL_LEAF_NODE", "CS_KERNEL_TRANSPOSE", None),
+    ]
+    for i, (child, (exp_type, exp_scheme, exp_option)) in enumerate(zip(node.children, expected_shapes)):
+        check(child.sol_node_type == exp_type, f"child[{i}].sol_node_type = {child.sol_node_type}, expected {exp_type}")
+        check(child.using_scheme == exp_scheme, f"child[{i}].using_scheme = {child.using_scheme}, expected {exp_scheme}")
+        if exp_option is not None:
+            check(child.option == exp_option, f"child[{i}].option = {child.option}, expected {exp_option}")
+
+    # Exact kernel_config checks (task's own explicit requirement) -- the
+    # two 4096-length row transforms use DIFFERENT tuned configs, straight
+    # from the shipped kernel_len4096_single_sbrr entries at option 0/1
+    # respectively (child_option 1/2 of 4096_sp_ip_complex point there).
+    row1, row2 = node.children[1], node.children[3]
+    check(row1.kernel_key is not None and row2.kernel_key is not None, "both row transforms need a kernel_key")
+    kc1, kc2 = row1.kernel_key.kernel_config, row2.kernel_key.kernel_config
+    check(
+        (kc1.wgs, kc1.tpb, kc1.tpt, kc1.factors) == (256, 2, (128, 0), (8, 16, 4, 8)),
+        f"row1 kernel_config = {kc1}",
+    )
+    check(
+        (kc2.wgs, kc2.tpb, kc2.tpt, kc2.factors) == (512, 2, (256, 0), (8, 8, 16, 4)),
+        f"row2 kernel_config = {kc2}",
+    )
+    check(kc1 != kc2, "the two row-transform configs must be genuinely different tuned options, not duplicates")
+
+
+def verify_rocfft_solution_map_out_of_place_never_matches() -> None:
+    """This project's own consistent out-of-place assumption means the
+    real shipped gfx908 file has ZERO single-precision matches -- proven
+    here by an exhaustive scan of the raw file (not merely inferred from
+    a few sampled lengths), plus a direct apply_solution() check on every
+    single-precision root token the file contains."""
+    print("rocFFT-default: exhaustive scan confirms zero out-of-place single-precision matches in gfx908 map")
+    raw = _raw_gfx908_data()
+    # This baseline's own scope is 1D C2C only (see gpu_baseline_v1_freeze.
+    # md's "Exact domain covered") -- restrict the scan to that shape
+    # (a bare `<length>_sp_..._complex...` token, never `_real_`, never a
+    # multi-length 2D/3D token, never a `kernel_`/`sbcc_`/etc. sub-token).
+    op_single_1d_c2c_tokens = [
+        tok for e in raw["Data"]
+        if re.fullmatch(r"\d+_sp_op_complex(_fwd|_bwd)?.*", tok := e["Problem"]["token"])
+    ]
+    check(
+        len(op_single_1d_c2c_tokens) == 0,
+        f"expected zero out-of-place single-precision 1D C2C tokens, found {op_single_1d_c2c_tokens}",
+    )
+
+    sp_root_lengths = sorted(
+        int(m.group(1))
+        for e in raw["Data"]
+        if (m := re.fullmatch(r"(\d+)_sp_ip_complex", e["Problem"]["token"]))
+    )
+    check(len(sp_root_lengths) >= 5, f"expected several single-precision root tokens to test, found {sp_root_lengths}")
+    for length in sp_root_lengths:
+        result = usm.apply_solution(
+            length, placement="op", inverse=False, batch=1,
+            in_stride=(1,), out_stride=(1,), i_dist=length, o_dist=length,
+        )
+        check(result is None, f"length={length}: out-of-place apply_solution() should be None, got {result}")
+
+
+def verify_rocfft_default_plan_unaffected_by_solution_map_wiring() -> None:
+    """End-to-end: rocfft_default.plan()'s own OK/refusal results and
+    gpu_config contents for representative lengths are UNCHANGED by wiring
+    in apply_solution (since it always returns None for this baseline's
+    own out-of-place calling convention) -- confirms the wiring is a
+    correct no-op for plan()'s own real domain, not merely that the raw
+    apply_solution function returns None in isolation."""
+    print("rocFFT-default: plan()'s own results are unaffected by the solution-map wiring (verified, not assumed)")
+    for length in (2, 8, 64, 256, 4096, 16777216):
+        result = rocfft_default.plan(length, batch=1)
+        check(
+            result.gpu_config.extra.get("mechanism") != "solution-map override (ApplySolution)",
+            f"length={length}: plan() should never report a solution-map override for this baseline's "
+            f"own out-of-place domain, got mechanism={result.gpu_config.extra.get('mechanism')!r}",
+        )
+
+
 def main() -> None:
     verify_rocfft_tuned_phase0_matches_independent_reference()
     verify_rocfft_tuned_min_wgs_rounding_below_64()
@@ -527,6 +975,15 @@ def main() -> None:
     verify_clfft_block_compute_never_silently_becomes_four_step()
     verify_vkfft_register_table_matches_independent_reference()
     verify_vkfft_register_table_is_a_real_behavior_change()
+    verify_rocfft_solution_map_token_format()
+    verify_rocfft_solution_map_root_dummy_falls_back()
+    verify_rocfft_solution_map_real_internal_node()
+    verify_rocfft_solution_map_out_of_place_never_matches()
+    verify_rocfft_default_plan_unaffected_by_solution_map_wiring()
+    verify_vkfft_divisibility_loop_is_proven_noop()
+    verify_vkfft_axisblock_postprocess_matches_independent_reference()
+    verify_vkfft_axisblock_swap_and_upload_cases()
+    verify_vkfft_rader_bluestein_classification_matches_independent_reference()
 
     print()
     if _FAILURES:

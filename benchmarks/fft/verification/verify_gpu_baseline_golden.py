@@ -133,7 +133,16 @@ VKFFT_GOLDEN: dict[int, dict[str, object]] = {
     16: dict(status="ok", radices=(4, 4), num_passes=1),
     32: dict(status="ok", radices=(8, 4), num_passes=1),
     64: dict(status="ok", radices=(8, 8), num_passes=1),
-    128: dict(status="unsupported_current_codegen", radices=(8, 8, 2), workers_per_fft=16, transforms_per_block=8),
+    # 2026-09-09 source-fidelity re-audit: N=128 flipped from refused to OK
+    # after porting VkFFTSplitAxisBlock's real max_rhs cap (line 329) and
+    # axisBlock[0]<->axisBlock[1] swap (lines 350-364) -- both previously
+    # entirely unported (see vkfft.py's own `_postprocess_axis_upload0`).
+    # The cap (batch=8 > max_rhs=4) then the swap together produce
+    # workers_per_fft=4/transforms_per_block=16 instead of the old,
+    # never-capped/never-swapped 16/8 -- which M2NDP's own hardware-mapping
+    # constraints happen to accept where the old pair did not. radices are
+    # unaffected (same leaf_radix_sequence result either way).
+    128: dict(status="ok", radices=(8, 8, 2), num_passes=1),
     256: dict(status="unsupported_current_codegen", radices=(8, 8, 4), workers_per_fft=32, transforms_per_block=1),
     512: dict(status="unsupported_current_codegen", radices=(8, 8, 8), workers_per_fft=64, transforms_per_block=1),
     1024: dict(status="unsupported_current_codegen", radices=(8, 8, 8, 2), workers_per_fft=128, transforms_per_block=1),

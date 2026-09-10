@@ -185,6 +185,87 @@ class VkfftUnsupportedError(Exception):
     prime factor outside `_DIRECT_RADIX_ORDER`) -- always caught by this
     module's own `plan()` and converted to UNSUPPORTED_GPU_ALGORITHM."""
 
+    def __init__(self, message: str, *, residual: int | None = None):
+        super().__init__(message)
+        self.residual = residual
+
+
+# ---------------------------------------------------------------------------
+# Rader-vs-Bluestein PLANNING DECISION (task section 5C, 2026-09-09):
+# vkFFT_AppManagement/vkFFT_InitializeApp.h's own real vendor/precision-keyed
+# defaults for the boundary between VkFFT's built-in direct-radix kernels,
+# Rader's algorithm, and Bluestein's algorithm -- for this baseline's own
+# fixed NVIDIA/single-precision choice (VKFFT_VENDOR_IS_NVIDIA, this whole
+# project's FP32-only nature): `fixMinRaderPrimeMult=17`,
+# `fixMaxRaderPrimeMult=89` (NVIDIA-specific; AMD is also 89, every other
+# vendor is 17), `fixMinRaderPrimeFFT=17` (non-AMD default; AMD's own
+# precision-keyed values are 17/29/19 and irrelevant to this fixed choice),
+# `fixMaxRaderPrimeFFT=16384`.
+#
+# `VkFFTConstructRaderTree`'s own two-pass loop structure (lines 1733-1809)
+# only ever takes its "direct multiplication Rader" branch when `i <
+# fixMinRaderPrimeFFT`, which for this baseline's own NVIDIA/single-
+# precision fixed choice (fixMinRaderPrimeMult == fixMinRaderPrimeFFT == 17)
+# is never true for any `i` the loop actually reaches (the loop itself
+# starts at `i = fixMinRaderPrimeMult = 17`) -- so under this baseline's own
+# fixed vendor/precision choice, EVERY prime from 17 up to fixMaxRaderPrimeFFT
+# uses the FFT-convolution Rader variant, never the direct-multiplication
+# one. This baseline therefore reports a single "Rader" scheme (not
+# distinguishing Rader-Mult from Rader-FFT sub-variants) for that whole
+# range -- a real, source-confirmed simplification for this baseline's own
+# fixed vendor choice, not an approximation of an undetermined boundary.
+# Neither Rader nor Bluestein is implemented in this repository's own
+# codegen in ANY form (radix_spec.SUPPORTED_RADICES has no prime-length
+# convolution path at all), so this classification is metadata only -- it
+# never changes this baseline's own UNSUPPORTED_GPU_ALGORITHM outcome.
+# ---------------------------------------------------------------------------
+VKFFT_DIRECT_KERNEL_PRIMES = frozenset({2, 3, 5, 7, 11, 13})  # real VkFFT's own built-in kernels
+VKFFT_FIX_MIN_RADER_PRIME_MULT = 17
+VKFFT_FIX_MAX_RADER_PRIME_FFT = 16384
+
+
+def _prime_factors(n: int) -> list[int]:
+    factors = []
+    d = 2
+    while d * d <= n:
+        while n % d == 0:
+            factors.append(d)
+            n //= d
+        d += 1
+    if n > 1:
+        factors.append(n)
+    return factors
+
+
+def classify_vkfft_residual_scheme(residual: int) -> dict:
+    """The real VkFFT scheme (`"direct"` | `"rader"` | `"bluestein"`) for a
+    residual factor left over after this baseline's own `_DIRECT_RADIX_
+    ORDER` greedy strip -- factors `residual` into primes and classifies
+    each against real VkFFT's own built-in-kernel/Rader/Bluestein boundary
+    (see module comment above), then reports the single WORST outcome
+    (Bluestein dominates Rader dominates direct, matching how Bluestein
+    operates on the whole sequence once any prime factor needs it -- see
+    `VkFFTConstructRaderTree`'s own `tempSequence`-wide bookkeeping).
+    `"direct"` here means real VkFFT would NOT need Rader/Bluestein at all
+    for this residual (every prime factor is one of VkFFT's own built-in
+    kernels, {2,3,5,7,11,13}) -- it is this BASELINE's own narrower
+    `_DIRECT_RADIX_ORDER` (missing 11/13) that cannot represent it, not a
+    real VkFFT limitation; still reported as a scope gap, never silently
+    treated as Rader/Bluestein just because this port doesn't implement it.
+    """
+    primes = _prime_factors(residual)
+    worst = "direct"
+    for p in primes:
+        if p in VKFFT_DIRECT_KERNEL_PRIMES:
+            classification = "direct"
+        elif p < VKFFT_FIX_MAX_RADER_PRIME_FFT:
+            classification = "rader"
+        else:
+            classification = "bluestein"
+        if classification == "bluestein" or (classification == "rader" and worst == "direct"):
+            worst = classification
+    return {"scheme": worst, "residual": residual, "residual_prime_factors": tuple(primes)}
+
 
 # ---------------------------------------------------------------------------
 # 1. Register scheduling -- vkFFT_Scheduler.h VkFFTGetRegistersPerThread.
@@ -406,12 +487,19 @@ def direct_radix_sequence(length: int) -> tuple[int, ...]:
             radices.append(rad)
             remaining //= rad
     if remaining != 1:
+        classification = classify_vkfft_residual_scheme(remaining)
         raise VkfftUnsupportedError(
-            f"length={length}: residual factor {remaining} after stripping "
-            f"{_DIRECT_RADIX_ORDER} -- real VkFFT would attempt Rader's "
-            f"algorithm then Bluestein's algorithm here; neither is "
-            f"implemented in this repository's codegen at all (radix_spec."
-            f"SUPPORTED_RADICES has no prime-length convolution path)"
+            f"length={length}: residual factor {remaining} (prime factors "
+            f"{classification['residual_prime_factors']}) after stripping "
+            f"{_DIRECT_RADIX_ORDER} -- real VkFFT's own planning decision here is "
+            f"scheme={classification['scheme']!r} (see classify_vkfft_residual_scheme's "
+            f"own docstring for the exact boundary this was derived from); neither "
+            f"Rader nor Bluestein is implemented in this repository's codegen at all "
+            f"(radix_spec.SUPPORTED_RADICES has no prime-length convolution path), and "
+            f"even a 'direct' classification here only means real VkFFT's OWN built-in "
+            f"kernels cover it -- this baseline's own narrower _DIRECT_RADIX_ORDER "
+            f"(missing 11/13) still cannot represent it",
+            residual=remaining,
         )
     return tuple(sorted(radices, reverse=True))
 
@@ -443,6 +531,21 @@ def max_sequence_length_shared_memory_strided(target: TargetProfile) -> int:
     if VKFFT_COALESCED_MEMORY_BYTES > VKFFT_COMPLEX_SIZE_BYTES:
         return target.spad_capacity_bytes // VKFFT_COALESCED_MEMORY_BYTES
     return target.spad_capacity_bytes // VKFFT_COMPLEX_SIZE_BYTES
+
+
+def max_sequence_length_shared_memory_pow2(target: TargetProfile) -> int:
+    """`maxSequenceLengthSharedMemoryPow2` (vkFFT_Plan_FFT.h line 123):
+    `allowedSharedMemoryPow2 / complexSize`, where `allowedSharedMemoryPow2
+    = configuration.sharedMemorySizePow2` -- Structs.h's own documented
+    "power of 2 which is less or equal to sharedMemorySize" (line 293).
+    Genuinely distinct from `max_sequence_length_shared_memory` above (the
+    real source keeps both bounds simultaneously, using each in different
+    `VkFFTSplitAxisBlock` checks -- see `_postprocess_axis_upload0`).
+    Derived from `target.spad_capacity_bytes` the same GPU-LDS -> M2NDP-
+    scratchpad mapping every other sizing function in this module uses."""
+    shared_bytes = target.spad_capacity_bytes
+    pow2_bytes = (1 << (shared_bytes.bit_length() - 1)) if shared_bytes > 0 else 0
+    return pow2_bytes // VKFFT_COMPLEX_SIZE_BYTES
 
 
 # ---------------------------------------------------------------------------
@@ -657,20 +760,46 @@ def apply_four_step_reordering(loc_axis_split: tuple[int, ...]) -> tuple[int, ..
 # so VkFFT's own `axis_id>=1` strided-axis branch, which only applies to
 # multi-dimensional plans, never applies here).
 #
-# SCOPE LIMIT (explicitly bounded, not silently overreached): the real
-# source additionally runs a divisibility-fix loop (grows the batch to
-# evenly divide the actual remaining-sequence count) and a power-of-2
-# bank-conflict axis-swap step (deepdive report section 2.2) -- both
-# REFINEMENTS on top of the core batch estimate below, gated on runtime
-# "actual sequence count" bookkeeping this baseline's own per-leaf model
-# (unlike VkFFT's own whole-FFTPlan model) does not track the same way.
-# Neither changes the CORE thread-count/batch-size decision this section
-# ports; both are documented here as unported refinements, not hidden.
+# 2026-09-09 source-fidelity re-audit: re-read the complete
+# `VkFFTSplitAxisBlock` (vkFFT_AxisBlockSplitter.h lines 264-367, the
+# `axis_id==0`/`axis_upload_id==0` branch) at the pinned commit, line by
+# line, to resolve the two refinements this module's own docstring used to
+# say were omitted because they "key on a whole-plan state this baseline's
+# per-leaf model doesn't track." That justification turns out to be WRONG
+# for both -- reproduced in full below via `_postprocess_axis_upload0`
+# (shared by `axisblock_batch_single_pass` and
+# `axisblock_batch_multipass_first`, exactly matching how the real source
+# applies the same continuation to both of ITS OWN seed branches):
+#
+# * The "divisibility-fix loop" (lines 301-307) is a CONFIRMED NO-OP in
+#   the real source at this pinned commit: its own guard condition and its
+#   one possible assignment both key off the SAME pre-loop `axisBlock[1]`
+#   value, never the loop variable `i`, and the loop unconditionally
+#   terminates on its first pass through that guard regardless of which
+#   way it evaluates -- so `axisBlock[1]` after the loop is provably
+#   identical to its value before the loop, in every case. Not ported
+#   (there is nothing to port); proven by exhaustive case analysis in
+#   `verify_gpu_baseline_source_fidelity.py`, not merely asserted.
+# * The task's own name for the second refinement ("power-of-two
+#   bank-conflict axis swap") turns out to describe TWO SEPARATE real
+#   mechanisms, not one: lines 308-311 round `axisBlock[1]` UP to the next
+#   power of two (the real comment there says "we plan to swap" -- a
+#   genuine comment/code mismatch, reported here rather than silently
+#   "corrected" to match the comment); the actual axisBlock[0]<->
+#   axisBlock[1] SWAP is a separate, later check at lines 350-364, applied
+#   to the fully-processed `axisBlock[1]` (after several more steps this
+#   module did not previously port at all: a per-axis-size cap keyed on
+#   `original_length` (line 312) or `max_rhs` (line 329) -- both already
+#   tracked exactly by this module's own existing parameters, contrary to
+#   the old "whole-plan state" claim -- the NVIDIA vendor halving loop
+#   (330-335), a `maxComputeWorkGroupSize` cap (336), and a max-thread-num
+#   divisor search (338-347)). Both refinements are now ported exactly.
 # ---------------------------------------------------------------------------
 VKFFT_AIM_THREADS = 128  # Structs.h: "aim at this many threads per block. Default 128"
 VKFFT_WARP_SIZE = 32  # Structs.h: "number of threads per warp/wavefront" (portable default)
 VKFFT_MAX_THREADS_NUM = 1024  # VkPhysicalDeviceLimits-derived; no real device here, fixed
 VKFFT_MAX_COMPUTE_WORKGROUP_SIZE = 1024  # same real-device caveat as above
+VKFFT_NUM_SHARED_BANKS = 32  # Structs.h line 199: "how many banks shared memory has. Default 32"
 # `maxBatchCoalesced = coalescedMemory / complexSize` (AxisBlockSplitter.h
 # line 27) -- both already fixed baseline-wide parameters above (32 / 8 = 4,
 # matching the deepdive report's own worked-example assumption exactly).
@@ -759,25 +888,125 @@ def _grouped_batch_seed(fft_dim: int, target: TargetProfile, *, single_upload: b
 def axisblock_batch_single_pass(
     fft_dim: int, threads_per_transform: int, target: TargetProfile, *, use_rader: bool = False,
 ) -> int:
-    """`AxisBlockSplitter.h` section 2.2's `aimThreads`/`warpSize`
+    """`AxisBlockSplitter.h` lines 294-299's `aimThreads`/`warpSize`
     estimate -- the real source's `else` branch of `reorderFourStep &&
-    numAxisUploads>1`, i.e. what a `num_passes==1` (single-kernel) leaf
-    actually uses for its own transforms-per-block batch, followed by the
-    section-2.2 register-boost-aware shared-memory `while` cap (register
-    boost fixed at 1)."""
+    numAxisUploads>1`, i.e. the SEED `axisBlock[1]` a `num_passes==1`
+    (single-kernel) leaf starts from. This is only the seed: the real
+    source applies a long shared continuation (lines 301-364) to this
+    value afterward -- see `_postprocess_axis_upload0`, called by
+    `axisblock_for_leaf` right after this function, never skipped."""
     if threads_per_transform // VKFFT_WARP_SIZE == 1 and threads_per_transform / VKFFT_WARP_SIZE < 1.5:
         estimate = VKFFT_AIM_THREADS // VKFFT_WARP_SIZE
     else:
         estimate = VKFFT_AIM_THREADS // threads_per_transform
     estimate = max(estimate, 1)
     if threads_per_transform < VKFFT_AIM_THREADS and (threads_per_transform < VKFFT_WARP_SIZE or use_rader):
-        batch = estimate
-    else:
-        batch = 1
+        return estimate
+    return 1
+
+
+def _postprocess_axis_upload0(
+    axis_block0: int, seed_batch: int, fft_dim: int, target: TargetProfile, *,
+    num_passes: int, max_rhs: int, original_length: int,
+) -> tuple[int, int]:
+    """`AxisBlockSplitter.h` lines 301-364: the complete shared
+    continuation the real source applies to EITHER `axis_upload_id==0`
+    seed branch (`axisblock_batch_single_pass`'s `num_passes==1` case, or
+    `axisblock_batch_multipass_first`'s own unchanged-`groupedBatch` case)
+    before this leaf's own final `(threads_per_transform,
+    transforms_per_block)` pair is settled. See this section's own
+    docstring for the full derivation and why the two "whole-plan-state"
+    refinements it used to say were unported turn out to both be exactly
+    expressible here: `num_passes` is `FFTPlan->numAxisUploads[0]`;
+    `original_length` is `actualFFTSizePerAxis[0][0]` (the axis's own
+    overall un-split size, already tracked throughout this module exactly
+    under that name); `max_rhs` is `actualFFTSizePerAxis[0][1]` (the total
+    batch/replica count this leaf's own FFT is one of, already tracked
+    throughout this module exactly under that name) -- both real per-axis
+    sizes this project's own always-1D, C2C-only domain maps onto directly,
+    not whole-plan bookkeeping this baseline genuinely lacks.
+
+    Returns the FINAL `(axis_block0, batch)` pair -- note the swap at the
+    end (lines 350-364) can return `axis_block0` different from the value
+    passed in.
+    """
+    batch = seed_batch
+
+    # Lines 308-311: round batch UP to the next power of two. (The real
+    # comment here says "we plan to swap" -- the CODE rounds up, not
+    # swaps; the actual swap is the separate check at the end of this
+    # function. A genuine comment/code mismatch in the real source,
+    # reported here rather than silently "corrected" to match the
+    # comment -- see this project's own established practice for such
+    # mismatches, e.g. clFFT's "largest 33%" / rocFFT's utilization-rate
+    # comments.)
+    shared_mem_pow2 = max_sequence_length_shared_memory_pow2(target)
+    if (
+        (fft_dim % 2 == 0 or axis_block0 < VKFFT_NUM_SHARED_BANKS // 4)
+        and batch > 1
+        and batch * fft_dim < shared_mem_pow2
+    ):
+        batch = 1 << (batch - 1).bit_length()
+
+    # Line 312: numAxisUploads[0] > 1 (first upload of a multi-pass plan)
+    # -- cap by how many fft_dim-sized blocks the axis's own un-split
+    # length actually has.
+    if num_passes > 1:
+        cap = -(-original_length // fft_dim)  # ceil division
+        if cap < batch:
+            batch = cap
+
+    # Lines 313-328 (R2C merge-sequence bookkeeping): never applicable --
+    # this project is C2C-only (gpu_baseline_v1_freeze.md's own "Exact
+    # domain covered").
+
+    # Line 329: numAxisUploads[0] == 1 (single-pass) -- cap by the total
+    # batch count (r2cmult == 1 always for C2C).
+    if num_passes == 1 and max_rhs < batch:
+        batch = max_rhs
+
+    # Lines 330-335: NVIDIA vendor halving loop (this baseline's own fixed
+    # vendorID==0x10DE choice -- see module docstring/VKFFT_VENDOR_IS_NVIDIA).
+    if VKFFT_VENDOR_IS_NVIDIA:
+        while batch * axis_block0 >= 2 * VKFFT_AIM_THREADS and batch > _MAX_BATCH_COALESCED:
+            batch //= 2
+            if batch < _MAX_BATCH_COALESCED:
+                batch = _MAX_BATCH_COALESCED
+
+    # Line 336.
+    if batch > VKFFT_MAX_COMPUTE_WORKGROUP_SIZE:
+        batch = VKFFT_MAX_COMPUTE_WORKGROUP_SIZE
+
+    # Lines 338-347: divisor search if axisBlock[0]*axisBlock[1] exceeds
+    # maxThreadNum (== VKFFT_MAX_THREADS_NUM -- no real per-device query
+    # exists here, matching every other "real device" caveat in this
+    # module).
+    if axis_block0 * batch > VKFFT_MAX_THREADS_NUM:
+        for i in range(1, batch + 1):
+            if (batch // i) * axis_block0 <= VKFFT_MAX_THREADS_NUM:
+                batch //= i
+                break
+
+    # Line 348: register-boost-aware (fixed at 1 throughout this baseline)
+    # shared-memory cap -- this is the SAME formula this function used to
+    # apply immediately after the seed; the real source applies it HERE,
+    # after every step above, which can produce a different final `batch`.
     max_seq_shared = max_sequence_length_shared_memory(target)
     while batch * fft_dim > max_seq_shared and batch > 1:
         batch //= 2
-    return max(batch, 1)
+
+    # Lines 350-364: the real axisBlock[0] <-> axisBlock[1] SWAP, gated on
+    # the non-Pow2 shared-memory bound -- genuinely distinct from the
+    # round-up-to-po2 step above both in formula and in which (much more
+    # processed) `batch` value it inspects.
+    if (
+        (fft_dim % 2 == 0 or axis_block0 < VKFFT_NUM_SHARED_BANKS // 4)
+        and batch > 1
+        and batch * fft_dim < max_seq_shared
+    ):
+        axis_block0, batch = batch, axis_block0
+
+    return axis_block0, max(batch, 1)
 
 
 def axisblock_batch_multipass_first(fft_dim: int, target: TargetProfile) -> int:
@@ -840,9 +1069,17 @@ def axisblock_for_leaf(
     min_regs = min_registers_per_thread_for(length, radices, max_rhs)
     threads_per_transform = axisblock_threads_per_transform(length, min_regs)
     if num_passes == 1:
-        batch = axisblock_batch_single_pass(length, threads_per_transform, target)
+        seed = axisblock_batch_single_pass(length, threads_per_transform, target)
+        threads_per_transform, batch = _postprocess_axis_upload0(
+            threads_per_transform, seed, length, target,
+            num_passes=num_passes, max_rhs=max_rhs, original_length=original_length,
+        )
     elif upload_id == 0:
-        batch = axisblock_batch_multipass_first(length, target)
+        seed = axisblock_batch_multipass_first(length, target)
+        threads_per_transform, batch = _postprocess_axis_upload0(
+            threads_per_transform, seed, length, target,
+            num_passes=num_passes, max_rhs=max_rhs, original_length=original_length,
+        )
     else:
         stage_start_size = original_length // length
         batch = axisblock_batch_multipass_later(
@@ -874,7 +1111,8 @@ def _leaf_result(
     try:
         radices = leaf_radix_sequence(m, r)
     except VkfftUnsupportedError as exc:
-        gpu_config = GPUKernelConfig(source="vkfft", length=m, radices=())
+        extra = classify_vkfft_residual_scheme(exc.residual) if exc.residual is not None else {}
+        gpu_config = GPUKernelConfig(source="vkfft", length=m, radices=(), extra=extra)
         return None, unsupported(BaselineStatus.UNSUPPORTED_GPU_ALGORITHM, gpu_config, str(exc))
 
     if not radices:

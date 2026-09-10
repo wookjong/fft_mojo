@@ -59,6 +59,31 @@ Every length in the REQUIRED test set (2, 4, 8, 16, 32, 64, 128, 256, 512,
 directly against `config_sbrr.py`'s own real rows (research deep-dive
 section 1).
 
+============================================================================
+2026-09-09: THE REAL SOLUTION-MAP LAYER (`rocfft_upstream_solution_map.py`)
+============================================================================
+Until this pass, `plan()` below only reproduced `Decide1DScheme` -- but
+real production rocFFT ALSO probes `ApplySolution` (the shipped, per-arch
+solution-map file) before settling on a scheme, and a non-dummy match can
+OVERRIDE what `Decide1DScheme` picked (see that module's own docstring for
+the full derivation from `plan.cpp`/`node_factory.cpp`/`compute_scheme.cpp`,
+all at the SAME pinned commit as `rocfft.py`'s own PROVENANCE). `plan()` now
+calls `apply_solution` first; a match is used if found, else `decide_scheme`
+runs exactly as before.
+
+A DECISIVE finding from implementing this layer: this project's own
+consistent out-of-place assumption (M2NDP plans always use separate
+input/output buffers) means `apply_solution` is PROVEN -- by exhaustively
+scanning the entire shipped gfx908 file, not merely assumed -- to find ZERO
+matches for this baseline's own FP32 domain (every single-precision complex
+entry in that file is in-place-only). So `plan()`'s own observable behavior
+is unchanged by this layer for every length this baseline can be called
+with; what changed is that this is now DEMONSTRATED, not assumed by
+omission -- see `rocfft_upstream_solution_map.py`'s own module docstring
+for the full proof and `verify_gpu_baseline_source_fidelity.py` for the
+exhaustive-scan test and a direct test of the lookup/resolution machinery
+against the file's own one real (in-place) non-dummy entry.
+
 NON-NEGOTIABLE (see gpu_baseline/common.py's own module docstring): no
 import from planning.search.fft_cost_model / planning.execution.fft_plan_cooperative's own
 worker-count heuristic / planning.execution.fft_plan_persistent / planning.
@@ -89,6 +114,7 @@ from dataclasses import dataclass
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 from radix_spec import SUPPORTED_RADICES
 
+from . import rocfft_upstream_solution_map as upstream_sol_map
 from .common import (
     BaselineProvenance,
     BaselineResult,
@@ -108,7 +134,11 @@ from .common import (
 PROVENANCE = BaselineProvenance(
     library="rocFFT",
     upstream_repository="https://github.com/ROCm/rocm-libraries",
-    upstream_commit="develop HEAD as of 2026-09-08 (node_factory.cpp/tree_node_1D.cpp/config_sbrr.py -- no single commit SHA recorded for this specific deep-dive pass; the SIBLING gpu-rocfft-tuned baseline's own pass DID pin bee97df517907c771de17189cb867d3c401285ae on the same develop branch, which this file's own source is consistent with but was not independently re-pinned)",
+    upstream_commit="bee97df517907c771de17189cb867d3c401285ae (develop, projects/rocfft/) -- "
+    "pinned 2026-09-09, resolving the earlier floating 'develop HEAD as of 2026-09-08' note: "
+    "re-fetched every source file below directly at this exact SHA (the SAME commit the "
+    "SIBLING gpu-rocfft-tuned baseline already pinned) and confirmed all are live there, "
+    "so this baseline and rocfft.py now cite one single, consistent revision, never two.",
     source_files=(
         "projects/rocfft/library/src/node_factory.cpp",
         "projects/rocfft/library/src/include/node_factory.h",
@@ -119,6 +149,11 @@ PROVENANCE = BaselineProvenance(
         "projects/rocfft/library/src/device/kernels/configs/config_sbrr.py",
         "projects/rocfft/library/src/device/kernels/configs/config_sbcc.py",
         "projects/rocfft/library/src/device/kernels/configs/config_sbrc.py",
+        "projects/rocfft/library/src/plan.cpp",
+        "projects/rocfft/library/src/solution_map.cpp",
+        "projects/rocfft/library/src/include/solution_map.h",
+        "projects/rocfft/library/src/compute_scheme.cpp",
+        "projects/rocfft/library/solution_map/gfx908_rocfft_solution_map.dat",
     ),
     baseline_version="gpu-baseline-v1",
     source_functions={
@@ -129,13 +164,19 @@ PROVENANCE = BaselineProvenance(
         "get_largest_pow2_length": "function_pool.h: function_pool::get_largest_pow2_length",
         "get_explicitly_supported_factor/get_largest_supported_factor": "node_factory.cpp: search_pool + get_explicitly_supported_factor + get_largest_supported_factor",
         "plan (transforms_per_block)": "device/kernel-generator.py: generate_kernel_functions's own workgroup_size // threads_per_transform line",
+        "rocfft_upstream_solution_map.apply_solution": "plan.cpp: ApplySolution/RecursivelyApplySol/GenerateProbKeys/GetNodeToken",
     },
     notes=(
-        "Ports the compiled-in single-kernel (config_sbrr.py) table AND "
-        "the CS_L1D_CC/CS_L1D_TRTRT DECISION logic (which scheme, which "
-        "divLength1/sub-kernel configs) -- but only ever BUILDS an M2NDP "
-        "plan for the single-kernel (CS_KERNEL_STOCKHAM) case. CS_L1D_CC/ "
-        "TRTRT decisions are reported faithfully in diagnostics but return "
+        "Ports the compiled-in single-kernel (config_sbrr.py) table, the "
+        "CS_L1D_CC/CS_L1D_TRTRT DECISION logic (which scheme, which "
+        "divLength1/sub-kernel configs), AND (2026-09-09) the real "
+        "solution-map override layer (rocfft_upstream_solution_map.py) that "
+        "runs BEFORE this decision chain in real production rocFFT -- see "
+        "that module's own docstring. Only ever BUILDS an M2NDP plan for "
+        "the single-kernel (CS_KERNEL_STOCKHAM) case, whether that came "
+        "from the compiled table, the solution map, or Decide1DScheme's "
+        "own fallback formulas. CS_L1D_CC/TRTRT decisions (from either "
+        "source) are reported faithfully in diagnostics but return "
         "UNSUPPORTED_CURRENT_CODEGEN, since SBCC/SBRC's fused block-tiled "
         "transpose+FFT kernels have no equivalent AddressMapping/codegen "
         "mechanism in this repository (see module docstring's own SCOPE "
@@ -823,6 +864,96 @@ def decide_scheme(length: int, *, batch: int = 1) -> SchemeDecision:
     return SchemeDecision(scheme="CS_L1D_TRTRT", div_length1=div_length1)
 
 
+def _describe_solution_tree(node: "upstream_sol_map.ResolvedSchemeNode") -> dict:
+    """A JSON-safe nested dict of a resolved solution-map tree, for
+    diagnostics only (`GPUKernelConfig.extra` values must stay simple/
+    inspectable, never a live dataclass graph)."""
+    desc: dict = {
+        "token": node.token, "option": node.option,
+        "sol_node_type": node.sol_node_type, "using_scheme": node.using_scheme,
+    }
+    if node.kernel_key is not None:
+        kc = node.kernel_key.kernel_config
+        desc["kernel_key"] = {
+            "lengths": node.kernel_key.lengths, "precision": node.kernel_key.precision,
+            "scheme": node.kernel_key.scheme, "factors": kc.factors,
+            "workgroup_size": kc.wgs, "threads_per_transform": kc.tpt, "transforms_per_block": kc.tpb,
+            "half_lds": kc.half_lds,
+        }
+    if node.children:
+        desc["children"] = [_describe_solution_tree(c) for c in node.children]
+    return desc
+
+
+def _plan_from_solution_match(
+    node: "upstream_sol_map.ResolvedSchemeNode", length: int, *, batch: int, inverse: bool,
+    target: TargetProfile, kernel_name: str,
+) -> BaselineResult:
+    """Build a `BaselineResult` from a real, non-dummy `ApplySolution`
+    match. Mappable only when the match resolves to exactly the same
+    shape `decide_scheme`'s own `CS_KERNEL_STOCKHAM` case builds (a single
+    `SOL_LEAF_NODE` pointing at one tunable `FMKey`/`KernelConfig`) --
+    anything else (a `SOL_INTERNAL_NODE` tree, e.g. a solution-map-selected
+    `CS_L1D_CC`/`CS_L1D_TRTRT`, or a leaf pointing at a builtin/non-
+    Stockham kernel) is preserved in full and refused, exactly mirroring
+    how `decide_scheme`'s own CC/TRTRT outcomes are handled below -- never
+    force-mapped just because the solution map (rather than Decide1DScheme)
+    is what produced it.
+    """
+    if (
+        node.sol_node_type == "SOL_LEAF_NODE"
+        and node.using_scheme == "CS_KERNEL_STOCKHAM"
+        and node.kernel_key is not None
+    ):
+        kc = node.kernel_key.kernel_config
+        transforms_per_block = kc.wgs // kc.tpt[0]
+        gpu_config = GPUKernelConfig(
+            source="rocfft-default", length=length, radices=kc.factors,
+            extra={
+                "scheme": "CS_KERNEL_STOCKHAM",
+                "workgroup_size": kc.wgs,
+                "threads_per_transform": kc.tpt[0],
+                "transforms_per_block": transforms_per_block,
+                "mechanism": "solution-map override (ApplySolution)",
+                "solution_token": node.token,
+                "solution_option": node.option,
+            },
+        )
+        inverse_scale = (1.0 / length) if inverse else None
+        mapping = map_cooperative_kernel(
+            length=length, radices=kc.factors, workers_per_fft=kc.tpt[0],
+            fft_slots_wanted=transforms_per_block, total_ffts=batch, inverse=inverse,
+            inverse_scale=inverse_scale, kernel_name=kernel_name, target=target,
+            gpu_config=gpu_config,
+        )
+        if mapping.status is not BaselineStatus.OK:
+            return mapping
+        recursive_plan = wrap_leaf_as_recursive_plan(
+            length=length, total_ffts=batch, inverse=inverse, built_plan=mapping.plan,
+        )
+        return BaselineResult(status=BaselineStatus.OK, gpu_config=mapping.gpu_config, plan=recursive_plan)
+
+    gpu_config = GPUKernelConfig(
+        source="rocfft-default", length=length, radices=(),
+        extra={
+            "scheme": node.using_scheme,
+            "mechanism": "solution-map override (ApplySolution)",
+            "solution_token": node.token,
+            "solution_option": node.option,
+            "solution_tree": _describe_solution_tree(node),
+        },
+    )
+    return unsupported(
+        BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN, gpu_config,
+        f"length={length}: the real gfx908 solution map overrides Decide1DScheme with "
+        f"{node.using_scheme} (token={node.token!r}, option={node.option}) -- this shape "
+        f"is not a single tunable Stockham leaf, so it needs the same fused/multi-node "
+        f"mechanism (SBCC/SBRC/transpose chains) this repository's own AddressMapping/"
+        f"codegen has no equivalent for (see module docstring's own SCOPE LIMIT). The "
+        f"full resolved solution tree is preserved in gpu_config.extra['solution_tree'].",
+    )
+
+
 def plan(
     length: int,
     *,
@@ -831,14 +962,29 @@ def plan(
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
     kernel_name: str = "FFTRocfftDefault",
 ) -> BaselineResult:
-    """Top-level rocFFT-PRODUCTION-DEFAULT baseline entry point -- table
-    lookup + the real `Decide1DScheme` fallback chain, no search, no
-    benchmarking. Only ever builds an M2NDP plan for the `CS_KERNEL_
+    """Top-level rocFFT-PRODUCTION-DEFAULT baseline entry point. Real
+    production rocFFT probes the shipped solution map (`ApplySolution`)
+    BEFORE `Decide1DScheme` even runs (see `rocfft_upstream_solution_map`'s
+    own module docstring) -- a non-dummy match there can override what
+    `Decide1DScheme` would otherwise pick, so this function checks it
+    first and only falls through to the table lookup + `Decide1DScheme`
+    fallback chain below when no match exists. No search, no benchmarking
+    either way. Only ever builds an M2NDP plan for the `CS_KERNEL_
     STOCKHAM` (single fused kernel) outcome -- see module docstring's own
-    SCOPE LIMIT for why `CS_L1D_CC`/`CS_L1D_TRTRT` are decided faithfully
-    but reported `UNSUPPORTED_CURRENT_CODEGEN` rather than force-mapped
-    onto this repository's unrelated PRE/MIDDLE/POST six-step mechanism.
+    SCOPE LIMIT for why `CS_L1D_CC`/`CS_L1D_TRTRT` (from either source) are
+    decided faithfully but reported `UNSUPPORTED_CURRENT_CODEGEN` rather
+    than force-mapped onto this repository's unrelated PRE/MIDDLE/POST
+    six-step mechanism.
     """
+    sol_match = upstream_sol_map.apply_solution(
+        length, placement="op", inverse=inverse, batch=batch,
+        in_stride=(1,), out_stride=(1,), i_dist=length, o_dist=length,
+    )
+    if sol_match is not None:
+        return _plan_from_solution_match(
+            sol_match, length, batch=batch, inverse=inverse, target=target, kernel_name=kernel_name,
+        )
+
     decision = decide_scheme(length, batch=batch)
 
     if decision.scheme == "CS_BLUESTEIN":

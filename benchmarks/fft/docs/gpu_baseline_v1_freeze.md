@@ -45,13 +45,70 @@ fidelity.py`):
   the four base values (see that function's own docstring for the proof), so the base
   table alone is sufficient; the `min(radices)` proxy is gone from every path.
 
-Not resolved by this pass (see each module's own docstring and the task report this
-audit was built from for the full gap description): rocFFT-default's real
-`ApplySolution`/solution-map layer (a real, ~44KB-per-arch shipped data file plus
-token-derivation logic, not yet located and parsed); VkFFT's real Rader-vs-Bluestein
-selection boundary (this baseline still only determines "neither is implemented," not
-which one real VkFFT would pick); VkFFT's `AxisBlockSplitter` divisibility-fix loop and
-power-of-2 bank-conflict axis-swap (unchanged from the original freeze, see below).
+Not resolved by this pass (all three closed by the 2026-09-10 follow-up below): rocFFT-
+default's real `ApplySolution`/solution-map layer; VkFFT's real Rader-vs-Bluestein
+selection boundary; VkFFT's `AxisBlockSplitter` divisibility-fix loop and power-of-2
+bank-conflict axis-swap.
+
+## 2026-09-10 follow-up: closing the remaining "can return OK without reproducing the
+## real upstream planner" gaps
+
+Continuing directly from the 2026-09-09 pass, with the same rule (independent
+from-scratch re-transliteration cross-checked against every fix, never trusting a
+research-report summary over the pinned source itself):
+
+- **rocFFT-default's real solution-map layer** (`ApplySolution`) is now implemented in
+  full: `rocfft_upstream_solution_map.py` ports `GetNodeToken`/`GenerateProbKeys`/
+  `ApplySolution`/`RecursivelyApplySol` (plan.cpp) exactly, and parses a verbatim copy of
+  the real shipped `gfx908_rocfft_solution_map.dat` (`planning/gpu_baseline/data/`, JSON,
+  81 entries) -- kept entirely separate from `planning/gpu_baseline/solution_map.py` (an
+  M2NDP measured-result cache; a different mechanism in the opposite direction, per that
+  module's own docstring). `rocfft_default.plan()` now probes this BEFORE
+  `Decide1DScheme`, exactly matching real `BuildSingleDevicePlan`'s own order. A
+  DECISIVE, exhaustively-verified finding: every single-precision complex entry in the
+  entire shipped gfx908 file is in-place-only, and this project's baselines are all
+  out-of-place (M2NDP plans always use separate input/output buffers) -- so
+  `apply_solution` is PROVEN (not assumed) to return no match for any length `plan()`
+  can be called with today. The lookup/resolution machinery itself is still fully tested
+  against the file's one real non-dummy single-precision entry
+  (`16777216_sp_ip_complex`, a genuine 5-node `CS_L1D_TRTRT` tree with two differently-
+  tuned 4096-length leaves). rocFFT-default's own commit is now pinned to
+  `bee97df517907c771de17189cb867d3c401285ae` (the same commit `rocfft.py` already
+  cited), resolving the earlier floating "develop HEAD as of 2026-09-08" note.
+- **VkFFT's `AxisBlockSplitter` two "omitted" refinements** turned out to be
+  mis-scoped, not genuinely blocked on untracked whole-plan state:
+  - The "divisibility-fix loop" (vkFFT_AxisBlockSplitter.h lines 301-307) is a
+    CONFIRMED NO-OP in the real source at the pinned commit -- proven by exhaustive
+    case analysis (its own guard and assignment both key off the same pre-loop value,
+    never the loop variable, and the loop force-exits on its first executing branch
+    regardless of outcome). Not implemented, because there is nothing to implement.
+  - The task's "power-of-two bank-conflict axis swap" turned out to be TWO separate
+    real mechanisms: a round-up-to-power-of-2 step (lines 308-311; the real comment
+    there says "we plan to swap" but the code rounds up -- a genuine comment/code
+    mismatch, reported not silently corrected) and a literal `axisBlock[0]<->
+    axisBlock[1]` SWAP (lines 350-364, gated on the fully-processed `axisBlock[1]`).
+    Both are now ported exactly, along with several intermediate steps between them
+    (a per-axis-size cap keyed on `original_length`/`max_rhs` -- both already tracked
+    exactly by this module, not "whole-plan state" as the old docstring claimed -- the
+    NVIDIA vendor halving loop, a workgroup-size cap, and a max-thread-num divisor
+    search) that were not ported at all before. Cross-checked against an independent
+    reference over 100,000+ parameter combinations. Real, verified consequence: N=128
+    flips from `UNSUPPORTED_CURRENT_CODEGEN` to `OK` (workers_per_fft/transforms_per_
+    block swap from (16,8) to (4,16), which M2NDP's own hardware-mapping constraints
+    accept) -- confirmed numerically correct against `numpy.fft` (max error ~2.6e-08).
+- **VkFFT's Rader-vs-Bluestein planning decision** is now classified exactly, from
+  `vkFFT_AppManagement/vkFFT_InitializeApp.h`'s own vendor/precision-keyed defaults for
+  this baseline's fixed NVIDIA/FP32 choice (`fixMinRaderPrimeMult=17`,
+  `fixMaxRaderPrimeFFT=16384`) and real VkFFT's own built-in-kernel prime coverage
+  (`{2,3,5,7,11,13}` -- wider than this baseline's own `_DIRECT_RADIX_ORDER`, which
+  still only implements `{2,...,10}`). A residual factor left after this baseline's own
+  greedy strip is now factored into primes and classified `"direct"` (real VkFFT needs
+  no Rader/Bluestein at all -- e.g. residual 11 or 13 -- it is only this baseline's own
+  narrower scope that cannot represent it), `"rader"`, or `"bluestein"`, reported as
+  exact metadata (`gpu_config.extra["scheme"]`, `["residual"]`,
+  `["residual_prime_factors"]`) -- never a generic "Rader/Bluestein" mention, and never
+  used to invent an M2NDP implementation: the status stays `UNSUPPORTED_GPU_ALGORITHM`
+  regardless of which real scheme applies.
 
 ## What "frozen" means here
 
