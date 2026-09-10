@@ -1040,13 +1040,16 @@ def plan(
             "sbrc_length": div0 if decision.scheme == "CS_L1D_CC" else None,
         },
     )
+    scheme_explanation = (
+        "SBCC/SBRC are fused block-tiled transpose+FFT kernels"
+        if decision.scheme == "CS_L1D_CC"
+        else "CS_L1D_TRTRT recursively builds a transpose-row-transpose-row-transpose "
+        "chain whose row kernels are themselves further Decide1DScheme calls"
+    )
     return unsupported(
         BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN, gpu_config,
         f"length={length}: real rocFFT chooses {decision.scheme} (divLength1={div1}, "
-        f"the other factor={div0}). {'SBCC/SBRC are fused block-tiled transpose+FFT '
-        'kernels' if decision.scheme == 'CS_L1D_CC' else 'CS_L1D_TRTRT recursively '
-        'builds a transpose-row-transpose-row-transpose chain whose row kernels are '
-        'themselves further Decide1DScheme calls'} -- this repository's own "
+        f"the other factor={div0}). {scheme_explanation} -- this repository's own "
         f"AddressMapping/codegen has no equivalent mechanism (see module docstring's "
         f"own SCOPE LIMIT: forcing this onto the unrelated PRE/MIDDLE/POST six-step "
         f"shape clfft.py/vkfft.py use for their own, differently-structured upstream "
