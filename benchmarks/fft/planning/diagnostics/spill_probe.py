@@ -36,7 +36,7 @@ from planning.core.fft_plan_core import FFTCodegenPlan
 from planning.strategies.fft_plan_recursive import FFTLeafPlan, RecursiveFFTPlan
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 
 # `warning: <unknown>:0:0: in function fft_fp32_N630_generated::FFTRecNear0::
 # stage_1() void (): M2NDP kernel spills to memory (128-byte frame); spills

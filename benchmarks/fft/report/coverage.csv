@@ -1,0 +1,6 @@
+planner,total_n_tested,total_n_in_sweep,spill_free_correct,spilling,numerical_mismatch,compile_failure,runtime_failure,unsupported,supported_correct
+m2ndp-native,27,27,25,2,0,0,0,0,25
+gpu-clfft,27,27,5,6,0,0,0,16,5
+gpu-rocfft-default,27,27,1,1,0,0,0,25,1
+gpu-rocfft-tuned,3,27,1,0,0,0,0,2,1
+gpu-vkfft,27,27,2,4,0,0,0,21,2

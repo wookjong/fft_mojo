@@ -1,0 +1,21 @@
+{
+  "native_much_faster": [
+    12
+  ],
+  "closest_to_parity": [
+    12
+  ],
+  "gpu_faster_than_native": [
+    16,
+    24,
+    48,
+    96
+  ],
+  "explicitly_flagged": [
+    960,
+    1024
+  ],
+  "most_refusals": [
+    64
+  ]
+}

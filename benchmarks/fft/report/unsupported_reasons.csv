@@ -1,0 +1,38 @@
+planner,status,reason,count
+gpu-clfft,spilling,(no diagnostics),6
+gpu-clfft,unsupported,[unsupported_current_codegen] the GPU planner wants 16 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,5
+gpu-clfft,unsupported,[unsupported_current_codegen] the GPU planner wants 256 work items cooperating per transform -- an exact multiple of target.interleave_chunk,3
+gpu-clfft,unsupported,[unsupported_current_codegen] the GPU planner wants 64 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,3
+gpu-clfft,unsupported,[unsupported_current_codegen] the GPU planner wants 128 work items cooperating per transform -- an exact multiple of target.interleave_chunk,2
+gpu-clfft,unsupported,[unsupported_current_codegen] the GPU planner wants 32 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,2
+gpu-clfft,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 18 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-rocfft-default,unsupported,[unsupported_current_codegen] the GPU planner wants 16 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,8
+gpu-rocfft-default,unsupported,[unsupported_current_codegen] the GPU planner wants 256 work items cooperating per transform -- an exact multiple of target.interleave_chunk,4
+gpu-rocfft-default,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 10 work items cooperating per transform, which is neither a divisor nor a multiple of t",3
+gpu-rocfft-default,unsupported,[unsupported_current_codegen] the GPU planner wants 48 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,2
+gpu-rocfft-default,unsupported,[unsupported_current_codegen] the GPU planner wants 64 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,2
+gpu-rocfft-default,spilling,(no diagnostics),1
+gpu-rocfft-default,unsupported,[unsupported_current_codegen] the GPU planner wants 128 work items cooperating per transform -- an exact multiple of target.interleave_chunk,1
+gpu-rocfft-default,unsupported,[unsupported_current_codegen] the GPU planner wants 160 work items cooperating per transform -- an exact multiple of target.interleave_chunk,1
+gpu-rocfft-default,unsupported,[unsupported_current_codegen] the GPU planner wants 32 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,1
+gpu-rocfft-default,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 12 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-rocfft-default,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 36 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-rocfft-default,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 6 work items cooperating per transform, which is neither a divisor nor a multiple of ta",1
+gpu-rocfft-tuned,unsupported,[unsupported_current_codegen] the GPU planner wants 16 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,2
+gpu-vkfft,spilling,(no diagnostics),4
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 128 work items cooperating per transform -- an exact multiple of target.interleave_chunk,2
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 16 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,2
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 256 work items cooperating per transform -- an exact multiple of target.interleave_chunk,2
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 32 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,2
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 512 work items cooperating per transform -- an exact multiple of target.interleave_chunk,2
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 64 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,2
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 192 work items cooperating per transform -- an exact multiple of target.interleave_chunk,1
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 24 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,1
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 48 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,1
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 80 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,1
+gpu-vkfft,unsupported,[unsupported_current_codegen] the GPU planner wants 96 work items cooperating per transform -- an exact multiple of target.interleave_chunk_,1
+gpu-vkfft,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 10 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-vkfft,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 20 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-vkfft,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 36 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-vkfft,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 5 work items cooperating per transform, which is neither a divisor nor a multiple of ta",1
+m2ndp-native,spilling,(no diagnostics),2
