@@ -111,7 +111,15 @@ ROCFFT_DEFAULT_MULTIPROCESSOR_COUNT = 120
 
 from dataclasses import dataclass
 
+from planning.core.fft_plan_core import MultiKernelHostPlan
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from planning.strategies.fft_plan_recursive import (
+    FFTLeafPlan,
+    FFTNode,
+    FFTRecursiveNodePlan,
+    RecursiveFFTPlan,
+    _build_physical_transpose,
+)
 from radix_spec import SUPPORTED_RADICES
 
 from . import rocfft_upstream_solution_map as upstream_sol_map
@@ -967,9 +975,157 @@ def _plan_from_solution_match(
     )
 
 
+def _rocfft_leaf_kernel(
+    m: int, r: int, config: DefaultConfig, *, inverse: bool, is_root: bool,
+    kernel_name: str, target: TargetProfile, source_label: str,
+) -> tuple[FFTLeafPlan | None, BaselineResult | None]:
+    """One CS_KERNEL_STOCKHAM leaf, shared by the flat top-level case and
+    every leaf `_rocfft_leaf_or_recurse` builds -- identical to
+    `_plan_from_scheme_decision`'s own CS_KERNEL_STOCKHAM branch, factored
+    out so both call sites render a leaf exactly the same way."""
+    transforms_per_block = config.workgroup_size // config.threads_per_transform
+    gpu_config = GPUKernelConfig(
+        source=source_label, length=m, radices=config.factors,
+        extra={
+            "scheme": "CS_KERNEL_STOCKHAM",
+            "workgroup_size": config.workgroup_size,
+            "threads_per_transform": config.threads_per_transform,
+            "transforms_per_block": transforms_per_block,
+            "mechanism": "compiled-in function_pool default (config_sbrr.py)",
+        },
+    )
+    inverse_scale = (1.0 / m) if (inverse and is_root) else None
+    mapping = map_cooperative_kernel(
+        length=m, radices=config.factors, workers_per_fft=config.threads_per_transform,
+        fft_slots_wanted=transforms_per_block, total_ffts=r, inverse=inverse,
+        inverse_scale=inverse_scale, kernel_name=kernel_name, target=target,
+        gpu_config=gpu_config,
+    )
+    if mapping.status is not BaselineStatus.OK:
+        return None, mapping
+    return FFTLeafPlan(m=m, r=r, kernel=mapping.plan), None
+
+
+def _rocfft_leaf_or_recurse(
+    m: int, r: int, *, inverse: bool, is_root: bool, node_id: list[int],
+    target: TargetProfile, multiprocessor_count: int, kernel_name_prefix: str,
+    source_label: str,
+) -> tuple[FFTNode | None, BaselineResult | None]:
+    """CS_L1D_CC / CS_L1D_TRTRT lowering -- see docs/
+    gpu_baseline_rocfft_cc_trtrt_lowering.md for the full source-verified
+    derivation (fetched directly from tree_node_1D.cpp's own `CC1DNode`/
+    `TRTRT1DNode::BuildTree_internal` at this module's own pinned commit).
+    Both schemes are the SAME Cooley-Tukey `(div_length1, div_length0)`
+    split this function's own caller already computes via `decide_scheme`
+    -- CS_L1D_CC fuses the 3 transposes into its own 2 FFT kernels'
+    strided access (`CS_KERNEL_STOCKHAM_BLOCK_CC`/`_RC`); CS_L1D_TRTRT
+    (literally "Transpose-Row-Transpose-Row-Transpose") renders them as 5
+    separate kernels -- a GPU-specific physical-scheduling difference with
+    zero dataflow effect, left to the lowering layer per this task's own
+    instructions. Both lower identically here, via the SAME `_build_
+    recursive_node`-shaped five-kernel PRE/near/MIDDLE/far/POST plan this
+    project's clFFT large-1D path already uses.
+
+    Real rocFFT's own `row2Plan`/`col2colPlan`+`row2colPlan` pair (this
+    function's own `near` slot, length `div_length0`) is ALWAYS forced
+    straight to `CS_KERNEL_STOCKHAM` (`NodeFactory::CreateNodeFromScheme`,
+    never `RecursiveBuildTree`) -- never re-decided via `Decide1DScheme`.
+    Real rocFFT's `row1Plan` (this function's own `far` slot, length
+    `div_length1`) DOES call `RecursiveBuildTree`, i.e. re-invokes the
+    SAME rocFFT planning algorithm on that sub-length (this task's own
+    section 4B requirement -- never the M2NDP-native recursive splitter).
+    """
+    idx = node_id[0]
+    node_id[0] += 1
+    decision = decide_scheme(m, batch=r, multiprocessor_count=multiprocessor_count)
+
+    if decision.scheme == "CS_BLUESTEIN":
+        gpu_config = GPUKernelConfig(source=source_label, length=m, radices=())
+        return None, unsupported(
+            BaselineStatus.UNSUPPORTED_GPU_ALGORITHM, gpu_config,
+            f"length={m}: Decide1DScheme's own real fallback chain found no decomposition "
+            f"for this CS_L1D_CC/TRTRT sub-node -- real rocFFT falls back to CS_BLUESTEIN here too",
+        )
+
+    if decision.scheme == "CS_KERNEL_STOCKHAM":
+        assert decision.single_kernel is not None
+        return _rocfft_leaf_kernel(
+            m, r, decision.single_kernel, inverse=inverse, is_root=is_root,
+            kernel_name=f"{kernel_name_prefix}Leaf{idx}", target=target, source_label=source_label,
+        )
+
+    # CS_L1D_CC or CS_L1D_TRTRT again: recurse. div1 = lenFactor1 (the
+    # "far"/row1 slot, the only one real rocFFT ever recurses further);
+    # div0 = lenFactor0 (the "near"/row2 slot, always forced to a single
+    # kernel -- see this function's own docstring).
+    assert decision.div_length1 is not None
+    div1 = decision.div_length1
+    div0 = m // div1
+
+    tile = max(1, min(8, div0, div1))
+    pre = _build_physical_transpose(
+        rows=div0, cols=div1, replica_count=r, tile_rows=tile, tile_cols=tile,
+        twiddle_modulus=None, inverse=inverse, kernel_name=f"{kernel_name_prefix}Pre{idx}",
+        simd_lanes=8, spad_capacity_bytes=target.spad_capacity_bytes, apply_inverse_scale=False,
+    )
+
+    near_node, failure = _rocfft_leaf_or_recurse(
+        div0, r * div1, inverse=inverse, is_root=False, node_id=node_id,
+        target=target, multiprocessor_count=multiprocessor_count,
+        kernel_name_prefix=kernel_name_prefix, source_label=source_label,
+    )
+    if failure is not None:
+        return None, failure
+    if not isinstance(near_node, FFTLeafPlan):
+        # Real rocFFT forces this factor straight to CS_KERNEL_STOCKHAM
+        # without consulting Decide1DScheme at all (see this function's
+        # own docstring) -- if this baseline's own decide_scheme port
+        # does NOT resolve it to a single kernel, that is an unverified-
+        # upstream-behavior gap, not something to silently force.
+        gpu_config = GPUKernelConfig(source=source_label, length=div0, radices=())
+        return None, unsupported(
+            BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN, gpu_config,
+            f"length={div0} (the always-single-kernel row/col factor of {m}'s "
+            f"{decision.scheme} split) did not itself resolve to CS_KERNEL_STOCKHAM under "
+            f"decide_scheme -- real rocFFT forces this factor straight to a single Stockham "
+            f"kernel without consulting Decide1DScheme at all, a case this baseline's own "
+            f"decide_scheme port cannot yet reproduce faithfully",
+        )
+
+    middle = _build_physical_transpose(
+        rows=div1, cols=div0, replica_count=r, tile_rows=tile, tile_cols=tile,
+        twiddle_modulus=m, inverse=inverse, kernel_name=f"{kernel_name_prefix}Mid{idx}",
+        simd_lanes=8, spad_capacity_bytes=target.spad_capacity_bytes, apply_inverse_scale=False,
+    )
+
+    far_node, failure = _rocfft_leaf_or_recurse(
+        div1, r * div0, inverse=inverse, is_root=False, node_id=node_id,
+        target=target, multiprocessor_count=multiprocessor_count,
+        kernel_name_prefix=kernel_name_prefix, source_label=source_label,
+    )
+    if failure is not None:
+        return None, failure
+
+    post = _build_physical_transpose(
+        rows=div0, cols=div1, replica_count=r, tile_rows=tile, tile_cols=tile,
+        twiddle_modulus=None, inverse=inverse, kernel_name=f"{kernel_name_prefix}Post{idx}",
+        simd_lanes=8, spad_capacity_bytes=target.spad_capacity_bytes,
+        apply_inverse_scale=(inverse and is_root),
+    )
+
+    return (
+        FFTRecursiveNodePlan(
+            m=m, r=r, a=div1, b=div0, pre_transpose=pre, near_fft=near_node,
+            middle_transpose=middle, far_child=far_node, post_transpose=post,
+        ),
+        None,
+    )
+
+
 def _plan_from_scheme_decision(
     decision: SchemeDecision, length: int, *, batch: int, inverse: bool,
     target: TargetProfile, kernel_name: str, source_label: str,
+    multiprocessor_count: int = ROCFFT_DEFAULT_MULTIPROCESSOR_COUNT,
 ) -> BaselineResult:
     """Shared tail of `plan`/`plan_m2ndp`, once each has its own
     `decision = decide_scheme(...)` (identical algorithm either way, only
@@ -977,7 +1133,10 @@ def _plan_from_scheme_decision(
     CS_BLUESTEIN/CS_L1D_CC/CS_L1D_TRTRT branch logic is never duplicated
     (and so cannot silently drift between the two baselines). `source_label`
     is the only thing that varies between callers, purely for
-    `GPUKernelConfig.source` diagnostics attribution."""
+    `GPUKernelConfig.source` diagnostics attribution. `multiprocessor_count`
+    is forwarded into `_rocfft_leaf_or_recurse`'s own recursive re-decisions
+    (CS_L1D_CC/TRTRT only) so a nested Decide1DScheme call never silently
+    reverts to the source-faithful constant for the M2NDP-adapted baseline."""
     if decision.scheme == "CS_BLUESTEIN":
         gpu_config = GPUKernelConfig(source=source_label, length=length, radices=())
         return unsupported(
@@ -989,35 +1148,46 @@ def _plan_from_scheme_decision(
         )
 
     if decision.scheme == "CS_KERNEL_STOCKHAM":
+        assert decision.single_kernel is not None
+        leaf, failure = _rocfft_leaf_kernel(
+            length, batch, decision.single_kernel, inverse=inverse, is_root=True,
+            kernel_name=kernel_name, target=target, source_label=source_label,
+        )
+        if failure is not None:
+            return failure
+        assert leaf is not None
+        recursive_plan = wrap_leaf_as_recursive_plan(
+            length=length, total_ffts=batch, inverse=inverse, built_plan=leaf.kernel,
+        )
         config = decision.single_kernel
-        assert config is not None
-        transforms_per_block = config.workgroup_size // config.threads_per_transform
         gpu_config = GPUKernelConfig(
             source=source_label, length=length, radices=config.factors,
             extra={
                 "scheme": "CS_KERNEL_STOCKHAM",
                 "workgroup_size": config.workgroup_size,
                 "threads_per_transform": config.threads_per_transform,
-                "transforms_per_block": transforms_per_block,
+                "transforms_per_block": config.workgroup_size // config.threads_per_transform,
                 "mechanism": "compiled-in function_pool default (config_sbrr.py)",
             },
         )
-        inverse_scale = (1.0 / length) if inverse else None
-        mapping = map_cooperative_kernel(
-            length=length, radices=config.factors, workers_per_fft=config.threads_per_transform,
-            fft_slots_wanted=transforms_per_block, total_ffts=batch, inverse=inverse,
-            inverse_scale=inverse_scale, kernel_name=kernel_name, target=target,
-            gpu_config=gpu_config,
-        )
-        if mapping.status is not BaselineStatus.OK:
-            return mapping
-        recursive_plan = wrap_leaf_as_recursive_plan(
-            length=length, total_ffts=batch, inverse=inverse, built_plan=mapping.plan,
-        )
-        return BaselineResult(status=BaselineStatus.OK, gpu_config=mapping.gpu_config, plan=recursive_plan)
+        return BaselineResult(status=BaselineStatus.OK, gpu_config=gpu_config, plan=recursive_plan)
 
-    # CS_L1D_CC / CS_L1D_TRTRT: decided faithfully, but not built -- see
-    # module docstring's own SCOPE LIMIT.
+    # CS_L1D_CC / CS_L1D_TRTRT: see docs/gpu_baseline_rocfft_cc_trtrt_
+    # lowering.md -- both are the SAME Cooley-Tukey (div_length1,
+    # div_length0) split as CS_KERNEL_STOCKHAM's own sibling schemes,
+    # realized via a GPU-specific physical-scheduling choice (fused vs.
+    # separate transpose kernels) this task's own instructions leave to
+    # the lowering layer. Built via the exact same five-kernel PRE/near/
+    # MIDDLE/far/POST structure this project's clFFT large-1D path uses.
+    node_id = [0]
+    node, failure = _rocfft_leaf_or_recurse(
+        length, batch, inverse=inverse, is_root=True, node_id=node_id,
+        target=target, multiprocessor_count=multiprocessor_count,
+        kernel_name_prefix=kernel_name, source_label=source_label,
+    )
+    if failure is not None:
+        return failure
+    assert node is not None
     assert decision.div_length1 is not None
     div1 = decision.div_length1
     div0 = length // div1
@@ -1031,21 +1201,12 @@ def _plan_from_scheme_decision(
             "sbrc_length": div0 if decision.scheme == "CS_L1D_CC" else None,
         },
     )
-    scheme_explanation = (
-        "SBCC/SBRC are fused block-tiled transpose+FFT kernels"
-        if decision.scheme == "CS_L1D_CC"
-        else "CS_L1D_TRTRT recursively builds a transpose-row-transpose-row-transpose "
-        "chain whose row kernels are themselves further Decide1DScheme calls"
+    recursive_plan = RecursiveFFTPlan(
+        n=length, inverse=inverse, root=node,
+        host=MultiKernelHostPlan(n=length, inverse=inverse, tolerance=1.0e-3),
+        batch=batch,
     )
-    return unsupported(
-        BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN, gpu_config,
-        f"length={length}: real rocFFT chooses {decision.scheme} (divLength1={div1}, "
-        f"the other factor={div0}). {scheme_explanation} -- this repository's own "
-        f"AddressMapping/codegen has no equivalent mechanism (see module docstring's "
-        f"own SCOPE LIMIT: forcing this onto the unrelated PRE/MIDDLE/POST six-step "
-        f"shape clfft.py/vkfft.py use for their own, differently-structured upstream "
-        f"algorithms would silently change what rocFFT itself actually does here).",
-    )
+    return BaselineResult(status=BaselineStatus.OK, gpu_config=gpu_config, plan=recursive_plan)
 
 
 def plan(
@@ -1085,6 +1246,7 @@ def plan(
     return _plan_from_scheme_decision(
         decision, length, batch=batch, inverse=inverse, target=target,
         kernel_name=kernel_name, source_label="rocfft-default",
+        multiprocessor_count=ROCFFT_DEFAULT_MULTIPROCESSOR_COUNT,
     )
 
 
@@ -1128,4 +1290,5 @@ def plan_m2ndp(
     return _plan_from_scheme_decision(
         decision, length, batch=batch, inverse=inverse, target=target,
         kernel_name=kernel_name, source_label="rocfft-default-m2ndp",
+        multiprocessor_count=target.num_ndp_units,
     )

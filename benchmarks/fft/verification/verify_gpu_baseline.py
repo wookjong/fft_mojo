@@ -33,6 +33,7 @@ from planning.gpu_baseline.common import BaselineStatus, GPUKernelConfig, map_co
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 from verification.verify_fft_harness import Ptr, run_kernel
 from verification.verify_fft_persistent import run_persistent_kernel
+from verification.verify_fft_recursive import run_recursive_plan
 
 _FAILURES: list[str] = []
 
@@ -599,21 +600,33 @@ def verify_rocfft_default_table() -> None:
 
     # A length genuinely outside the compiled single-kernel table (but
     # power-of-2, so it routes through CS_L1D_CC via map1DLengthSingle) --
-    # decided faithfully (real scheme + real divLength1), never fabricated,
-    # and never silently mapped onto this repo's unrelated six-step shape.
+    # decided faithfully (real scheme + real divLength1), never fabricated.
+    # REVISED (see docs/gpu_baseline_rocfft_cc_trtrt_lowering.md): CS_L1D_CC
+    # is now lowered via the source-verified-equivalent five-kernel PRE/
+    # near/MIDDLE/far/POST structure (a direct re-read of tree_node_1D.cpp
+    # proved this is the SAME (div_length1, div_length0) split as the
+    # fused-kernel real source, not a different algorithm) -- this test
+    # previously asserted the OLD refusal; now asserts the corrected,
+    # source-proven build-success behavior.
     d16384 = rocfft_default.decide_scheme(16384, batch=1)
     check(d16384.scheme == "CS_L1D_CC", f"rocfft-default N=16384: expected CS_L1D_CC, got {d16384.scheme}")
     check(d16384.div_length1 == 64, f"rocfft-default N=16384: expected divLength1=64, got {d16384.div_length1}")
-    result = rocfft_default.plan(16384, batch=4)
+    result = rocfft_default.plan(16384, batch=1)
     check(
-        result.status is BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN,
-        f"rocfft-default N=16384 (CS_L1D_CC, no SBCC/SBRC codegen mechanism) should be "
-        f"UNSUPPORTED_CURRENT_CODEGEN, got {result.status}",
+        result.status is BaselineStatus.OK,
+        f"rocfft-default N=16384 (CS_L1D_CC) should build OK via the proven-equivalent "
+        f"five-kernel lowering, got {result.status}",
     )
-    check(
-        result.gpu_config.extra.get("scheme") == "CS_L1D_CC" and result.gpu_config.extra.get("div_length1") == 64,
-        f"rocfft-default N=16384 diagnostics must preserve the real decided scheme/divLength1, got {result.gpu_config.extra}",
-    )
+    if result.status is BaselineStatus.OK:
+        check(
+            result.gpu_config.extra.get("scheme") == "CS_L1D_CC" and result.gpu_config.extra.get("div_length1") == 64,
+            f"rocfft-default N=16384 diagnostics must preserve the real decided scheme/divLength1, got {result.gpu_config.extra}",
+        )
+        rng = np.random.default_rng(1234)
+        x = rng.uniform(-1, 1, 16384) + 1j * rng.uniform(-1, 1, 16384)
+        got = run_recursive_plan(result.plan, x)
+        err = float(np.max(np.abs(got - np.fft.fft(x))))
+        check(err < 1e-2, f"rocfft-default N=16384 (CS_L1D_CC) numeric error {err:.3e} exceeds tolerance")
 
     # A length with no decomposition at all under this chain -> Bluestein.
     d_prime = rocfft_default.decide_scheme(1000003, batch=1)
