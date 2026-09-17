@@ -450,7 +450,66 @@ class PersistentWorkgroupPlan:
     making up one software group must exactly coincide with the 8
     microthreads the hardware's own address interleaving places on one
     physical NDP unit together (see docs/persistent_leaf_design.md's
-    "Worker / software-group / logical-block identity" section).
+    "Worker / software-group / logical-block identity" section). This is
+    always the *physical* concurrent-microthread width -- it never
+    changes when `workers_per_fft` (below) exceeds it.
+
+    `workers_per_fft`: how many LOGICAL workers cooperate on one logical
+    FFT block -- the GPU planner's own chosen cooperation width, passed
+    through verbatim, UNCLAMPED, for ANY positive value (see gpu_baseline/
+    common.py's `map_cooperative_kernel` and docs/
+    ragged_worker_wave_generalization.md). Equals `workers_per_group` for
+    every plan built before this field existed (the default in
+    `make_persistent_leaf_plan`) -- that is the plain "8 physical workers,
+    one invocation" case, unchanged.
+
+    REVISED 2026-09-14 (worker-wave FUSION -- see docs/
+    worker_wave_fusion.md): a `workers_per_fft` wider than `workers_per_
+    group` is executed inside a SINGLE stage invocation, never as multiple
+    barrier-separated calls. Each of the `workers_per_group` PHYSICAL
+    lanes visits its own logical workers (`worker_id`, `worker_id +
+    workers_per_group`, `worker_id + 2*workers_per_group`, ...) via a
+    plain runtime loop inside that one invocation -- `fft_plan_persistent.
+    worker_waves(workers_per_fft, workers_per_group)` (`ceil(workers_per_
+    fft / workers_per_group)`) is the loop's own worst-case trip count,
+    kept as a metadata/diagnostics helper only (see its own docstring) --
+    NOT a count of separate `launch_parallel` calls any more. An EARLIER
+    revision (2026-09-12) called the stage's own phase function
+    `worker_waves` times in a row from `device_main`, threading
+    `wave_index` between those calls through a scratchpad counter
+    (`wave_tracker`); investigation (docs/worker_wave_fusion.md) found
+    every logical worker in a stage is independent of every other one in
+    the SAME stage (all read from the SAME already-fully-populated
+    ping-pong buffer, all write disjoint offsets in the SAME other
+    buffer -- see `_lower_persistent_stages`), so that repeated-launch
+    structure bought nothing but overhead; `wave_tracker` and the
+    per-wave `launch_parallel` repeat are both gone.
+
+    REVISED 2026-09-13 (ragged-wave generalization): `workers_per_fft`
+    need NOT be a multiple of `workers_per_group`. When it isn't (e.g.
+    `workers_per_fft=10`, `workers_per_group=8`: `worker_waves=2`), the
+    LAST loop iteration is ragged -- only `workers_per_fft - (worker_
+    waves-1) * workers_per_group` of that iteration's physical lanes
+    compute a `logical_worker_id` that is actually `< workers_per_fft`;
+    the rest are dummy lanes (`logical_worker_id >= workers_per_fft`,
+    matching no dispatch branch in `codegen.fft_persistent_codegen.
+    _emit_worker_dispatch` -- see that module's own docstring for why a
+    dummy lane's loop iteration executes zero FFT arithmetic and touches
+    zero scratchpad addresses: the surrounding `while logical_worker_id <
+    workers_per_fft:` condition itself is what stops it, not a dispatch
+    fallthrough within a still-executing iteration). `workers_per_fft <=
+    workers_per_group` (e.g. 3, 5, 6, 7) is this same ragged case with
+    `worker_waves=1`: no loop is even emitted (see `codegen.fft_
+    persistent_codegen.emit_stage_phase`), byte-identical to the original,
+    pre-`workers_per_fft` dispatch shape. An EARLIER version of this field
+    rejected any `workers_per_fft` that was neither a divisor nor a
+    multiple of `workers_per_group`, believing that to be a real
+    architectural limit of this target's periodic address interleaving --
+    investigation (docs/ragged_worker_wave_generalization.md) found that
+    belief was itself the limit: the periodic-interleaving fact only ever
+    constrained HOW a cooperation width executes, never WHICH widths are
+    legal at all. `make_persistent_leaf_plan` now only rejects
+    `workers_per_fft < 1`.
 
     `software_group_count`: must equal the target's own `num_ndp_units`
     -- one software group per physical unit, a permutation of units, not
@@ -464,12 +523,16 @@ class PersistentWorkgroupPlan:
     every worker as a vector worker; a stage with a tail batch reserves
     exactly the last worker as scalar) or `"reserved"` (the last worker
     is always scalar-reserved, tail or not) -- see
-    docs/persistent_leaf_design.md's "Stage work partition" section.
+    docs/persistent_leaf_design.md's "Stage work partition" section. With
+    `workers_per_fft > workers_per_group`, "the last worker" means the
+    last LOGICAL worker (`workers_per_fft - 1`), which lands on the last
+    physical worker of the last wave.
     """
 
     stripes_per_group: int
     workers_per_stripe: int
     workers_per_group: int
+    workers_per_fft: int
     software_group_count: int
     logical_block_stride: int
     scalar_worker_mode: Literal["adaptive", "reserved"]

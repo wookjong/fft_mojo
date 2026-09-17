@@ -59,13 +59,25 @@ CLFFT_GOLDEN: dict[int, dict[str, object]] = {
     8: dict(status="ok", radices=(4, 2), workgroup_size=64, num_transforms=32),
     16: dict(status="ok", radices=(4, 4), workgroup_size=64, num_transforms=16),
     32: dict(status="ok", radices=(8, 4), workgroup_size=64, num_transforms=16),
-    64: dict(status="unsupported_current_codegen", radices=(4, 4, 4), workgroup_size=64, num_transforms=4),
-    128: dict(status="unsupported_current_codegen", radices=(8, 4, 4), workgroup_size=64, num_transforms=4),
-    256: dict(status="unsupported_current_codegen", radices=(4, 4, 4, 4), workgroup_size=64, num_transforms=1),
-    512: dict(status="unsupported_current_codegen", radices=(8, 8, 8), workgroup_size=64, num_transforms=1),
-    1024: dict(status="unsupported_current_codegen", radices=(8, 8, 4, 4), workgroup_size=128, num_transforms=1),
-    2048: dict(status="unsupported_current_codegen", radices=(8, 8, 8, 4), workgroup_size=256, num_transforms=1),
-    4096: dict(status="unsupported_current_codegen", radices=(8, 8, 8, 8), workgroup_size=256, num_transforms=1),
+    # REVISED 2026-09-13 (ragged-wave generalization -- docs/ragged_
+    # worker_wave_generalization.md): N=64..4096 all have workers_per_fft
+    # = workgroup_size // num_transforms, an exact multiple of this
+    # target's interleave_chunk_uthreads=8 (16, 16, 64, 64, 128, 256,
+    # 256) -- these flipped from UNSUPPORTED_CURRENT_CODEGEN (real on
+    # 2026-09-08: no codegen existed yet for the striped/multi-wave
+    # layout) to OK on 2026-09-12 once persistent worker-wave
+    # virtualization implemented it. radices/workgroup_size/num_transforms
+    # are byte-for-byte unchanged from the pre-2026-09-12 golden values --
+    # only the M2NDP execution MAPPING changed, never the GPU algorithm's
+    # own decomposition (per gpu_baseline/common.py's own non-negotiable
+    # "faithful GPU port > M2NDP performance" rule).
+    64: dict(status="ok", radices=(4, 4, 4), workgroup_size=64, num_transforms=4),
+    128: dict(status="ok", radices=(8, 4, 4), workgroup_size=64, num_transforms=4),
+    256: dict(status="ok", radices=(4, 4, 4, 4), workgroup_size=64, num_transforms=1),
+    512: dict(status="ok", radices=(8, 8, 8), workgroup_size=64, num_transforms=1),
+    1024: dict(status="ok", radices=(8, 8, 4, 4), workgroup_size=128, num_transforms=1),
+    2048: dict(status="ok", radices=(8, 8, 8, 4), workgroup_size=256, num_transforms=1),
+    4096: dict(status="ok", radices=(8, 8, 8, 8), workgroup_size=256, num_transforms=1),
 }
 
 
@@ -143,11 +155,22 @@ VKFFT_GOLDEN: dict[int, dict[str, object]] = {
     # constraints happen to accept where the old pair did not. radices are
     # unaffected (same leaf_radix_sequence result either way).
     128: dict(status="ok", radices=(8, 8, 2), num_passes=1),
-    256: dict(status="unsupported_current_codegen", radices=(8, 8, 4), workers_per_fft=32, transforms_per_block=1),
-    512: dict(status="unsupported_current_codegen", radices=(8, 8, 8), workers_per_fft=64, transforms_per_block=1),
-    1024: dict(status="unsupported_current_codegen", radices=(8, 8, 8, 2), workers_per_fft=128, transforms_per_block=1),
-    2048: dict(status="unsupported_current_codegen", radices=(8, 8, 8, 4), workers_per_fft=256, transforms_per_block=1),
-    4096: dict(status="unsupported_current_codegen", radices=(8, 8, 8, 8), workers_per_fft=512, transforms_per_block=1),
+    # REVISED 2026-09-13 (ragged-wave generalization -- docs/ragged_
+    # worker_wave_generalization.md): N=256..4096 all have workers_per_fft
+    # = 32/64/128/256/512, every one an exact multiple of this target's
+    # interleave_chunk_uthreads=8 -- flipped from UNSUPPORTED_CURRENT_
+    # CODEGEN to OK on 2026-09-12 (persistent worker-wave virtualization).
+    # radices/num_passes unchanged from the pre-2026-09-12 golden values;
+    # workers_per_fft/transforms_per_block are no longer checked here
+    # (the OK branch checks num_passes instead, like every other OK
+    # entry) but are kept as a comment for traceability: 32/1, 64/1,
+    # 128/1, 256/1, 512/1 respectively, each preserved verbatim in
+    # PersistentWorkgroupPlan.workers_per_fft.
+    256: dict(status="ok", radices=(8, 8, 4), num_passes=1),
+    512: dict(status="ok", radices=(8, 8, 8), num_passes=1),
+    1024: dict(status="ok", radices=(8, 8, 8, 2), num_passes=1),
+    2048: dict(status="ok", radices=(8, 8, 8, 4), num_passes=1),
+    4096: dict(status="ok", radices=(8, 8, 8, 8), num_passes=1),
 }
 
 

@@ -32,6 +32,7 @@ from planning.gpu_baseline import clfft, rocfft, rocfft_default, vkfft
 from planning.gpu_baseline.common import BaselineStatus, GPUKernelConfig, map_cooperative_kernel
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 from verification.verify_fft_harness import Ptr, run_kernel
+from verification.verify_fft_persistent import run_persistent_kernel
 
 _FAILURES: list[str] = []
 
@@ -328,11 +329,27 @@ def _run_reference_check(plan_root_leaf: FFTLeafPlan, *, label: str) -> None:
     itself (the physical microthread count) -- mirroring verification.
     verify_fft_cooperative.verify_cooperative_leaf's own buffer sizing
     convention (`n = length * total_ffts`, not `length * total_uthreads`).
+
+    A `kernel.persistent is not None` leaf (reachable from a GPU baseline
+    since the 2026-09-12 worker-wave virtualization, and now also from a
+    "ragged" -- neither divisor nor multiple of 8 -- `workers_per_fft` as
+    of the 2026-09-13 generalization, see docs/ragged_worker_wave_
+    generalization.md) cannot go through `run_kernel` at all -- same
+    reason `verification.verify_fft_recursive.run_recursive_plan` already
+    dispatches on this exact condition: a persistent leaf's round/group
+    model is structurally different, not just a different worker-dispatch
+    flavor of the plain one. `total` there is `host.total_elems //
+    length` (the leaf's own logical-block/replica count), mirroring
+    `run_recursive_plan`'s own identical dispatch.
     """
     kernel = plan_root_leaf.kernel
     n = kernel.length
-    workers_per_fft = kernel.cooperation.workers_per_fft if kernel.cooperation is not None else 1
-    total = kernel.total_uthreads // workers_per_fft
+    if kernel.persistent is not None:
+        assert kernel.host.total_elems % n == 0
+        total = kernel.host.total_elems // n
+    else:
+        workers_per_fft = kernel.cooperation.workers_per_fft if kernel.cooperation is not None else 1
+        total = kernel.total_uthreads // workers_per_fft
     rng = np.random.default_rng(0)
     x_real = rng.standard_normal((total, n))
     x_imag = rng.standard_normal((total, n))
@@ -342,7 +359,14 @@ def _run_reference_check(plan_root_leaf: FFTLeafPlan, *, label: str) -> None:
     input_real.arr[:] = x_real.reshape(-1)
     input_imag.arr[:] = x_imag.reshape(-1)
 
-    run_kernel(kernel, input_real=input_real, input_imag=input_imag, output_real=output_real, output_imag=output_imag)
+    if kernel.persistent is not None:
+        run_persistent_kernel(
+            kernel, num_logical_blocks=total,
+            input_real=input_real, input_imag=input_imag,
+            output_real=output_real, output_imag=output_imag,
+        )
+    else:
+        run_kernel(kernel, input_real=input_real, input_imag=input_imag, output_real=output_real, output_imag=output_imag)
 
     got = (output_real.arr + 1j * output_imag.arr).reshape(total, n)
     signal = x_real + 1j * x_imag
@@ -423,53 +447,81 @@ def verify_provenance_metadata() -> None:
 
 
 def verify_three_way_mapping_classification() -> None:
-    print("Hardware mapping: 3-way workers_per_fft classification (OK / current-codegen / hardware-mapping)")
+    """REVISED 2026-09-13 (ragged-wave generalization -- see docs/
+    ragged_worker_wave_generalization.md): this used to assert a 3-way
+    split (OK / UNSUPPORTED_CURRENT_CODEGEN for an exact multiple of the
+    chunk / UNSUPPORTED_HARDWARE_MAPPING for anything else). Investigation
+    found the third bucket was never a real hardware wall -- ANY positive
+    `workers_per_fft` is reachable via `worker_waves = ceil(workers_per_
+    fft / chunk)` sequential waves, the last one ragged (dummy physical
+    lanes, no FFT work, still barrier-safe) whenever it doesn't evenly
+    divide the chunk. Both non-OK-via-cooperative-path branches below are
+    now `BaselineStatus.OK` (via the persistent worker-wave leaf, not the
+    cooperative one), each ALWAYS preserving the GPU-chosen
+    `workers_per_fft` verbatim -- checked explicitly here, not just the
+    status."""
+    print("Hardware mapping: workers_per_fft classification (OK via cooperative, OR OK via persistent worker-wave -- never a hardware wall)")
     chunk = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads  # 8 on this target
     gpu_config = GPUKernelConfig(source="test", length=64, radices=(8, 8))
 
-    # Divides the chunk evenly -> OK.
+    # Divides the chunk evenly -> OK via the ORIGINAL cooperative path.
     r = map_cooperative_kernel(
         length=64, radices=(8, 8), workers_per_fft=chunk // 2, fft_slots_wanted=1,
         total_ffts=4, inverse=False, inverse_scale=None, kernel_name="T1",
         target=DEFAULT_TARGET_PROFILE, gpu_config=gpu_config,
     )
     check(r.status is BaselineStatus.OK, f"workers_per_fft={chunk // 2} (divides chunk={chunk}) should be OK, got {r.status}")
+    check(r.plan.cooperation is not None, "the divisor case should map through CooperationPlan, not persistent")
 
-    # An exact multiple of the chunk -> architecturally reachable via
-    # striping, but not implemented -> UNSUPPORTED_CURRENT_CODEGEN, NOT a
-    # hardware wall.
+    # An exact multiple of the chunk -> OK via persistent worker-wave
+    # virtualization (worker_waves = workers_per_fft // chunk exactly).
     r = map_cooperative_kernel(
         length=1024, radices=(8, 8, 4, 4), workers_per_fft=chunk * 2, fft_slots_wanted=1,
         total_ffts=4, inverse=False, inverse_scale=None, kernel_name="T2",
         target=DEFAULT_TARGET_PROFILE, gpu_config=gpu_config,
     )
     check(
-        r.status is BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN,
-        f"workers_per_fft={chunk * 2} (exact multiple of chunk={chunk}) should be "
-        f"UNSUPPORTED_CURRENT_CODEGEN (proven architecturally reachable, just not "
-        f"implemented), got {r.status}",
+        r.status is BaselineStatus.OK and r.plan.persistent is not None
+        and r.plan.persistent.workers_per_fft == chunk * 2,
+        f"workers_per_fft={chunk * 2} (exact multiple of chunk={chunk}) should legalize "
+        f"OK via persistent worker-wave virtualization with workers_per_fft preserved "
+        f"verbatim, got status={r.status} plan.persistent={getattr(r.plan, 'persistent', None)}",
     )
 
-    # Neither a divisor nor a multiple -> genuinely impossible.
+    # Neither a divisor nor a multiple ("ragged") -> ALSO OK via persistent
+    # worker-wave virtualization -- the last (only) wave is ragged, its
+    # surplus physical lanes safe dummy lanes. This is the case an earlier
+    # version of this test (and of BaselineStatus itself) incorrectly
+    # believed was a genuine hardware wall.
     r = map_cooperative_kernel(
         length=105, radices=(7, 15), workers_per_fft=15, fft_slots_wanted=1,
         total_ffts=4, inverse=False, inverse_scale=None, kernel_name="T3",
         target=DEFAULT_TARGET_PROFILE, gpu_config=gpu_config,
     )
     check(
-        r.status is BaselineStatus.UNSUPPORTED_HARDWARE_MAPPING,
+        r.status is BaselineStatus.OK and r.plan.persistent is not None
+        and r.plan.persistent.workers_per_fft == 15,
         f"workers_per_fft=15 (neither divides nor is a multiple of chunk={chunk}) "
-        f"should be UNSUPPORTED_HARDWARE_MAPPING, got {r.status}",
+        f"should legalize OK via ragged persistent worker-wave virtualization with "
+        f"workers_per_fft preserved verbatim, got status={r.status} "
+        f"plan.persistent={getattr(r.plan, 'persistent', None)}",
     )
 
 
 def verify_clfft_multiple_of_chunk_is_current_codegen_not_hardware() -> None:
-    print("clFFT: N=64..4096 (workers_per_fft always a multiple of 8) reclassified as UNSUPPORTED_CURRENT_CODEGEN")
+    """REVISED 2026-09-13: renamed in spirit, not in name (see call site in
+    `main()`) -- these lengths' own `workers_per_fft` (always a multiple of
+    8 for clFFT, since its workgroup sizes and transform counts are both
+    powers of two times small factors) now legalize `OK` via persistent
+    worker-wave virtualization instead of `UNSUPPORTED_CURRENT_CODEGEN`
+    (which was accurate on 2026-09-08 -- no codegen existed yet -- and
+    closed on 2026-09-12)."""
+    print("clFFT: N=64..4096 (workers_per_fft always a multiple of 8) now legalize OK via persistent worker-wave virtualization")
     for length in (64, 128, 256, 512, 1024, 2048, 4096):
         result = clfft.plan_single_kernel(length, total_ffts=4)
         check(
-            result.status is BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN,
-            f"clfft N={length} should be UNSUPPORTED_CURRENT_CODEGEN post-audit, got {result.status}",
+            result.status is BaselineStatus.OK,
+            f"clfft N={length} should legalize OK via worker-wave virtualization, got {result.status}",
         )
 
 

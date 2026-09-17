@@ -69,6 +69,8 @@ same_fn]()` calls to the *same* target still fully barrier between calls
 whole scheme race-free.
 """
 
+from typing import Literal
+
 from codegen.common import (
     Emitter,
     emit_prelude as _emit_prelude,
@@ -76,22 +78,97 @@ from codegen.common import (
     spad as _spad,
 )
 from codegen.fft_codegen import _emit_stage_batches, _stage_compute_lanes
-from planning.core.fft_plan_core import FFTCodegenPlan, FFTStagePlan
-from planning.execution.fft_plan_persistent import num_rounds
+from planning.core.fft_plan_core import FFTCodegenPlan, FFTStagePlan, SIMDBatchPlan
+from planning.execution.fft_plan_persistent import num_rounds, worker_waves as _worker_waves
+
+# REVISED 2026-09-14 (physical-lane strip-mining -- see docs/
+# physical_lane_strip_mining.md): three execution-lowering strategies for
+# the SAME plan (same radix decomposition, same workers_per_fft, same
+# _partition_vector_scalar batch/worker assignment -- nothing about the
+# GPU-facing plan changes across modes, only how it is realized on
+# M2NDP's fixed 8-physical-lane substrate), kept side by side so the real
+# toolchain can compare them apples-to-apples rather than trusting
+# source-level reasoning alone:
+#
+#   "wave"     -- Mode A, the ORIGINAL mechanism: workers_per_fft LOGICAL
+#                 workers realized as ceil(workers_per_fft/workers_per_
+#                 group) separate `launch_parallel[stage_N]()` calls from
+#                 device_main, wave_index threaded via a scratchpad
+#                 `wave_tracker` counter between calls. Proven correct,
+#                 proven to pay a real per-wave barrier/launch cost.
+#   "fused"    -- Mode B (2026-09-14 worker-wave fusion): ONE
+#                 `launch_parallel[stage_N]()` call; each physical lane
+#                 visits its own logical workers via a runtime `while
+#                 logical_worker_id < workers_per_fft:` loop wrapped
+#                 around the exact same workers_per_fft-way `if/elif`
+#                 dispatch tree Mode A already built. Removed the
+#                 barriers; real-hardware validation then found it can
+#                 newly spill (an extra live range crossing the loop
+#                 back-edge -- confirmed by disassembly: the loop needs
+#                 4 more callee-saved integer registers, s4-s7, than
+#                 Mode A/C ever need in the same function, plus 16 more
+#                 bytes of local spill-slot space -- see docs/
+#                 physical_lane_strip_mining.md's register-pressure
+#                 section). CORRECTION 2026-09-14: VkFFT (9,8,3) at
+#                 N=216, workers_per_fft=36 crashing the M2NDP-Detour
+#                 simulator (`unmapped opcode: CSRRS` near a spilled
+#                 stack-frame prologue) was ORIGINALLY (mis)attributed
+#                 to this mode alone -- re-verified through the
+#                 production `generate_recursive_fft_kernels` path (the
+#                 original standalone-codegen probe used to find it used
+#                 a different host-wrapper shape) and confirmed the
+#                 identical crash (same stage, same 16-byte DRAM-spill
+#                 frame, same CSRRS panic) occurs under EVERY mode --
+#                 "wave" and "physical" included. The crash is a M2NDP-
+#                 Detour simulator/toolchain gap (no CSRRS decode
+#                 support for whatever the compiler emits right after
+#                 any spilled prologue), not a consequence of this
+#                 mode's own dispatch shape -- see docs/
+#                 physical_lane_strip_mining.md's crash-analysis section.
+#   "physical" -- Mode C (this revision): flattens the workers_per_fft
+#                 logical-worker batch assignment down to `workers_per_
+#                 group` (8) PHYSICAL buckets at CODEGEN TIME (a physical
+#                 lane p's own batches are simply the concatenation, in
+#                 ascending order, of every logical worker j's own
+#                 already-partitioned batches where `j % workers_per_
+#                 group == p` -- see `_flatten_to_physical_lanes`), then
+#                 emits a plain `workers_per_group`-way `if/elif`
+#                 dispatch, exactly the SAME shape `_emit_worker_dispatch`
+#                 already renders for the `workers_per_fft <= workers_per_
+#                 group` case -- no runtime logical_worker_id, no loop, no
+#                 W-sized branch tree, one `launch_parallel` call. Total
+#                 emitted batch code is IDENTICAL to Mode B (same batches,
+#                 same math, same addresses) -- only the CONTROL FLOW
+#                 wrapping them changes: a compile-time-fixed 8-way
+#                 dispatch instead of a runtime loop over a W-way one.
+#
+# Default is "physical" (Mode C) once real-toolchain validation confirmed
+# it matches or beats Mode B's cycles with none of Mode B's new spilling
+# (the VkFFT crash itself is mode-independent -- see above) -- see docs/
+# physical_lane_strip_mining.md's own validation section. "wave"/"fused"
+# remain fully implemented and
+# selectable (never deleted -- explicit opt-in via `mode=`) for future
+# comparison, exactly mirroring how `workers_per_fft` itself is kept as
+# GPU-planner metadata even though M2NDP's own physical execution width
+# is always 8.
+ExecutionMode = Literal["wave", "fused", "physical"]
 
 
 def _worker_body(
-    stage: FFTStagePlan, worker_id: int, workers_per_group: int, vector_compute_lanes: int | None,
+    stage: FFTStagePlan, worker_id: int, workers_per_fft: int, vector_compute_lanes: int | None,
 ) -> tuple[tuple, int | None]:
-    """`(batches, compute_lanes)` for one worker on one stage -- the last
-    worker owns this stage's own tail (partial) batch, if it has one,
-    exclusively; every worker (the tail-owning one included) renders at
+    """`(batches, compute_lanes)` for one LOGICAL worker (`0 ..
+    workers_per_fft - 1`) on one stage -- the last logical worker owns
+    this stage's own tail (partial) batch, if it has one, exclusively;
+    every worker (the tail-owning one included) renders at
     `vector_compute_lanes` -- the same register-pressure-narrowed width
     `_stage_compute_lanes` already resolved for this stage (see
     `emit_stage_phase`'s own docstring for why skipping that narrowing
     entirely is not optional: a real crash + wrong answer, not just a
     spill warning, was confirmed on N=64's (4,4,4) middle stage before
-    it was wired in).
+    it was wired in). `workers_per_fft == workers_per_group` (today's
+    only case before worker-wave virtualization existed) makes "logical"
+    and "physical" worker id the same thing, unchanged.
 
     The tail-owning worker does **not** get a hardcoded `compute_lanes=1`
     ("genuine scalar arithmetic") the way the original design doc
@@ -120,30 +197,141 @@ def _worker_body(
     """
     assert stage.persistent_vector_batches is not None
     assert stage.persistent_scalar_batches is not None
-    if worker_id == workers_per_group - 1 and stage.persistent_scalar_batches:
+    if worker_id == workers_per_fft - 1 and stage.persistent_scalar_batches:
         return stage.persistent_scalar_batches, vector_compute_lanes
     return stage.persistent_vector_batches[worker_id], vector_compute_lanes
 
 
 def _emit_worker_dispatch(
-    e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, workers_per_group: int,
-    vector_compute_lanes: int | None,
+    e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, workers_per_fft: int,
+    vector_compute_lanes: int | None, dispatch_var: str = "worker_id",
 ) -> None:
-    """`if worker_id == 0: ... elif worker_id == 1: ... else: ...` -- one
-    branch per worker, each rendering that worker's own already-partitioned
-    batches via the *exact same* `_emit_stage_batches` fft_codegen.py uses
-    for the plain (non-persistent) path. Built in a sub-Emitter and
-    re-indented by one level (the same idiom fft_transpose_codegen.py's
-    own tail-branch emission uses) since `_emit_stage_batches`/`_emit_batch`
-    hardcode an 8-space base indent, one level shallower than this call
-    site (inside an `if worker_id == k:` body, not directly inside a
-    `@staticmethod def ...():`).
+    """`if {dispatch_var} == 0: ... elif {dispatch_var} == 1: ... else: ...`
+    -- one branch per LOGICAL worker (`0 .. workers_per_fft - 1`), each
+    rendering that worker's own already-partitioned batches via the
+    *exact same* `_emit_stage_batches` fft_codegen.py uses for the plain
+    (non-persistent) path. Built in a sub-Emitter and re-indented by one
+    level (the same idiom fft_transpose_codegen.py's own tail-branch
+    emission uses) since `_emit_stage_batches`/`_emit_batch` hardcode an
+    8-space base indent, one level shallower than this call site (inside
+    an `if {dispatch_var} == k:` body, not directly inside a `@staticmethod
+    def ...():`).
+
+    `dispatch_var`: `"worker_id"` (the default, physical) when this stage
+    has no worker-wave virtualization (`workers_per_fft ==
+    workers_per_group`) -- unchanged from before this parameter existed.
+    `emit_stage_phase` passes `"logical_worker_id"` instead once
+    `worker_waves > 1`, so each branch is keyed on the LOGICAL worker id a
+    physical worker computes for its current wave, not its own fixed
+    physical id -- see `_emit_wave_prelude`.
+
+    RAGGED WAVES (`workers_per_fft` not a multiple of `workers_per_group`,
+    e.g. 6 or 10 against a physical width of 8 -- see `fft_plan_
+    persistent.worker_waves`'s own docstring): this loop only ever emits
+    branches for `dispatch_var == 0 .. workers_per_fft - 1`, and there is
+    NO trailing `else`. A physical lane whose computed `dispatch_var`
+    value is `>= workers_per_fft` -- which only happens on the single wave
+    when `workers_per_fft <= workers_per_group`, or on the LAST wave
+    otherwise -- matches none of these branches and falls straight through
+    to this function's own end with no code executed at all: no load, no
+    twiddle, no store, no scratchpad address computed. This is not new
+    machinery added for the ragged case -- it is the exact same idiom this
+    function already used for a worker whose own bucket happens to be
+    empty (`if not batches: continue` above skips emitting that worker's
+    branch too, for the SAME reason: nothing to do this call), now also
+    covering a worker that has no logical identity at all this wave.
     """
     emitted_any = False
-    for worker_id in range(workers_per_group):
+    for worker_id in range(workers_per_fft):
         batches, compute_lanes = _worker_body(
-            stage, worker_id, workers_per_group, vector_compute_lanes
+            stage, worker_id, workers_per_fft, vector_compute_lanes
         )
+        if not batches:
+            continue
+        keyword = "if" if not emitted_any else "elif"
+        emitted_any = True
+        e.add(f"        {keyword} {dispatch_var} == {worker_id}:")
+        sub = Emitter()
+        _emit_stage_batches(
+            sub, plan=plan, stage=stage, batches=batches, compute_lanes=compute_lanes
+        )
+        for line in sub.lines:
+            e.add("    " + line if line else "")
+
+
+def _flatten_to_physical_lanes(
+    stage: FFTStagePlan, *, workers_per_fft: int, workers_per_group: int,
+) -> tuple[tuple[SIMDBatchPlan, ...], ...]:
+    """Mode C's own core transformation: collapse `workers_per_fft` LOGICAL
+    workers' worth of already-partitioned batches (`stage.persistent_
+    vector_batches`, `stage.persistent_scalar_batches` -- built by
+    `_partition_vector_scalar`, unchanged by this function) down to
+    exactly `workers_per_group` (8) PHYSICAL buckets, at CODEGEN TIME, so
+    the emitted dispatch never needs a runtime `logical_worker_id` at all.
+
+    Physical lane `p`'s own bucket is the concatenation, in ascending
+    logical-worker order, of every logical worker `j`'s own batches where
+    `j % workers_per_group == p` -- i.e. exactly the set of logical
+    workers Mode B's `while logical_worker_id < workers_per_fft:
+    logical_worker_id += workers_per_group` loop would have visited on
+    physical lane `p`, just computed once, in Python, instead of by a
+    runtime loop. The scalar/tail batch (owned by logical worker
+    `workers_per_fft - 1` alone, see `_partition_vector_scalar`'s own
+    docstring) lands on whichever physical lane that logical worker maps
+    to (`(workers_per_fft - 1) % workers_per_group`) and is appended AFTER
+    that lane's own vector batches, matching `_worker_body`'s existing
+    "tail batch owned by the last logical worker, rendered like every
+    other worker's batches" contract exactly.
+
+    Concatenating multiple batches into one physical lane's own branch is
+    not new capability invented here: `_emit_stage_batches` (called on the
+    result, exactly as `_emit_worker_dispatch` already calls it on a
+    single logical worker's own batches) already renders an arbitrary-
+    length batch tuple correctly -- this is the exact same code path a
+    persistent leaf with more SIMD batches than `workers_per_group`
+    already exercises today whenever `workers_per_fft <=
+    workers_per_group` (the untouched, pre-existing case). Safe to
+    concatenate in any order (chosen here: ascending logical-worker order,
+    for a deterministic, easy-to-audit mapping) because every batch is
+    already fully independent within one stage -- see `emit_stage_phase`'s
+    own docstring for why (disjoint scratchpad offsets, no same-stage
+    producer/consumer relationship between logical workers at all).
+    """
+    assert stage.persistent_vector_batches is not None
+    assert stage.persistent_scalar_batches is not None
+    assert len(stage.persistent_vector_batches) == workers_per_fft
+    physical: list[list[SIMDBatchPlan]] = [[] for _ in range(workers_per_group)]
+    for logical_worker_id in range(workers_per_fft):
+        lane = logical_worker_id % workers_per_group
+        physical[lane].extend(stage.persistent_vector_batches[logical_worker_id])
+    if stage.persistent_scalar_batches:
+        tail_lane = (workers_per_fft - 1) % workers_per_group
+        physical[tail_lane].extend(stage.persistent_scalar_batches)
+    return tuple(tuple(bucket) for bucket in physical)
+
+
+def _emit_physical_lane_dispatch(
+    e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, workers_per_fft: int,
+    workers_per_group: int, vector_compute_lanes: int | None,
+) -> None:
+    """Mode C's own dispatch emission: `if worker_id == 0: ... elif
+    worker_id == 1: ... ` over exactly `workers_per_group` (8) PHYSICAL
+    branches -- never more, regardless of `workers_per_fft` -- each
+    rendering that lane's own FLATTENED batch list (see
+    `_flatten_to_physical_lanes`) via the exact same `_emit_stage_batches`
+    every other dispatch shape in this module already uses. No runtime
+    `logical_worker_id`, no loop, no W-sized branch tree: this is
+    textually the SAME shape `_emit_worker_dispatch` already renders for
+    `workers_per_fft <= workers_per_group` (today's untouched case) --
+    reusing that exact idiom, just fed pre-flattened physical-lane
+    batches instead of raw per-logical-worker ones.
+    """
+    physical_batches = _flatten_to_physical_lanes(
+        stage, workers_per_fft=workers_per_fft, workers_per_group=workers_per_group,
+    )
+    emitted_any = False
+    for worker_id in range(workers_per_group):
+        batches = physical_batches[worker_id]
         if not batches:
             continue
         keyword = "if" if not emitted_any else "elif"
@@ -151,10 +339,38 @@ def _emit_worker_dispatch(
         e.add(f"        {keyword} worker_id == {worker_id}:")
         sub = Emitter()
         _emit_stage_batches(
-            sub, plan=plan, stage=stage, batches=batches, compute_lanes=compute_lanes
+            sub, plan=plan, stage=stage, batches=batches, compute_lanes=vector_compute_lanes
         )
         for line in sub.lines:
             e.add("    " + line if line else "")
+
+
+def _wave_tracker_name(plan: FFTCodegenPlan) -> str:
+    return _spad(plan.kernel_name, "wave_tracker")
+
+
+def _emit_wave_prelude(e: Emitter, *, plan: FFTCodegenPlan, workers_per_group: int) -> None:
+    """Mode A ("wave") only -- reads this physical unit's own `wave_
+    tracker` (mirrors `round_tracker`: one independent zero-initialized
+    scratchpad cell per physical unit) and derives `logical_worker_id`
+    for THIS call. Race-free the same way `round_tracker` is: every
+    worker of every active group reads `wave_tracker` here before any of
+    them reaches `_emit_wave_bump` below, so every worker in one
+    `launch_parallel[stage_N]()` call sees the SAME `wave_index`."""
+    tracker = _wave_tracker_name(plan)
+    e.add(f"        var wave_index = Int({tracker}.load[DType.float32, 1](0)[0])")
+    e.add(f"        var logical_worker_id = wave_index * {workers_per_group} + worker_id")
+
+
+def _emit_wave_bump(e: Emitter, *, plan: FFTCodegenPlan, worker_waves: int) -> None:
+    """Mode A ("wave") only -- advance this physical unit's own `wave_
+    tracker` by one, modulo `worker_waves`, gated to exactly one physical
+    worker per active software group (`worker_id == 0`), the same
+    discipline `writeback`'s own `round_tracker` bump uses."""
+    tracker = _wave_tracker_name(plan)
+    e.add("        if worker_id == 0:")
+    e.add(f"            var next_wave = (wave_index + 1) % {worker_waves}")
+    e.add(f"            {tracker}.store(0, Float32(next_wave))")
 
 
 def _round_tracker_name(plan: FFTCodegenPlan) -> str:
@@ -197,8 +413,10 @@ def emit_stage_phase(
     software_group_count: int,
     num_logical_blocks: int,
     workers_per_group: int,
+    workers_per_fft: int | None = None,
     compute_lanes: int | None = 4,
     narrow_middle_stages: bool = True,
+    mode: ExecutionMode = "physical",
 ) -> tuple[str, list[str]]:
     """Builds this phase's own fresh `Emitter` and returns `(name, lines)`
     -- the same "translate exactly what would be emitted, from a small
@@ -224,6 +442,38 @@ def emit_stage_phase(
     docs/persistent_leaf_design.md's own "Register-pressure discipline"
     section, which requires reusing this mechanism rather than treating a
     persistent-leaf spill as merely a performance caveat.
+
+    `workers_per_fft`: `None` (the default) means "equal to
+    `workers_per_group`" -- the plain one-wave case, byte-identical
+    codegen to every call site that predates this parameter. Any other
+    positive value is accepted, including one that is neither a divisor
+    nor a multiple of `workers_per_group` (a "ragged" cooperation width,
+    e.g. 6 or 10 against a physical width of 8) or an exact multiple
+    greater than it (e.g. 36) -- see `fft_plan_persistent.worker_waves`'s
+    own docstring for the `ceil(workers_per_fft / workers_per_group)`
+    formula (`worker_waves`, kept as a pure metadata/diagnostics helper --
+    see its own docstring for why it is NOT used to control runtime
+    dispatch here any more).
+
+    `mode`: which of the three execution-lowering strategies documented at
+    this module's own top (`ExecutionMode`) to render this stage with --
+    `"wave"` (Mode A, original, one `launch_parallel` per wave -- this
+    function only renders the STAGE FUNCTION BODY the same way regardless
+    of mode; `emit_persistent_kernel_struct` is what actually decides how
+    many times `device_main` calls it), `"fused"` (Mode B, the 2026-09-14
+    worker-wave-fusion revision: one call, a runtime `while
+    logical_worker_id < workers_per_fft:` loop around the *exact same*
+    `if/elif` dispatch chain `_emit_worker_dispatch` built for the
+    original `workers_per_fft <= workers_per_group` case), or
+    `"physical"` (Mode C, the default: one call, `workers_per_fft`
+    logical workers flattened to `workers_per_group` physical buckets at
+    CODEGEN TIME via `_flatten_to_physical_lanes`, dispatched with a
+    plain `workers_per_group`-way `if/elif`, no runtime logical id, no
+    loop, no W-sized branch tree). `workers_per_fft <= workers_per_group`
+    collapses ALL THREE modes to the exact same one-call, no-loop,
+    `workers_per_group`-way dispatch (today's original, untouched shape)
+    -- this parameter, and every difference between modes, is only
+    observable once `workers_per_fft > workers_per_group`.
     """
     is_first = stage.stage_id == 0
     is_last = stage.stage_id == len(plan.stages) - 1
@@ -235,6 +485,10 @@ def emit_stage_phase(
             compute_lanes=compute_lanes, is_first=is_first, is_last=is_last, radix=stage.radix,
             narrow_middle_stages=narrow_middle_stages, prev_radix=prev_radix,
         )
+
+    if workers_per_fft is None:
+        workers_per_fft = workers_per_group
+    waves = _worker_waves(workers_per_fft, workers_per_group)
 
     e = Emitter()
     name = f"stage_{stage.stage_id}"
@@ -249,10 +503,49 @@ def emit_stage_phase(
     )
     e.add("        var spad_base = 0")
     e.add()
-    _emit_worker_dispatch(
-        e, plan=plan, stage=stage, workers_per_group=workers_per_group,
-        vector_compute_lanes=vector_compute_lanes,
-    )
+    if waves <= 1:
+        # All three modes collapse to this one shape when there is only
+        # one wave -- no mode-specific machinery ever emitted.
+        _emit_worker_dispatch(
+            e, plan=plan, stage=stage, workers_per_fft=workers_per_fft,
+            vector_compute_lanes=vector_compute_lanes, dispatch_var="worker_id",
+        )
+    elif mode == "physical":
+        # Mode C: flattened at codegen time, no runtime logical id at all.
+        _emit_physical_lane_dispatch(
+            e, plan=plan, stage=stage, workers_per_fft=workers_per_fft,
+            workers_per_group=workers_per_group, vector_compute_lanes=vector_compute_lanes,
+        )
+    elif mode == "fused":
+        # Mode B: one physical lane visits several logical workers in a
+        # plain runtime loop, no cross-call scratchpad state, no repeated
+        # launch_parallel.
+        e.add("        var logical_worker_id = worker_id")
+        e.add(f"        while logical_worker_id < {workers_per_fft}:")
+        sub = Emitter()
+        _emit_worker_dispatch(
+            sub, plan=plan, stage=stage, workers_per_fft=workers_per_fft,
+            vector_compute_lanes=vector_compute_lanes, dispatch_var="logical_worker_id",
+        )
+        for line in sub.lines:
+            e.add("    " + line if line else "")
+        e.add(f"            logical_worker_id += {workers_per_group}")
+    elif mode == "wave":
+        # Mode A: this call handles exactly ONE wave, wave_index read from
+        # the cross-call scratchpad wave_tracker (bumped at the end, once
+        # this call's own dispatched body is done) -- device_main (see
+        # emit_persistent_kernel_struct) is what actually calls this
+        # function `waves` times in a row for this to mean anything.
+        _emit_wave_prelude(e, plan=plan, workers_per_group=workers_per_group)
+        e.add()
+        _emit_worker_dispatch(
+            e, plan=plan, stage=stage, workers_per_fft=workers_per_fft,
+            vector_compute_lanes=vector_compute_lanes, dispatch_var="logical_worker_id",
+        )
+        e.add()
+        _emit_wave_bump(e, plan=plan, worker_waves=waves)
+    else:
+        raise ValueError(f"unknown mode {mode!r}")
     e.add()
     e.add()
     return name, e.lines
@@ -336,6 +629,7 @@ def _emit_params_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
 def emit_persistent_kernel_struct(
     e: Emitter, *, plan: FFTCodegenPlan, num_logical_blocks: int,
     compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
+    mode: ExecutionMode = "physical",
 ) -> None:
     """Append one `NDPTask` struct for a persistent-software-workgroup FFT
     leaf to `e`: `Params`, `buf_a`/`buf_b`/`round_tracker` scratchpad,
@@ -377,6 +671,8 @@ def emit_persistent_kernel_struct(
 
     pw = plan.persistent
     workers_per_group = pw.workers_per_group
+    workers_per_fft = pw.workers_per_fft
+    waves = _worker_waves(workers_per_fft, workers_per_group)
     software_group_count = pw.software_group_count
     rounds = num_rounds(num_logical_blocks, software_group_count)
     # Defense in depth: `make_persistent_leaf_plan` already rejects this
@@ -417,40 +713,59 @@ def emit_persistent_kernel_struct(
         f'    comptime round_tracker = scratchpad[1, Float32, '
         f'name="{plan.kernel_name.lower()}_round_tracker"]()'
     )
+    # `wave_tracker` only exists for Mode A ("wave") with more than one
+    # wave -- Modes B ("fused") and C ("physical") resolve every logical
+    # worker a physical lane owns inside ONE stage invocation (a runtime
+    # loop for B, a compile-time-flattened static dispatch for C), so
+    # neither needs any cross-call state persisted in scratchpad.
+    if mode == "wave" and waves > 1:
+        e.add(
+            f'    comptime wave_tracker = scratchpad[1, Float32, '
+            f'name="{plan.kernel_name.lower()}_wave_tracker"]()'
+        )
     e.add()
 
-    phase_names: list[str] = []
-
-    name, lines = emit_bulk_copy_phase(
+    preload_name, lines = emit_bulk_copy_phase(
         plan=plan, name="preload", software_group_count=software_group_count,
         num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
         to_scratchpad=True, buffer_name=buffer_names[0], bump_round=False,
     )
     e.lines.extend(lines)
-    phase_names.append(name)
 
+    stage_names: list[str] = []
     for stage in plan.stages:
         name, lines = emit_stage_phase(
             plan=plan, stage=stage, software_group_count=software_group_count,
             num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
+            workers_per_fft=workers_per_fft,
             compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+            mode=mode,
         )
         e.lines.extend(lines)
-        phase_names.append(name)
+        stage_names.append(name)
 
-    name, lines = emit_bulk_copy_phase(
+    writeback_name, lines = emit_bulk_copy_phase(
         plan=plan, name="writeback", software_group_count=software_group_count,
         num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
         to_scratchpad=False, buffer_name=final_buffer, bump_round=True,
     )
     e.lines.extend(lines)
-    phase_names.append(name)
+
+    # Mode A ("wave") is the only mode where device_main itself must call
+    # a stage's own phase function more than once per round (`waves`
+    # separate launch_parallel calls, each one wave) -- Modes B and C
+    # resolve every logical worker inside a single call, so both call
+    # each stage exactly once per round regardless of workers_per_fft.
+    stage_repeat = waves if (mode == "wave" and waves > 1) else 1
 
     e.add("    @staticmethod")
     e.add("    def device_main():")
     for _ in range(rounds):
-        for phase in phase_names:
-            e.add(f"        launch_parallel[{plan.kernel_name}.{phase}]()")
+        e.add(f"        launch_parallel[{plan.kernel_name}.{preload_name}]()")
+        for stage_name in stage_names:
+            for _ in range(stage_repeat):
+                e.add(f"        launch_parallel[{plan.kernel_name}.{stage_name}]()")
+        e.add(f"        launch_parallel[{plan.kernel_name}.{writeback_name}]()")
     e.add()
     e.add()
 
@@ -458,6 +773,7 @@ def emit_persistent_kernel_struct(
 def generate_persistent_fft_kernel(
     plan: FFTCodegenPlan, *, num_logical_blocks: int,
     compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
+    mode: ExecutionMode = "physical",
 ) -> str:
     """Render a full persistent-software-workgroup FFT: `emit_persistent_
     kernel_struct`'s one `NDPTask` struct, plus this function's own
@@ -467,6 +783,10 @@ def generate_persistent_fft_kernel(
     `emit_persistent_kernel_struct`'s own docstring for the struct-only
     half of this, now shared with `fft_transpose_codegen.
     generate_recursive_fft_kernels`.
+
+    `mode`: forwarded to `emit_persistent_kernel_struct`/`emit_stage_
+    phase` -- see this module's own top-of-file `ExecutionMode` docstring
+    for what `"wave"`/`"fused"`/`"physical"` each render.
     """
     e = Emitter()
     _emit_prelude(e)
@@ -475,6 +795,7 @@ def generate_persistent_fft_kernel(
     emit_persistent_kernel_struct(
         e, plan=plan, num_logical_blocks=num_logical_blocks,
         compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+        mode=mode,
     )
 
     host = plan.host

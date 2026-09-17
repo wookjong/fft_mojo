@@ -720,6 +720,7 @@ def generate_recursive_fft_kernels(
     narrow_middle_stages: bool = False, loop_stages: bool = True,
     reference_check: bool = True, target: TargetProfile = DEFAULT_TARGET_PROFILE,
     spread_across_units: bool = False, debug_print_pool_alignment: bool = False,
+    persistent_mode: str = "physical",
 ) -> str:
     """Render a full make_recursive_transpose_plan tree as a flat, ordered
     Mojo-ish kernel sequence chained through DRAM from one host main().
@@ -873,6 +874,7 @@ def generate_recursive_fft_kernels(
             emit_persistent_kernel_struct(
                 e, plan=stage, num_logical_blocks=num_logical_blocks,
                 compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+                mode=persistent_mode,
             )
         else:
             stage_loop_stages = loop_stages

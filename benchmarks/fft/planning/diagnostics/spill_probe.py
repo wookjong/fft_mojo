@@ -181,6 +181,7 @@ def probe_spill_free(
     m2ndp_root: str | None = None,
     build_timeout: float = 120.0,
     run_timeout: float = 200.0,
+    persistent_mode: str = "physical",
 ) -> SpillProbeResult:
     """Render `plan` (exactly as make_fft_kernel.py would, at this
     compute_lanes/narrow_middle_stages), build it against the real
@@ -238,6 +239,7 @@ def probe_spill_free(
     source = generate_recursive_fft_kernels(
         plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         reference_check=False, target=target, spread_across_units=spread_across_units,
+        persistent_mode=persistent_mode,
     )
     return probe_source_spill_free(
         source, mojo_root=mojo_root, m2ndp_root=m2ndp_root,
@@ -312,7 +314,40 @@ def probe_source_spill_free(
                 log=f"run timed out after {run_timeout}s:\n{exc.stdout or ''}{exc.stderr or ''}",
             )
 
+        # BUG FIX 2026-09-14 (found investigating worker-wave fusion's own
+        # real-toolchain validation -- see docs/worker_wave_fusion.md): this
+        # used to report `run_ok=True` unconditionally whenever the process
+        # didn't TIME OUT, never checking `run.returncode` -- so a genuine
+        # M2NDP-Detour simulator crash (SIGABRT/"M2NDP PANIC", e.g. an
+        # unmapped RISC-V opcode hit while unwinding a spilled stack frame)
+        # was silently reported as a normal, successful run, with whatever
+        # partial Gantt-log cycle count happened to exist before the crash
+        # treated as this run's own real `ndp_cycles` -- observed concretely
+        # for a persistent-leaf worker-wave-fusion candidate that spilled on
+        # every stage: the process aborted immediately after launching
+        # stage_0, yet this function still returned `run_ok=True` with a
+        # `cycles` value that was actually just `preload`'s own completion
+        # cycle. `run_ok` is documented (see `SpillProbeResult`'s own
+        # docstring) as `False` for "a toolchain-level failure" -- a crash
+        # is exactly that, so it must be caught here, not left to whatever
+        # `_parse_ndp_cycles` happens to salvage from a truncated log.
         log = run.stdout + run.stderr
+        # Belt-and-suspenders alongside the `returncode` check above:
+        # confirmed on real hardware that the M2NDP-Detour simulator's own
+        # internal panic handler (`===== M2NDP PANIC =====`, printed on an
+        # uncaught exception such as an unmapped RISC-V opcode) can still
+        # let the WRAPPING process exit 0 -- the panic is handled/reported
+        # from inside the simulator, not necessarily surfaced as the OS-level
+        # exit code `subprocess.run` sees. `returncode != 0` alone did not
+        # catch this on the concrete crash that motivated this fix (exit
+        # code was 0 despite "Aborted (core dumped)" appearing in the log),
+        # so scan for the panic banner directly.
+        if run.returncode != 0 or "M2NDP PANIC" in log:
+            return SpillProbeResult(
+                spill_free=False, spilling_kernels=(), build_ok=True, run_ok=False,
+                log=f"run exited with code {run.returncode}:\n{log}",
+            )
+
         spilling: list[tuple[str, str]] = []
         seen: set[tuple[str, str]] = set()
         for kernel_name, stage_name, _bytes in _SPILL_RE.findall(log):

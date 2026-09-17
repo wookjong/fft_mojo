@@ -545,11 +545,42 @@ def verify_vkfft_axisblock_swap_and_upload_cases() -> None:
     # it, upload_id>0) within the same plan.
     num_passes_16384 = vkfft.choose_num_passes(16384, non_strided=True, target=T)
     check(num_passes_16384 > 1, f"N=16384 should need >1 pass to exercise first/later-upload, got {num_passes_16384}")
+    # REVISED 2026-09-13 (ragged-wave generalization -- see docs/
+    # ragged_worker_wave_generalization.md): this used to read `upload_id`
+    # off `vkfft.plan(16384, batch=4)`'s own TOP-LEVEL gpu_config, which
+    # only ever worked because that near_fft (upload_id=0) leaf's own
+    # `workers_per_fft` used to be UNSUPPORTED_HARDWARE_MAPPING -- the
+    # failure short-circuited out of `_recursive_result` and `plan()`
+    # returned that failed leaf's own `BaselineResult` (whose `extra` DOES
+    # carry `upload_id`) as the top-level result. Now that every positive
+    # `workers_per_fft` legalizes via worker-wave virtualization, that
+    # leaf succeeds and the recursion continues all the way through to a
+    # fully-built, genuinely OK multi-pass plan (`plan()`'s own top-level
+    # `extra` is `{"num_passes", "factors", "is_pow2"}`, never `upload_id`,
+    # once nothing fails) -- a real coverage improvement, not a fidelity
+    # regression, but it means this test can no longer piggyback on an
+    # incidental failure to inspect upload_id==0 dispatch. Call
+    # `axisblock_for_leaf` directly instead, exactly mirroring the
+    # existing later-upload direct call two lines below -- this checks the
+    # SAME source-fidelity property (the `upload_id==0` vs `upload_id>0`
+    # branch in `axisblock_for_leaf`) without depending on whether the
+    # M2NDP mapping happens to succeed or fail for this particular length.
+    first_tpt, first_batch = vkfft.axisblock_for_leaf(
+        64, vkfft.leaf_radix_sequence(64, 4), max_rhs=4, num_passes=num_passes_16384,
+        upload_id=0, original_length=16384, target=T,
+    )
+    check(first_tpt > 0 and first_batch > 0, f"first-upload leaf should produce a valid pair, got {(first_tpt, first_batch)}")
     result16384 = vkfft.plan(16384, batch=4)
     check(
-        result16384.gpu_config.extra.get("upload_id") == 0,
-        f"vkfft.plan(16384)'s own reported leaf should be upload_id=0 (near_fft, first upload), "
-        f"got {result16384.gpu_config.extra}",
+        result16384.status is BaselineStatus.OK,
+        f"vkfft.plan(16384) should now legalize OK end-to-end via worker-wave "
+        f"virtualization (previously failed at the near_fft leaf), got "
+        f"{result16384.status}/{result16384.diagnostics}",
+    )
+    check(
+        result16384.gpu_config.extra.get("num_passes") == num_passes_16384,
+        f"vkfft.plan(16384)'s own top-level extra should report num_passes="
+        f"{num_passes_16384}, got {result16384.gpu_config.extra}",
     )
     # Directly exercise a later-upload leaf (upload_id=1) for the same
     # length via axisblock_for_leaf, confirming it takes the

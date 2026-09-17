@@ -256,6 +256,7 @@ def run_one(
     planner: str, n: int, target: TargetProfile, *, batch: int, inverse: bool,
     skip_toolchain: bool, mojo_root: str | None, m2ndp_root: str | None,
     build_timeout: float, run_timeout: float, seed: int,
+    persistent_mode: str = "physical",
 ) -> PlanResult:
     ok, plan, diag = get_plan(planner, n, target, batch=batch, inverse=inverse)
     if not ok:
@@ -292,6 +293,7 @@ def run_one(
     probe: SpillProbeResult = probe_spill_free(
         plan, target=target, mojo_root=mojo_root, m2ndp_root=m2ndp_root,
         build_timeout=build_timeout, run_timeout=run_timeout,
+        persistent_mode=persistent_mode,
     )
     if not probe.build_ok:
         result.status = "compile_failure"
@@ -346,6 +348,11 @@ def main() -> None:
     parser.add_argument("--run-timeout", type=float, default=300.0)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--append", action="store_true", help="append to --out instead of overwriting (for resuming a long sweep)")
+    parser.add_argument(
+        "--persistent-mode", default="physical", choices=("wave", "fused", "physical"),
+        help="execution lowering for persistent leaf kernels: wave=Mode A (original worker-wave), "
+             "fused=Mode B (fused logical-worker loop), physical=Mode C (direct physical-lane strip-mining, default)",
+    )
     args = parser.parse_args()
 
     n_sweep = tuple(args.n) if args.n else DEFAULT_N_SWEEP
@@ -367,6 +374,7 @@ def main() -> None:
                     skip_toolchain=args.skip_toolchain, mojo_root=args.mojo_root,
                     m2ndp_root=args.m2ndp_root, build_timeout=args.build_timeout,
                     run_timeout=args.run_timeout, seed=args.seed,
+                    persistent_mode=args.persistent_mode,
                 )
                 elapsed = time.time() - t0
                 row = [_serialize(getattr(result, field_name)) for field_name in CSV_FIELDS]

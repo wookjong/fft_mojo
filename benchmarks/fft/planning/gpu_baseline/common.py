@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from planning.execution.fft_plan_cooperative import make_cooperative_leaf_plan
+from planning.execution.fft_plan_persistent import make_persistent_leaf_plan
 from planning.core.fft_plan_core import FFTCodegenPlan, MultiKernelHostPlan, pingpong_needed
 from planning.strategies.fft_plan_recursive import FFTLeafPlan, RecursiveFFTPlan
 from planning.core.target_profile import TargetProfile
@@ -99,6 +100,51 @@ class BaselineStatus(Enum):
       number of periodic chunks at all -- that is a genuine, proven
       `UNSUPPORTED_HARDWARE_MAPPING` for this target.
 
+    UPDATE 2026-09-12 (worker-wave virtualization): the "exact multiple"
+    case above is no longer `UNSUPPORTED_CURRENT_CODEGEN` -- see
+    `map_cooperative_kernel`'s own docstring for the mechanism that closes
+    it (`planning.execution.fft_plan_persistent`'s round engine, given a
+    second, nested "worker wave" dimension: `workers_per_fft` LOGICAL
+    workers executed as `workers_per_fft // interleave_chunk_uthreads`
+    sequential passes of the physical `interleave_chunk_uthreads` workers
+    over the SAME physical unit, one whole pass over every wave completing
+    before the FFT advances to its next stage). `workers_per_fft` itself
+    is never clamped or substituted -- exactly the GPU planner's own
+    chosen value becomes `PersistentWorkgroupPlan.workers_per_fft`,
+    verbatim. `UNSUPPORTED_CURRENT_CODEGEN` is kept as an enum member (a
+    still-live status for a genuinely different gap -- e.g. a plan shape
+    the persistent lowering itself cannot build, see `RESOURCE_INFEASIBLE`
+    below for the capacity case), just no longer reached by this
+    particular case.
+
+    UPDATE 2026-09-13 (ragged-wave generalization -- see docs/
+    ragged_worker_wave_generalization.md for the full investigation): the
+    THIRD bullet above ("neither a divisor nor a multiple ->
+    UNSUPPORTED_HARDWARE_MAPPING") has been re-examined and found to be
+    WRONG, not merely incomplete. The periodic-chunk argument that makes
+    an exact multiple of 8 reachable via temporal multiplexing (bullet
+    two) never actually required an exact multiple at all -- it only
+    required that `worker_waves(workers_per_fft, 8) = ceil(workers_per_fft
+    / 8)` sequential waves of 8 physical lanes be assembled, with the last
+    wave's surplus physical lanes (`workers_per_fft` not evenly dividing
+    8) simply computing a `logical_worker_id >= workers_per_fft` that
+    matches no dispatch branch in the generated code (`codegen.
+    fft_persistent_codegen._emit_worker_dispatch`'s own `if/elif` chain
+    has no trailing `else`) -- a safe, inert dummy lane that runs the
+    SAME compiled function as every active lane in its group (so it
+    reaches every barrier that function reaches) but executes zero FFT
+    arithmetic and touches zero scratchpad addresses. There is therefore
+    NO `workers_per_fft` value this target's own address interleaving
+    makes impossible -- `UNSUPPORTED_HARDWARE_MAPPING` for a cooperation-
+    width reason no longer exists; every positive `workers_per_fft` is
+    architecturally reachable, confirmed on the real M2NDP-Detour
+    toolchain (not just the Python-level planner) at W=3/5/6/7/10/12/18/
+    20/36 -- see that doc's own validation section. The member is kept
+    in this enum (still reachable for an UNRELATED reason -- e.g. a
+    negative or zero `workers_per_fft`, an actual programming error, not
+    an architectural one) but `map_cooperative_kernel` no longer produces
+    it for any real GPU-planner-chosen cooperation width.
+
     OK: the GPU planner's own chosen configuration mapped onto M2NDP with
     no substitution at all -- the resulting plan renders EXACTLY the radix
     sequence / stage grouping / worker mapping the GPU algorithm itself
@@ -121,11 +167,12 @@ class BaselineStatus(Enum):
     # from the M2NDP-specific categories below: this failure would occur
     # for ANY target, not just M2NDP.
     UNSUPPORTED_GPU_ALGORITHM = "unsupported_gpu_algorithm"
-    # Proven impossible on this M2NDP target's own address-interleaving
-    # architecture (see this enum's own docstring) -- a `workers_per_fft`
-    # that is neither a divisor nor a multiple of `target.
-    # interleave_chunk_uthreads`. Traced from real simulator source, not
-    # inferred from this project's own FFT-planner comments.
+    # REVISED 2026-09-13: no longer produced for a `workers_per_fft`
+    # cooperation-width reason at all -- see this enum's own "ragged-wave
+    # generalization" docstring update. Every positive `workers_per_fft`
+    # is reachable via `_map_worker_wave_kernel`'s ragged waves now. Kept
+    # for a genuinely different reason (e.g. `workers_per_fft <= 0`, an
+    # actual malformed-input case, not an architectural one).
     UNSUPPORTED_HARDWARE_MAPPING = "unsupported_hardware_mapping"
     # The M2NDP architecture CAN represent this configuration (proven via
     # the periodic-chunk argument in this enum's own docstring, or via
@@ -341,38 +388,60 @@ def map_cooperative_kernel(
 
     Classification (see BaselineStatus's own docstring for the full
     hardware trace this is based on -- third_party/m2ndp-detour/src/
-    {m2ndp_config.h,uthread_generator.cc,register_unit.cc}):
+    {m2ndp_config.h,uthread_generator.cc,register_unit.cc} -- and docs/
+    ragged_worker_wave_generalization.md for the 2026-09-13 investigation
+    that replaced case 3 below):
 
     Let `chunk = target.interleave_chunk_uthreads`.
 
     1. `chunk % workers_per_fft == 0` (workers_per_fft divides one whole
-       interleave chunk): OK -- every cooperating worker's global id falls
-       in the SAME chunk, hence the SAME physical NDP unit, in a single
-       "wave". This is the mechanism M2NDP's own `fft_plan_cooperative.py`/
-       `fft_cooperative_codegen.py` already implement.
-    2. `workers_per_fft % chunk == 0` (workers_per_fft is a whole multiple
-       of one chunk, e.g. 16, 32, 64 when chunk=8): UNSUPPORTED_CURRENT_
-       CODEGEN. Proven architecturally reachable (the address decoder's
-       chunk-to-unit assignment repeats with period `chunk *
-       target.num_ndp_units`, so global ids `g` and `g + chunk*num_ndp_
-       units` always land on the same physical unit with local_uthread_id()
-       values exactly `chunk` apart -- see BaselineStatus's own docstring),
-       but no `AddressMapping` kind in fft_plan_core.py, and no codegen in
-       this repository, implements the striped/multi-wave DRAM layout a
-       cooperative group built this way would need. Not implemented here
-       either (section 7 of the task this package was built from: this
-       audit reclassifies failures, it does not add new M2NDP-specific
-       codegen).
-    3. Neither of the above (e.g. workers_per_fft=15 with chunk=8):
-       UNSUPPORTED_HARDWARE_MAPPING. No whole number of periodic chunks
-       can ever produce this exact count on this target.
-    4. RESOURCE_INFEASIBLE when the GPU planner's own chosen
+       interleave chunk, i.e. `workers_per_fft <= chunk` and a divisor of
+       it -- 1, 2, 4, 8 when chunk=8): OK via the ORIGINAL cooperative
+       path -- every cooperating worker's global id falls in the SAME
+       chunk, hence the SAME physical NDP unit, in a single "wave", AND
+       (unlike case 2) several independent FFT slots can share that same
+       physical unit concurrently (`fft_slots_wanted`). This is the
+       mechanism M2NDP's own `fft_plan_cooperative.py`/
+       `fft_cooperative_codegen.py` already implement -- untouched by the
+       ragged-wave generalization, so every `workers_per_fft` value this
+       branch already handled keeps its EXACT prior behavior (no
+       regression).
+    2. Every other positive `workers_per_fft` (a divisor test failure,
+       whether or not it also happens to be an exact multiple of `chunk`):
+       legalized via worker-wave virtualization (`_map_worker_wave_kernel`
+       below, `fft_plan_persistent.worker_waves`'s ceiling-division
+       generalization) -- see its own docstring. `workers_per_fft` itself
+       is never clamped, rounded, or lowered; it becomes
+       `PersistentWorkgroupPlan.workers_per_fft` verbatim, executed as
+       `ceil(workers_per_fft / chunk)` sequential waves of the physical
+       `chunk` workers over the SAME physical unit's scratchpad, the last
+       (or only, when `workers_per_fft < chunk`) wave ragged whenever
+       `workers_per_fft` doesn't evenly divide `chunk` -- its surplus
+       physical lanes are safe dummy lanes (see `_map_worker_wave_
+       kernel`'s own docstring). Architecturally sound for ANY positive
+       `workers_per_fft`, not just an exact multiple of `chunk`: the
+       address decoder's chunk-to-unit assignment repeats with period
+       `chunk * target.num_ndp_units` regardless of how many of one
+       wave's `chunk` physical lanes correspond to real logical work --
+       see BaselineStatus's own docstring. Before 2026-09-12 an exact
+       multiple returned `UNSUPPORTED_CURRENT_CODEGEN` (no codegen existed
+       yet); before 2026-09-13 anything else in this bucket returned
+       `UNSUPPORTED_HARDWARE_MAPPING` (believed, incorrectly, to be a real
+       architectural wall -- see the doc above for why that belief was
+       itself the limit, not the hardware). Neither status is reachable
+       from a `workers_per_fft` reason any more.
+    3. RESOURCE_INFEASIBLE when the GPU planner's own chosen
        `fft_slots_wanted` worth of cooperating FFT slots does not fit in
        one NDP unit's own scratchpad (`target.spad_capacity_bytes`),
        computed from `leaf_scratchpad_bytes` above -- never from M2NDP's
        own `_cap_max_uthread`'s auto-shrinking behavior, which would
        silently replace the GPU's own chosen value with a smaller,
-       M2NDP-convenient one (exactly what section 2 forbids).
+       M2NDP-convenient one (exactly what section 2 forbids). Only
+       reachable from case 1 above; case 2's own worker-wave path has a
+       different, unconditional capacity check instead (`make_persistent_
+       leaf_plan`'s own `16 * length` byte requirement) -- see
+       `_map_worker_wave_kernel`'s own docstring for why `fft_slots_
+       wanted` does not apply there.
     """
     if workers_per_fft <= 0 or fft_slots_wanted <= 0:
         return unsupported(
@@ -382,27 +451,16 @@ def map_cooperative_kernel(
         )
     chunk = target.interleave_chunk_uthreads
     if chunk % workers_per_fft != 0:
-        if workers_per_fft % chunk == 0:
-            return unsupported(
-                BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN, gpu_config,
-                f"the GPU planner wants {workers_per_fft} work items cooperating "
-                f"per transform -- an exact multiple of target.interleave_chunk_"
-                f"uthreads={chunk}. This is architecturally reachable on M2NDP "
-                f"via a striped, multi-wave DRAM layout (the address decoder's "
-                f"chunk-to-unit assignment repeats every chunk*num_ndp_units="
-                f"{chunk * target.num_ndp_units} global ids, always landing back "
-                f"on the same physical unit -- see BaselineStatus's own hardware-"
-                f"trace docstring), but no AddressMapping kind or codegen in this "
-                f"repository implements that layout today.",
-            )
-        return unsupported(
-            BaselineStatus.UNSUPPORTED_HARDWARE_MAPPING, gpu_config,
-            f"the GPU planner wants {workers_per_fft} work items cooperating "
-            f"per transform, which is neither a divisor nor a multiple of "
-            f"target.interleave_chunk_uthreads={chunk} -- no whole number of "
-            f"the M2NDP address decoder's periodic interleave chunks can ever "
-            f"produce this exact count on one physical NDP unit (proven via "
-            f"direct simulator source trace, see BaselineStatus's own docstring)",
+        return _map_worker_wave_kernel(
+            length=length,
+            radices=radices,
+            workers_per_fft=workers_per_fft,
+            total_ffts=total_ffts,
+            inverse=inverse,
+            inverse_scale=inverse_scale,
+            kernel_name=kernel_name,
+            target=target,
+            gpu_config=gpu_config,
         )
 
     bytes_per_fft = leaf_scratchpad_bytes(length, radices)
@@ -437,6 +495,93 @@ def map_cooperative_kernel(
             max_concurrent_scratchpad_bytes=None,
         )
     except ValueError as exc:
+        return unsupported(BaselineStatus.RESOURCE_INFEASIBLE, gpu_config, str(exc))
+
+    return BaselineResult(status=BaselineStatus.OK, gpu_config=gpu_config, plan=built_plan)
+
+
+def _map_worker_wave_kernel(
+    *,
+    length: int,
+    radices: tuple[int, ...],
+    workers_per_fft: int,
+    total_ffts: int,
+    inverse: bool,
+    inverse_scale: float | None,
+    kernel_name: str,
+    target: TargetProfile,
+    gpu_config: GPUKernelConfig,
+) -> BaselineResult:
+    """Legalize ANY positive GPU-planner-chosen `workers_per_fft` that
+    fails the `chunk % workers_per_fft == 0` divisor test above --
+    whether it's a whole multiple of `target.interleave_chunk_uthreads`
+    (16, 32, 64, ...) or "ragged" (3, 5, 6, 7, 10, 12, 18, 20, 36, ...,
+    neither a divisor nor a multiple) -- by generalizing `planning.
+    execution.fft_plan_persistent`'s existing round engine with a second,
+    nested "worker wave" dimension, `worker_waves = ceil(workers_per_fft /
+    chunk)`. See `PersistentWorkgroupPlan.workers_per_fft`'s own docstring
+    for the mechanism and docs/ragged_worker_wave_generalization.md for
+    the full investigation/validation; docs/gpu_baseline_hardware_mapping_
+    audit.md section 4 for why the underlying periodic-chunk fact is
+    architecturally sound in the first place (the address decoder's
+    chunk-to-unit assignment repeats every `chunk * num_ndp_units` global
+    ids, always landing back on the same physical unit) -- that fact never
+    actually depended on `workers_per_fft` being an exact multiple of
+    `chunk`, only on `worker_waves` sequential passes existing at all; a
+    ragged last wave's surplus physical lanes are safe, inert dummy lanes
+    (see `codegen.fft_persistent_codegen._emit_worker_dispatch`'s own
+    docstring for why: they run the exact same compiled stage function as
+    every active lane in their group, so they reach every barrier that
+    function reaches, but match no dispatch branch, hence execute zero FFT
+    arithmetic and touch zero scratchpad addresses).
+
+    Every one of `total_ffts` independent length-`length` transforms
+    becomes one persistent "logical block", executed across
+    `make_persistent_leaf_plan`'s own rounds -- `workers_per_fft` LOGICAL
+    workers cooperate on each block via `worker_waves` sequential waves of
+    the physical `chunk` workers, exactly as the GPU planner chose, never
+    clamped, never rounded up or down to a "convenient" nearby value.
+
+    Why this ignores `fft_slots_wanted` (unlike the `chunk % workers_per_
+    fft == 0` cooperative path above): once `workers_per_fft > chunk` (or
+    even `workers_per_fft <= chunk` but not a clean divisor, which already
+    consumes the group's own scalar-tail-worker slot asymmetrically), the
+    physical `chunk` workers on one NDP unit are already fully consumed by
+    ONE logical FFT's own wave dispatch -- there is no spare physical
+    worker left on that unit to also run a second, concurrent FFT slot
+    (`fft_slots_per_group` is architecturally forced to 1 in this regime,
+    the same "one software group per physical unit" model `fft_plan_
+    persistent.py`'s own module docstring already documents). A GPU
+    planner's own `fft_slots_wanted > 1` in this regime is honored by
+    running those transforms one after another (more persistent rounds)
+    rather than concurrently -- an honest execution-SCHEDULE difference
+    from the GPU's own concurrent placement, not a change to any
+    algorithmic decision (radix sequence, worker count, per-stage
+    partition are all identical either way): the task's own "GPU planner
+    logical plan vs. M2NDP physical execution mapping must be clearly
+    separated" instruction is exactly what licenses this -- concurrency
+    is a physical scheduling choice, not part of the GPU algorithm itself.
+
+    Capacity: `make_persistent_leaf_plan` has its own unconditional
+    scratchpad check (`16 * length` bytes, two ping-pong banks -- see its
+    own docstring), independent of `workers_per_fft`/waves entirely
+    (scratchpad is sized by `length` alone, never duplicated per logical
+    worker -- see PersistentWorkgroupPlan's own module docstring), so no
+    separate capacity computation is needed here the way the cooperative
+    path above needs one from `leaf_scratchpad_bytes`.
+    """
+    try:
+        built_plan = make_persistent_leaf_plan(
+            length,
+            radices,
+            num_logical_blocks=total_ffts,
+            inverse=inverse,
+            kernel_name=kernel_name,
+            target=target,
+            inverse_scale=inverse_scale,
+            workers_per_fft=workers_per_fft,
+        )
+    except (ValueError, NotImplementedError) as exc:
         return unsupported(BaselineStatus.RESOURCE_INFEASIBLE, gpu_config, str(exc))
 
     return BaselineResult(status=BaselineStatus.OK, gpu_config=gpu_config, plan=built_plan)

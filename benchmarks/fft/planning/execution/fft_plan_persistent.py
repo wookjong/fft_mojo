@@ -187,6 +187,14 @@ def _partition_vector_scalar(
     batches)` -- see docs/persistent_leaf_design.md's "Stage work
     partition"/"Persistent batch partition" sections.
 
+    Despite the parameter's name (kept as `workers_per_group` since that
+    is this function's one and only caller's own historical bucket count),
+    this is really just "how many buckets to partition into" -- the caller
+    now passes `workers_per_fft` (the LOGICAL worker count), which equals
+    `workers_per_group` (physical) whenever no worker-wave virtualization
+    is in play, and is a larger multiple of it otherwise. Nothing in this
+    function's own logic depends on which one it is.
+
     Full batches (`valid_lanes == simd_lanes`) go round-robin to vector
     workers; the (at most one, since only a stage's own last SIMD
     iteration can ever be partial -- `layouts_for_radices` guarantees
@@ -257,6 +265,7 @@ def make_persistent_leaf_plan(
     kernel_name: str = "PersistentFFT",
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
     inverse_scale: float | None | _Default = _DEFAULT,
+    workers_per_fft: int | None = None,
 ) -> FFTCodegenPlan:
     """A length-`length` leaf FFT (single fused kernel, `radices` its own
     Cooley-Tukey/Stockham stage sequence -- same contract as `_build_plan`/
@@ -287,6 +296,30 @@ def make_persistent_leaf_plan(
     `_build_plan`'s own docstring for the same rule). Needed for
     `fft_plan_recursive.py`'s own leaf builder to thread persistent leaves
     through a split exactly like every other leaf kind already does.
+
+    `workers_per_fft`: `None` (the default) means "equal to `target.
+    interleave_chunk_uthreads`" -- the plain, pre-existing one-wave case,
+    byte-identical codegen to every plan built before this parameter
+    existed. Any other positive value is accepted (as of 2026-09-13 --
+    see `worker_waves`'s own docstring for the full generalization from
+    "exact multiples only" to "any positive count"): `workers_per_fft`
+    LOGICAL workers cooperate on each logical FFT block via `worker_waves(
+    workers_per_fft, workers_per_group)` sequential passes of the same
+    physical workers, the LAST of which is ragged whenever `workers_per_
+    fft` doesn't evenly divide `workers_per_group` -- see
+    `PersistentWorkgroupPlan.workers_per_fft`'s own docstring for why a
+    ragged wave's extra physical lanes are safe dummy lanes (no FFT
+    arithmetic, no scratchpad address, still reach every barrier every
+    other lane in the group does, since they run the exact same compiled
+    function). This target's own `interleave_chunk_uthreads=8` periodic
+    address interleaving is what makes 8-wide temporal multiplexing valid
+    at all (see docs/gpu_baseline_hardware_mapping_audit.md) -- but that
+    fact never constrained WHICH `workers_per_fft` values are legal, only
+    HOW they execute; a `workers_per_fft` that is neither a divisor nor a
+    multiple of 8 was rejected by an earlier, overly conservative version
+    of this function, not by any real architectural limit (see docs/
+    ragged_worker_wave_generalization.md for the investigation that
+    established this).
     """
     if num_logical_blocks < 1:
         raise ValueError("num_logical_blocks must be >= 1")
@@ -296,6 +329,11 @@ def make_persistent_leaf_plan(
     workers_per_group = target.interleave_chunk_uthreads
     software_group_count = target.num_ndp_units
     stripes_per_group = 1
+
+    if workers_per_fft is None:
+        workers_per_fft = workers_per_group
+    if workers_per_fft < 1:
+        raise ValueError(f"workers_per_fft={workers_per_fft} must be >= 1")
 
     if target.mapping_stride_bytes % target.uthread_bytes != 0:
         raise NotImplementedError(
@@ -385,7 +423,14 @@ def make_persistent_leaf_plan(
             stage,
             **_partition_stage_fields(
                 stage,
-                workers_per_group=workers_per_group,
+                # The number of buckets a stage's batches are partitioned
+                # into is the LOGICAL worker count (workers_per_fft), not
+                # the physical one -- see `_partition_vector_scalar`'s own
+                # `workers_per_group` parameter, which is really just
+                # "bucket count" and is reused here unchanged. Equals
+                # `workers_per_group` (today's only case) whenever
+                # `workers_per_fft` was not overridden.
+                workers_per_group=workers_per_fft,
                 simd_lanes=simd_lanes,
                 scalar_worker_mode=scalar_worker_mode,
             ),
@@ -426,6 +471,7 @@ def make_persistent_leaf_plan(
             stripes_per_group=stripes_per_group,
             workers_per_stripe=workers_per_group,
             workers_per_group=workers_per_group,
+            workers_per_fft=workers_per_fft,
             software_group_count=software_group_count,
             logical_block_stride=logical_block_stride,
             scalar_worker_mode=scalar_worker_mode,
@@ -450,6 +496,66 @@ def _partition_stage_fields(
         "persistent_vector_batches": vector_batches,
         "persistent_scalar_batches": scalar_batches,
     }
+
+
+def worker_waves(workers_per_fft: int, workers_per_group: int) -> int:
+    """`ceil(workers_per_fft / workers_per_group)` -- how many logical
+    workers ANY ONE physical lane owns, at most, for a cooperation width
+    `workers_per_fft` wider than the physical group. `workers_per_fft`
+    need not be a multiple of `workers_per_group`: this is a genuine
+    ceiling division (see `PersistentWorkgroupPlan.workers_per_fft`'s own
+    docstring for the 2026-09-13 generalization from "exact multiples
+    only" to "any positive count").
+
+    REVISED 2026-09-14 (worker-wave FUSION -- see docs/
+    worker_wave_fusion.md): this value is METADATA/DIAGNOSTICS ONLY now --
+    "how many logical workers, at most, does one physical lane visit for
+    this stage" -- NOT a runtime dispatch driver any more. Before this
+    revision, `codegen.fft_persistent_codegen.emit_persistent_kernel_
+    struct` called `device_main` `worker_waves(...)` times per stage, each
+    a separate `launch_parallel[stage_N]()`; that repeated-launch
+    structure is gone (see `emit_stage_phase`'s own docstring) -- a
+    physical lane now visits all of its own logical workers (`worker_id`,
+    `worker_id + workers_per_group`, ...) via a single runtime `while`
+    loop INSIDE one stage invocation, so callers needing "how many stage
+    invocations does this plan use" should no longer multiply by this
+    function's own result (it is always 1 now, regardless of
+    `workers_per_fft`) -- this function still answers a real, useful
+    question (loop trip count / worst-case per-lane logical-worker count)
+    for cost-model or reporting purposes, just not "launch_parallel call
+    count" any more.
+
+    A `workers_per_fft` that does NOT evenly divide `workers_per_group`
+    (e.g. 6 or 10 against `workers_per_group=8`) leaves the LAST loop
+    iteration ragged: only `workers_per_fft - (waves-1)*workers_per_group`
+    of that iteration's `workers_per_group` physical lanes correspond to a
+    real logical worker (`0 <= logical_worker_id < workers_per_fft`); the
+    remaining physical lanes compute a `logical_worker_id >= workers_per_
+    fft` that matches no dispatch branch in `codegen.fft_persistent_
+    codegen._emit_worker_dispatch` (see that function's own docstring) --
+    the `while` loop simply exits for them without ever entering that
+    final iteration's body, touching no FFT arithmetic and no scratchpad
+    address at all. `workers_per_fft <= workers_per_group` (e.g. 3, 5, 6,
+    7) is the special case `waves == 1`: no loop is even emitted (see
+    `emit_stage_phase`), byte-identical dispatch shape to before
+    `workers_per_fft` existed, only the branch count differs.
+
+    This ceiling division is a mixed-radix bijection by construction:
+    `(iteration, physical_lane)` for `iteration in range(waves)`,
+    `physical_lane in range(workers_per_group)` maps to `logical_worker_id
+    = iteration * workers_per_group + physical_lane`, which ranges over
+    `0 .. waves*workers_per_group - 1` exactly once each -- restricting to
+    `logical_worker_id < workers_per_fft` therefore covers `{0, ...,
+    workers_per_fft - 1}` exactly once each, with no gap and no duplicate,
+    for ANY positive `workers_per_fft`, not just an exact multiple. See
+    `verification.verify_fft_persistent.check_logical_worker_coverage` for
+    this fact exercised as an explicit test.
+    """
+    if workers_per_fft < 1:
+        raise ValueError(f"workers_per_fft={workers_per_fft} must be >= 1")
+    if workers_per_group < 1:
+        raise ValueError(f"workers_per_group={workers_per_group} must be >= 1")
+    return -(-workers_per_fft // workers_per_group)
 
 
 def num_rounds(num_logical_blocks: int, software_group_count: int) -> int:
