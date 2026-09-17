@@ -403,22 +403,37 @@ def registers_per_thread_for(loc_multipliers: dict[int, int]) -> tuple[int, int,
 # ---------------------------------------------------------------------------
 
 
-def choose_pow2_grouping_radix(fft_length: int, max_rhs: int) -> int:
+def choose_pow2_grouping_radix(
+    fft_length: int, max_rhs: int, *, num_compute_units: int = 64,
+) -> int:
     """`final_loc_multipliers_pow2`, exactly: estimate workload balance
-    across an assumed 64 compute units (`active_threads_y = max_rhs/64`,
-    the real source's own comment, quoted verbatim), search radix
-    groupings `2^i` for `i` in `1..VKFFT_FIX_MAX_CHECK_RADIX2` for the one
-    keeping `active_threads_x >= 128`, floor the result at `2^3=8`, then
-    pick whichever grouping `2..that bound` truly minimizes the number of
-    Stockham stages (`ceil(log2(fft_length)/i)`, ties won by the smaller
-    `i` since the source uses strict `<`). Returns the CHOSEN GROUPING
-    RADIX ITSELF (`2**final_loc_multipliers_pow2`), not the exponent.
+    across `num_compute_units` independent physical compute units
+    (`active_threads_y = max_rhs/num_compute_units`, the real source's own
+    comment, quoted verbatim, default 64 -- a representative real GPU's
+    CU count), search radix groupings `2^i` for `i` in
+    `1..VKFFT_FIX_MAX_CHECK_RADIX2` for the one keeping `active_threads_x
+    >= 128`, floor the result at `2^3=8`, then pick whichever grouping
+    `2..that bound` truly minimizes the number of Stockham stages
+    (`ceil(log2(fft_length)/i)`, ties won by the smaller `i` since the
+    source uses strict `<`). Returns the CHOSEN GROUPING RADIX ITSELF
+    (`2**final_loc_multipliers_pow2`), not the exponent.
 
     `max_rhs`: VkFFT's own name for the total batch width this axis plan
     serves -- mapped here to this baseline's own `total_ffts` parameter
     (see `plan`).
+
+    `num_compute_units`: source-faithful default 64 (a representative real
+    GPU's own CU count, held fixed for the frozen baseline). The M2NDP-
+    adapted baseline (`plan_m2ndp`) passes `target.num_ndp_units` (32)
+    instead -- both answer "how many independent physical compute units
+    exist to keep busy," the identical mapping already applied to rocFFT-
+    default's own `multiprocessor_count` (docs/gpu_planner_m2ndp_target_
+    mapping.md). Unlike `warp_size` (see `plan_m2ndp`'s own docstring for
+    why that one has NO verified M2NDP equivalent), this one does: both
+    64 and `num_ndp_units` answer the identical "count of independent
+    physical compute units" question.
     """
-    active_threads_y = max(1, max_rhs // 64)
+    active_threads_y = max(1, max_rhs // num_compute_units)
 
     test_min_stages = 10_000_000
     max_radix_min_stages = 1
@@ -448,16 +463,19 @@ def choose_pow2_grouping_radix(fft_length: int, max_rhs: int) -> int:
     return 2 ** final_loc_multipliers_pow2
 
 
-def pow2_radix_sequence(fft_length: int, max_rhs: int) -> tuple[int, ...]:
+def pow2_radix_sequence(
+    fft_length: int, max_rhs: int, *, num_compute_units: int = 64,
+) -> tuple[int, ...]:
     """The radix sequence one VkFFT-style leaf kernel renders for a
     power-of-2 `fft_length`: repeat the grouping radix
     (`choose_pow2_grouping_radix`) as many times as it evenly divides
     `log2(fft_length)`, with one smaller final radix for the remainder
     bits (if any) -- exactly what minimizing `ceil(log2(N)/i)` stages
-    means concretely."""
+    means concretely. `num_compute_units`: forwarded to `choose_pow2_
+    grouping_radix` -- see that function's own docstring."""
     if fft_length <= 1:
         return ()
-    grouping_radix = choose_pow2_grouping_radix(fft_length, max_rhs)
+    grouping_radix = choose_pow2_grouping_radix(fft_length, max_rhs, num_compute_units=num_compute_units)
     total_bits = fft_length.bit_length() - 1
     group_bits = grouping_radix.bit_length() - 1
     full_stages, remainder_bits = divmod(total_bits, group_bits)
@@ -504,9 +522,11 @@ def direct_radix_sequence(length: int) -> tuple[int, ...]:
     return tuple(sorted(radices, reverse=True))
 
 
-def leaf_radix_sequence(length: int, max_rhs: int) -> tuple[int, ...]:
+def leaf_radix_sequence(
+    length: int, max_rhs: int, *, num_compute_units: int = 64,
+) -> tuple[int, ...]:
     if length & (length - 1) == 0:
-        return pow2_radix_sequence(length, max_rhs)
+        return pow2_radix_sequence(length, max_rhs, num_compute_units=num_compute_units)
     return direct_radix_sequence(length)
 
 
@@ -811,15 +831,18 @@ _MAX_BATCH_COALESCED = VKFFT_COALESCED_MEMORY_BYTES // VKFFT_COMPLEX_SIZE_BYTES
 VKFFT_VENDOR_IS_NVIDIA = True
 
 
-def min_registers_per_thread_pow2(fft_length: int, max_rhs: int) -> int:
+def min_registers_per_thread_pow2(
+    fft_length: int, max_rhs: int, *, num_compute_units: int = 64,
+) -> int:
     """`registers_per_thread_per_radix[2]` for a PURE power-of-2 sequence
     (vkFFT_Scheduler.h, quoted in the original VkFFT research report):
     `= grouping_radix if loc_multipliers[2] > final_loc_multipliers_pow2
     else fft_length` -- since a pure-pow2 sequence's own register table
     has exactly one nonzero radix entry, `min == max == registers_per_
     thread_per_radix[2]` here, so this doubles as this baseline's own
-    `min_registers_per_thread` for the pow2 case."""
-    grouping_radix = choose_pow2_grouping_radix(fft_length, max_rhs)
+    `min_registers_per_thread` for the pow2 case. `num_compute_units`:
+    forwarded to `choose_pow2_grouping_radix` -- see its own docstring."""
+    grouping_radix = choose_pow2_grouping_radix(fft_length, max_rhs, num_compute_units=num_compute_units)
     total_bits = fft_length.bit_length() - 1
     group_bits = grouping_radix.bit_length() - 1
     return grouping_radix if total_bits > group_bits else fft_length
@@ -840,7 +863,9 @@ def _prime_multiplicities(radices: tuple[int, ...]) -> dict[int, int]:
     return counts
 
 
-def min_registers_per_thread_for(length: int, radices: tuple[int, ...], max_rhs: int) -> int:
+def min_registers_per_thread_for(
+    length: int, radices: tuple[int, ...], max_rhs: int, *, num_compute_units: int = 64,
+) -> int:
     """`min_registers_per_thread`, VkFFT's own per-leaf register-count
     input to `axisblock_threads_per_transform` below. Exact for pure
     power-of-2 (`min_registers_per_thread_pow2`, reusing this module's own
@@ -849,9 +874,12 @@ def min_registers_per_thread_for(length: int, radices: tuple[int, ...], max_rhs:
     full base `{2,3,5,7}` register table (`registers_per_thread_base_
     table`) is now ported literally (replacing the earlier `min(radices)`
     proxy, which sat on a path this baseline can return
-    `BaselineStatus.OK` from and was never acceptable there)."""
+    `BaselineStatus.OK` from and was never acceptable there). `num_
+    compute_units`: forwarded to `min_registers_per_thread_pow2` (pow2
+    case only -- the non-pow2 register table has no CU-count input at
+    all)."""
     if length & (length - 1) == 0:
-        return min_registers_per_thread_pow2(length, max_rhs)
+        return min_registers_per_thread_pow2(length, max_rhs, num_compute_units=num_compute_units)
     counts = _prime_multiplicities(radices)
     table = registers_per_thread_base_table(counts[2], counts[3], counts[5], counts[7])
     return min(v for v in table.values() if v != 0)
@@ -899,12 +927,19 @@ def axisblock_batch_single_pass(
 
     `warp_size`: the SIMT lockstep-execution-granularity hardware input
     this formula asks for ("how many threads run in genuine lockstep") --
-    defaults to `VKFFT_WARP_SIZE` (32, source-faithful). The M2NDP-adapted
-    baseline (`plan_m2ndp`) passes `target.interleave_chunk_uthreads` (8)
-    instead -- see docs/gpu_planner_m2ndp_target_mapping.md's own VkFFT
-    row. `VKFFT_AIM_THREADS` is NOT adapted here -- it is VkFFT's own
-    hand-tuned occupancy target (a fixed algorithm parameter, not a
-    hardware query), unchanged either way.
+    defaults to, and stays fixed at, `VKFFT_WARP_SIZE` (32) for BOTH the
+    source-faithful and M2NDP-adapted baselines. An earlier revision
+    mapped this to `target.interleave_chunk_uthreads` (8), but that field
+    is a pure DRAM address-interleaving stride, not a SIMT lockstep width
+    -- M2NDP has no verified quantity answering the same question this
+    parameter asks, so per this task's own "no meaningful equivalent ->
+    preserve the algorithm" rule it is NOT adapted (see docs/
+    gpu_planner_m2ndp_target_mapping.md's own VkFFT row, NO_EQUIVALENT
+    row). Kept as an explicit parameter (rather than removed back to a
+    bare module constant) so a future, actually-verified M2NDP quantity
+    can be wired in without another signature change. `VKFFT_AIM_THREADS`
+    is likewise NOT adapted -- VkFFT's own hand-tuned occupancy target (a
+    fixed algorithm parameter, not a hardware query).
     """
     if threads_per_transform // warp_size == 1 and threads_per_transform / warp_size < 1.5:
         estimate = VKFFT_AIM_THREADS // warp_size
@@ -1069,6 +1104,7 @@ def axisblock_batch_multipass_later(
 def axisblock_for_leaf(
     length: int, radices: tuple[int, ...], *, max_rhs: int, num_passes: int, upload_id: int,
     original_length: int, target: TargetProfile, warp_size: int = VKFFT_WARP_SIZE,
+    num_compute_units: int = 64,
 ) -> tuple[int, int]:
     """One leaf's own `(threads_per_transform, transforms_per_block)` --
     the M2NDP translation's `(workers_per_fft, fft_slots_wanted)` pair --
@@ -1079,8 +1115,9 @@ def axisblock_for_leaf(
     at least one PRE/MIDDLE transpose). `warp_size`: forwarded to
     `axisblock_batch_single_pass` only -- see that function's own
     docstring; the multi-pass formulas below have no warp-size input at
-    all in the real source."""
-    min_regs = min_registers_per_thread_for(length, radices, max_rhs)
+    all in the real source. `num_compute_units`: forwarded to `min_
+    registers_per_thread_for` (pow2 lengths only)."""
+    min_regs = min_registers_per_thread_for(length, radices, max_rhs, num_compute_units=num_compute_units)
     threads_per_transform = axisblock_threads_per_transform(length, min_regs)
     if num_passes == 1:
         seed = axisblock_batch_single_pass(length, threads_per_transform, target, warp_size=warp_size)
@@ -1119,12 +1156,12 @@ def axisblock_for_leaf(
 def _leaf_result(
     m: int, r: int, *, inverse: bool, is_root: bool, node_id: list[int],
     target: TargetProfile, num_passes: int, upload_id: int, original_length: int,
-    warp_size: int = VKFFT_WARP_SIZE,
+    warp_size: int = VKFFT_WARP_SIZE, num_compute_units: int = 64,
 ) -> tuple[FFTLeafPlan | None, BaselineResult | None]:
     idx = node_id[0]
     node_id[0] += 1
     try:
-        radices = leaf_radix_sequence(m, r)
+        radices = leaf_radix_sequence(m, r, num_compute_units=num_compute_units)
     except VkfftUnsupportedError as exc:
         extra = classify_vkfft_residual_scheme(exc.residual) if exc.residual is not None else {}
         gpu_config = GPUKernelConfig(source="vkfft", length=m, radices=(), extra=extra)
@@ -1139,6 +1176,7 @@ def _leaf_result(
     workers_per_fft, fft_slots_wanted = axisblock_for_leaf(
         m, radices, max_rhs=r, num_passes=num_passes, upload_id=upload_id,
         original_length=original_length, target=target, warp_size=warp_size,
+        num_compute_units=num_compute_units,
     )
     gpu_config = GPUKernelConfig(
         source="vkfft", length=m, radices=radices,
@@ -1161,7 +1199,7 @@ def _leaf_result(
 def _recursive_result(
     m: int, r: int, factors: tuple[int, ...], *, inverse: bool, is_root: bool,
     node_id: list[int], target: TargetProfile, num_passes: int, upload_id: int, original_length: int,
-    warp_size: int = VKFFT_WARP_SIZE,
+    warp_size: int = VKFFT_WARP_SIZE, num_compute_units: int = 64,
 ) -> tuple[FFTNode | None, BaselineResult | None]:
     """`factors`: this level's own (a, b) or (a, b, c) split, near-to-far
     (b == innermost/near, matching this module's own axis-split return
@@ -1175,7 +1213,7 @@ def _recursive_result(
         return _leaf_result(
             m, r, inverse=inverse, is_root=is_root, node_id=node_id, target=target,
             num_passes=num_passes, upload_id=upload_id, original_length=original_length,
-            warp_size=warp_size,
+            warp_size=warp_size, num_compute_units=num_compute_units,
         )
 
     idx = node_id[0]
@@ -1192,7 +1230,7 @@ def _recursive_result(
     near_node, failure = _leaf_result(
         b, r * a, inverse=inverse, is_root=False, node_id=node_id, target=target,
         num_passes=num_passes, upload_id=upload_id, original_length=original_length,
-        warp_size=warp_size,
+        warp_size=warp_size, num_compute_units=num_compute_units,
     )
     if failure is not None:
         return None, failure
@@ -1205,7 +1243,7 @@ def _recursive_result(
     far_node, failure = _recursive_result(
         a, r * b, factors[:-1], inverse=inverse, is_root=False, node_id=node_id, target=target,
         num_passes=num_passes, upload_id=upload_id + 1, original_length=original_length,
-        warp_size=warp_size,
+        warp_size=warp_size, num_compute_units=num_compute_units,
     )
     if failure is not None:
         return None, failure
@@ -1232,6 +1270,7 @@ def plan(
     inverse: bool = False,
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
     warp_size: int = VKFFT_WARP_SIZE,
+    num_compute_units: int = 64,
 ) -> BaselineResult:
     """Top-level VkFFT-style baseline entry point: decides 1/2/3-pass via
     `choose_num_passes`, then splits via this module's own axis-splitting
@@ -1239,14 +1278,16 @@ def plan(
     PRE/near/MIDDLE/far/POST shape clfft.py's large-1D path already
     establishes.
 
-    SOURCE-FAITHFUL (default `warp_size=VKFFT_WARP_SIZE`): `choose_num_
-    passes`/`split_pow2_*`/`split_non_pow2_*` already consistently use
-    `target.spad_capacity_bytes` for every LDS-equivalent quantity (this
-    baseline's pre-existing target adaptation, unchanged) -- `warp_size`
-    is the ONE remaining fixed-GPU hardware input in this module
-    (`axisblock_batch_single_pass`'s own SIMT-lockstep-granularity
-    estimate). See `plan_m2ndp` for the M2NDP-adapted sibling and docs/
-    gpu_planner_m2ndp_target_mapping.md.
+    SOURCE-FAITHFUL (default `warp_size=VKFFT_WARP_SIZE`,
+    `num_compute_units=64`): `choose_num_passes`/`split_pow2_*`/`split_
+    non_pow2_*` already consistently use `target.spad_capacity_bytes` for
+    every LDS-equivalent quantity (this baseline's pre-existing target
+    adaptation, unchanged). `num_compute_units` feeds `choose_pow2_
+    grouping_radix`'s own workload-balance estimate (radix-grouping
+    DECISION, not just a feasibility check) -- see `plan_m2ndp` for the
+    M2NDP-adapted sibling and docs/gpu_planner_m2ndp_target_mapping.md's
+    own VkFFT row for the full audited mapping, including why `warp_size`
+    stays fixed (NO verified M2NDP equivalent, unlike `num_compute_units`).
     """
     is_po2 = (length & (length - 1)) == 0
     try:
@@ -1293,6 +1334,7 @@ def plan(
     node, failure = _recursive_result(
         length, batch, factors, inverse=inverse, is_root=True, node_id=node_id, target=target,
         num_passes=num_passes, upload_id=0, original_length=length, warp_size=warp_size,
+        num_compute_units=num_compute_units,
     )
     if failure is not None:
         return failure
@@ -1305,7 +1347,7 @@ def plan(
     if isinstance(node, FFTLeafPlan):
         top_radices = tuple(stage.radix for stage in node.kernel.stages)
     gpu_config = GPUKernelConfig(
-        source="vkfft" if warp_size == VKFFT_WARP_SIZE else "vkfft-m2ndp",
+        source="vkfft" if num_compute_units == 64 else "vkfft-m2ndp",
         length=length, radices=top_radices,
         extra={"num_passes": num_passes, "factors": factors, "is_pow2": is_po2},
     )
@@ -1324,15 +1366,31 @@ def plan_m2ndp(
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
 ) -> BaselineResult:
     """M2NDP-ADAPTED top-level VkFFT-style entry point -- the `gpu-vkfft-
-    m2ndp` CLI baseline. Identical to `plan` in every respect except
-    `warp_size`: `target.interleave_chunk_uthreads` (8, M2NDP's own
-    physical concurrent-microthread width -- the closest thing this target
-    has to "threads executing in genuine lockstep") instead of VkFFT's own
-    representative-GPU `VKFFT_WARP_SIZE` (32) -- see docs/
-    gpu_planner_m2ndp_target_mapping.md's own VkFFT row. Every other
-    hardware input in this module (`choose_num_passes`/`split_pow2_*`/
-    `split_non_pow2_*`'s own `target.spad_capacity_bytes` usage) was
-    already M2NDP-adapted before this task -- this is the one remaining
-    gap this task's own audit found.
+    m2ndp` CLI baseline. See docs/gpu_planner_m2ndp_target_mapping.md's
+    own VkFFT row for the full, audited mapping table this function's own
+    parameter choices below implement.
+
+    `warp_size`: DELIBERATELY LEFT AT THE SOURCE-FAITHFUL DEFAULT (32) --
+    an earlier revision of this function mapped it to `target.
+    interleave_chunk_uthreads` (8), but that field is documented (`target_
+    profile.py`'s own comment) as a pure DRAM ADDRESS-INTERLEAVING stride
+    ("which physical NDP unit does this address land on"), not a SIMT
+    lockstep execution width -- M2NDP's own microthreads are each
+    independently generated/retired hardware FGMT, never executing in the
+    per-instruction lockstep a GPU warp implies. There is no verified M2NDP
+    quantity that answers the same question `VKFFT_WARP_SIZE` does; per
+    this task's own "no meaningful equivalent -> preserve the algorithm"
+    rule, this stays NO_EQUIVALENT, unchanged from the source-faithful
+    baseline, rather than substituting a number whose meaning does not
+    actually match.
+
+    `num_compute_units=target.num_ndp_units` (32): `choose_pow2_grouping_
+    radix`'s own `active_threads_y = max_rhs // num_compute_units`
+    estimates workload balance across independent physical compute units
+    keeping busy -- VkFFT's own real source assumes 64 (a representative
+    GPU's CU count) here; M2NDP's own independent-physical-unit count is
+    `num_ndp_units=32`. Both answer the identical question, exactly the
+    same mapping already applied to rocFFT-default's own `multiprocessor_
+    count` (docs/gpu_planner_m2ndp_target_mapping.md).
     """
-    return plan(length, batch=batch, inverse=inverse, target=target, warp_size=target.interleave_chunk_uthreads)
+    return plan(length, batch=batch, inverse=inverse, target=target, num_compute_units=target.num_ndp_units)

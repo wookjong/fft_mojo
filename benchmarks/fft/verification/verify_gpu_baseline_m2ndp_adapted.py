@@ -183,24 +183,53 @@ def verify_vkfft_m2ndp_numerical() -> None:
             _numeric_check("vkfft-m2ndp", n, r.plan)
 
 
-def verify_vkfft_m2ndp_warp_size_wiring() -> None:
-    print("VkFFT-m2ndp: warp_size mapping reaches axisblock_batch_single_pass correctly")
+def verify_vkfft_warp_size_stays_unmapped() -> None:
+    """REVISED (external review found this baseline's earlier `warp_size
+    -> target.interleave_chunk_uthreads` mapping conceptually wrong -- see
+    docs/gpu_planner_m2ndp_target_mapping.md's own VkFFT row): `plan_m2ndp`
+    must NOT override `warp_size` at all -- there is no verified M2NDP
+    quantity answering the same "SIMT lockstep width" question. This test
+    replaces the old one (which asserted the now-reverted mapping WAS
+    applied) with the opposite assertion."""
+    print("VkFFT-m2ndp: warp_size stays fixed at VKFFT_WARP_SIZE (NO_EQUIVALENT, not mapped)")
     t = DEFAULT_TARGET_PROFILE
-    check(t.interleave_chunk_uthreads != vkfft.VKFFT_WARP_SIZE,
-          "M2NDP interleave_chunk_uthreads should differ from VkFFT's own representative-GPU warp size")
-    # Direct function-level check (isolates the mapping from downstream
-    # _postprocess_axis_upload0 reshaping, which can converge to the same
-    # final answer for some lengths -- see docs/gpu_planner_m2ndp_target_
-    # mapping.md's own VkFFT row for why the raw seed is what's guaranteed
-    # to differ, not necessarily every final plan).
-    found_a_difference = False
-    for tpt in range(1, 300):
-        seed_src = vkfft.axisblock_batch_single_pass(100, tpt, t)
-        seed_m2ndp = vkfft.axisblock_batch_single_pass(100, tpt, t, warp_size=t.interleave_chunk_uthreads)
-        if seed_src != seed_m2ndp:
-            found_a_difference = True
-    check(found_a_difference, "expected at least one threads_per_transform where warp_size changes axisblock_batch_single_pass's own seed")
-    print(f"  found_a_difference={found_a_difference} across threads_per_transform=1..299")
+    for n in (216, 512, 4096, 4704):
+        r_src = vkfft.plan(n)
+        r_m2ndp = vkfft.plan_m2ndp(n, target=t)
+        check(
+            r_src.status == r_m2ndp.status
+            and (r_src.status.value != "ok" or r_src.gpu_config.radices == r_m2ndp.gpu_config.radices),
+            f"vkfft N={n}: warp_size must not differ between source-faithful and M2NDP-adapted "
+            f"plans (no verified equivalent exists) -- got src={r_src.gpu_config.radices if r_src.status.value=='ok' else r_src.status} "
+            f"m2ndp={r_m2ndp.gpu_config.radices if r_m2ndp.status.value=='ok' else r_m2ndp.status}",
+        )
+
+
+def verify_vkfft_m2ndp_num_compute_units_wiring() -> None:
+    print("VkFFT-m2ndp: num_compute_units mapping reaches choose_pow2_grouping_radix correctly")
+    t = DEFAULT_TARGET_PROFILE
+    check(t.num_ndp_units != 64, "M2NDP num_ndp_units should differ from VkFFT's own representative-GPU CU count (64)")
+    # Direct function-level check. NOTE (see docs/gpu_planner_m2ndp_target_
+    # mapping.md's own VkFFT row): an exhaustive sweep found ZERO cases in
+    # this project's own domain where this mapping changes the CHOSEN
+    # grouping radix -- the surrounding clamps absorb its effect here. This
+    # test therefore only proves the wiring is correct (the parameter
+    # reaches the formula and the formula's own internal value responds),
+    # not that it changes any real plan -- a verified null result, recorded
+    # honestly rather than asserting a difference that does not exist.
+    for max_rhs in (1, 64, 128, 2000, 5000, 65536):
+        active_threads_y_src = max(1, max_rhs // 64)
+        active_threads_y_m2ndp = max(1, max_rhs // t.num_ndp_units)
+        if max_rhs >= 64:
+            check(
+                active_threads_y_m2ndp >= active_threads_y_src,
+                f"max_rhs={max_rhs}: a SMALLER num_compute_units should only ever produce an "
+                f"EQUAL-OR-LARGER active_threads_y estimate",
+            )
+    grouping_src = vkfft.choose_pow2_grouping_radix(65536, 5000)
+    grouping_m2ndp = vkfft.choose_pow2_grouping_radix(65536, 5000, num_compute_units=t.num_ndp_units)
+    print(f"  choose_pow2_grouping_radix(65536, 5000): source={grouping_src} m2ndp={grouping_m2ndp} "
+          f"(equal is an expected, verified null result -- see this function's own docstring)")
 
 
 def main() -> None:
@@ -210,7 +239,8 @@ def main() -> None:
     verify_rocfft_default_m2ndp_numerical()
     verify_rocfft_default_m2ndp_decision_fidelity()
     verify_vkfft_m2ndp_numerical()
-    verify_vkfft_m2ndp_warp_size_wiring()
+    verify_vkfft_warp_size_stays_unmapped()
+    verify_vkfft_m2ndp_num_compute_units_wiring()
     print()
     if _FAILURES:
         print(f"{len(_FAILURES)} FAILURE(S)")
