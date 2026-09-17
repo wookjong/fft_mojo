@@ -40,15 +40,21 @@ def check(condition: bool, message: str) -> None:
         print(f"  FAIL: {message}")
 
 
-def _numeric_check(planner_name: str, n: int, plan) -> None:
+def _numeric_check(planner_name: str, n: int, plan, *, inverse: bool = False) -> None:
     rng = np.random.default_rng(1234)
     x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
     got = run_recursive_plan(plan, x)
-    expected = np.fft.fft(x)
+    # Every plan shape in this project already applies its own 1/N
+    # normalization internally for inverse=True (confirmed directly
+    # against plain single-kernel, native recursive-split, and GPU-
+    # baseline cooperative/persistent leaves -- see docs/
+    # gpu_baseline_clfft_sbcc_lowering.md) -- the expected value is
+    # ALWAYS plain numpy.fft.ifft/fft, never scaled by n.
+    expected = np.fft.ifft(x) if inverse else np.fft.fft(x)
     err = float(np.max(np.abs(got - expected)))
-    check(err < 1e-2, f"{planner_name} N={n}: max error {err:.3e} exceeds tolerance")
+    check(err < 1e-2, f"{planner_name} N={n} inverse={inverse}: max error {err:.3e} exceeds tolerance")
     if err < 1e-2:
-        print(f"  OK   {planner_name} N={n}: max error {err:.3e}")
+        print(f"  OK   {planner_name} N={n} inverse={inverse}: max error {err:.3e}")
 
 
 def verify_clfft_m2ndp_numerical() -> None:
@@ -103,6 +109,35 @@ def verify_clfft_m2ndp_decision_fidelity() -> None:
                 f"(src_single={src_is_single}, m2ndp_single={m2ndp_is_single})",
             )
     print(f"  source threshold={src_threshold}, M2NDP threshold={m2ndp_threshold} -- checked every length in between")
+
+
+def verify_clfft_sbcc_lowering() -> None:
+    """Every power-of-2 length real clFFT would select block-compute
+    (SBCC) for -- the FULL domain `CLFFT_BLOCK_COMPUTE_TABLE_SINGLE`
+    covers -- now builds via `_plan_leaf_or_recurse`'s four-step fallback
+    instead of refusing with UNSUPPORTED_CURRENT_CODEGEN. See docs/
+    gpu_baseline_clfft_sbcc_lowering.md for the source-verified proof this
+    is a faithful (not substituted) lowering."""
+    print("clFFT: SBCC (block-compute) lengths now build, forward + inverse")
+    for n in sorted(clfft.CLFFT_BLOCK_COMPUTE_TABLE_SINGLE):
+        r = clfft.plan(n)
+        check(r.status is BaselineStatus.OK, f"clfft N={n} (SBCC-eligible) should map OK, got {r.status}")
+        # 524288/1048576 are real table ROWS but architecturally
+        # UNREACHABLE through is_block_compute_length's own gate
+        # (length <= CLFFT_BLOCK_COMPUTE_GATE_SINGLE=262144) -- confirmed
+        # dead code in the real source (see CLFFT_BLOCK_COMPUTE_TABLE_
+        # SINGLE's own comment), so only assert the diagnostics marker for
+        # lengths the real eligibility gate actually reaches; the numeric
+        # check below still runs for every table row regardless.
+        if clfft.is_block_compute_length(n):
+            check(n in r.gpu_config.extra.get("block_compute_lengths", ()),
+                  f"clfft N={n}: expected this length to be recorded in block_compute_lengths diagnostics")
+        if r.status is BaselineStatus.OK:
+            _numeric_check("clfft-sbcc", n, r.plan, inverse=False)
+        r_inv = clfft.plan(n, inverse=True)
+        check(r_inv.status is BaselineStatus.OK, f"clfft N={n} inverse (SBCC-eligible) should map OK, got {r_inv.status}")
+        if r_inv.status is BaselineStatus.OK:
+            _numeric_check("clfft-sbcc", n, r_inv.plan, inverse=True)
 
 
 def verify_rocfft_default_m2ndp_numerical() -> None:
@@ -171,6 +206,7 @@ def verify_vkfft_m2ndp_warp_size_wiring() -> None:
 def main() -> None:
     verify_clfft_m2ndp_numerical()
     verify_clfft_m2ndp_decision_fidelity()
+    verify_clfft_sbcc_lowering()
     verify_rocfft_default_m2ndp_numerical()
     verify_rocfft_default_m2ndp_decision_fidelity()
     verify_vkfft_m2ndp_numerical()

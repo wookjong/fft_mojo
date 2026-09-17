@@ -755,11 +755,21 @@ def _plan_leaf_or_recurse(
     node_id: list[int],
     target: TargetProfile,
     threshold: int,
+    block_compute_lengths: list[int],
 ) -> tuple[FFTNode | None, BaselineResult | None]:
     """Returns `(node, None)` on success or `(None, failure_result)` on any
     refusal anywhere in the tree -- a single refusal anywhere aborts the
     whole large-1D plan (there is no partial baseline result), same as a
-    real clFFT bake either fully succeeds or fails outright."""
+    real clFFT bake either fully succeeds or fails outright.
+
+    `block_compute_lengths`: appended with every recursive-node length `m`
+    where real clFFT would select block-compute (SBCC) rather than the
+    non-block-compute four-step split -- diagnostics only (see this
+    function's own block-compute comment below for why both are lowered
+    identically), so a caller can report faithfully which scheme was
+    really selected without this baseline having to represent it as a
+    separate plan-tree shape.
+    """
     idx = node_id[0]
     node_id[0] += 1
 
@@ -789,29 +799,38 @@ def _plan_leaf_or_recurse(
         gpu_config = GPUKernelConfig(source="clfft", length=m, radices=())
         return None, unsupported(BaselineStatus.UNSUPPORTED_GPU_ALGORITHM, gpu_config, str(exc))
 
-    if is_block_compute_length(m):
-        # Real clFFT builds a fused block-compute (SBCC) kernel here, not
-        # the four-step pre/middle/post transpose chain below -- see
-        # `is_block_compute_length`'s own docstring. This baseline has no
-        # M2NDP codegen for that fused scheme, so it must refuse rather
-        # than silently substitute the four-step structure just because
-        # the split VALUES (a, b) happen to come from the same table.
-        gpu_config = GPUKernelConfig(
-            source="clfft", length=m, radices=(),
-            extra={
-                "scheme": "block_compute",
-                "clfft_row_length_a": a,
-                "clfft_column_length_b": b,
-            },
-        )
-        return None, unsupported(
-            BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN, gpu_config,
-            f"length={m}: real clFFT selects block-compute (SBCC, a fused single-kernel "
-            f"scheme) here, not the large-1D four-step decomposition -- this baseline has "
-            f"no M2NDP codegen for a fused block-compute kernel. Preserved GPU-side split "
-            f"(a={a}, b={b}) is the real clFFT column-length table value, provided for "
-            f"diagnostics only; it must never be used to build a four-step-shaped plan.",
-        )
+    scheme_is_block_compute = is_block_compute_length(m)
+    if scheme_is_block_compute:
+        # REVISED (see docs/gpu_baseline_clfft_sbcc_lowering.md for the
+        # full derivation): a direct re-read of the REAL upstream source
+        # (plan.cpp's clfftBakePlan, CLFFT_1D large-1D branch, lines
+        # ~1940-2260 at the pinned fetch) proves this is NOT "a
+        # completely different scheme" from the four-step structure below
+        # -- it is the exact SAME Cooley-Tukey (a, b) decomposition
+        # (`colTPlan`/planX builds the length-b "column" FFT with
+        # batch=a, `col2Plan`/planY builds the length-a "row" FFT with
+        # batch=b, in that same near-then-far order this function's own
+        # recursion already uses), with the SAME twiddle placement
+        # (`colTPlan->large1D = fftPlan->length[0]` flags the identical
+        # large-1D twiddle multiply the MIDDLE transpose below applies).
+        # `choose_large1d_split` already reads this table's own (a, b) --
+        # not "coincidentally the same value," but the literal split the
+        # real source's own clfftBakePlan computes for this length
+        # regardless of whether block-compute activates (the table lookup
+        # happens BEFORE the block-compute branch, unconditionally).
+        #
+        # The ONLY thing that differs in real clFFT is a GPU-specific
+        # PHYSICAL SCHEDULING choice this task's own instructions
+        # explicitly leave to the lowering layer: whether the transpose
+        # is a separate kernel (this repo's own PhysicalTransposePlan) or
+        # fused into the FFT kernel's own strided shared-memory access
+        # (real clFFT's `blockCompute`/`blockComputeType` flag, an
+        # optimization with no dataflow effect). So: build the exact same
+        # four-step plan the non-block-compute po2 branch already builds
+        # for this (a, b) -- verified byte-for-byte in `choose_large1d_
+        # split` -- and record the real scheme name for diagnostics only
+        # (never used to alter what gets built).
+        block_compute_lengths.append(m)
 
     tile = max(1, min(8, a, b))
     pre = _build_physical_transpose(
@@ -823,7 +842,7 @@ def _plan_leaf_or_recurse(
 
     near_node, failure = _plan_leaf_or_recurse(
         b, r * a, inverse=inverse, is_root=False, node_id=node_id,
-        target=target, threshold=threshold,
+        target=target, threshold=threshold, block_compute_lengths=block_compute_lengths,
     )
     if failure is not None:
         return None, failure
@@ -842,7 +861,7 @@ def _plan_leaf_or_recurse(
 
     far_node, failure = _plan_leaf_or_recurse(
         a, r * b, inverse=inverse, is_root=False, node_id=node_id,
-        target=target, threshold=threshold,
+        target=target, threshold=threshold, block_compute_lengths=block_compute_lengths,
     )
     if failure is not None:
         return None, failure
@@ -872,19 +891,30 @@ def plan_large1d(
 ) -> BaselineResult:
     """clFFT's own large-1D (four-step Bailey) decomposition -- see this
     section's own module-level docstring for the FFTRecursiveNodePlan
-    correspondence and the documented split-selection fidelity gap."""
+    correspondence. Every node this recursion builds, including lengths
+    where real clFFT would select block-compute (SBCC), is lowered via
+    this SAME four-step PRE/near/MIDDLE/far/POST structure -- see
+    `_plan_leaf_or_recurse`'s own block-compute comment and docs/
+    gpu_baseline_clfft_sbcc_lowering.md for the source-verified proof this
+    is a faithful (a, b)-split-preserving lowering, not a substituted
+    algorithm; `gpu_config.extra['block_compute_lengths']` records which
+    node lengths this was true for, purely as diagnostics."""
     threshold = get_max_1d_length()
     node_id = [0]
+    block_compute_lengths: list[int] = []
     node, failure = _plan_leaf_or_recurse(
         length, batch, inverse=inverse, is_root=True, node_id=node_id,
-        target=target, threshold=threshold,
+        target=target, threshold=threshold, block_compute_lengths=block_compute_lengths,
     )
     if failure is not None:
         return failure
     assert node is not None
     gpu_config = GPUKernelConfig(
         source="clfft", length=length, radices=(),
-        extra={"decomposition": "large1D_4step", "threshold": threshold},
+        extra={
+            "decomposition": "large1D_4step", "threshold": threshold,
+            "block_compute_lengths": tuple(block_compute_lengths),
+        },
     )
     recursive_plan = RecursiveFFTPlan(
         n=length, inverse=inverse, root=node,
@@ -938,16 +968,20 @@ def plan_large1d_m2ndp(
     docs/gpu_planner_m2ndp_target_mapping.md."""
     threshold = get_max_1d_length_m2ndp(target)
     node_id = [0]
+    block_compute_lengths: list[int] = []
     node, failure = _plan_leaf_or_recurse(
         length, batch, inverse=inverse, is_root=True, node_id=node_id,
-        target=target, threshold=threshold,
+        target=target, threshold=threshold, block_compute_lengths=block_compute_lengths,
     )
     if failure is not None:
         return failure
     assert node is not None
     gpu_config = GPUKernelConfig(
         source="clfft-m2ndp", length=length, radices=(),
-        extra={"decomposition": "large1D_4step", "threshold": threshold},
+        extra={
+            "decomposition": "large1D_4step", "threshold": threshold,
+            "block_compute_lengths": tuple(block_compute_lengths),
+        },
     )
     recursive_plan = RecursiveFFTPlan(
         n=length, inverse=inverse, root=node,

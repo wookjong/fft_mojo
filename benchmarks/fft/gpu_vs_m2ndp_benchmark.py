@@ -306,7 +306,18 @@ def run_one(
         rng = np.random.default_rng(seed)
         x = rng.uniform(-1, 1, n) + 1j * rng.uniform(-1, 1, n)
         got = run_recursive_plan(plan, x)
-        expected = np.fft.ifft(x) * n if inverse else np.fft.fft(x)
+        # BUG FIX (found investigating clFFT SBCC lowering's own inverse-FFT
+        # test, see docs/gpu_baseline_clfft_sbcc_lowering.md): this used to
+        # read `np.fft.ifft(x) * n`, but every plan shape in this project
+        # (plain single-kernel, native recursive-split, GPU-baseline
+        # cooperative/persistent leaves -- confirmed directly against all
+        # three) already applies its own 1/N normalization internally
+        # (`inverse_scale`/`apply_inverse_scale`), so `run_recursive_plan`'s
+        # own output already matches plain `np.fft.ifft(x)` -- the extra
+        # `* n` made every `inverse=True` correctness check here wrong by a
+        # factor of n. Never triggered before: every prior real-toolchain
+        # sweep in this project used the default `inverse=False`.
+        expected = np.fft.ifft(x) if inverse else np.fft.fft(x)
         max_err = float(np.max(np.abs(got - expected)))
         result.numeric_max_error = max_err
         result.correct = max_err < 1e-2
