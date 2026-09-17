@@ -800,7 +800,9 @@ class SchemeDecision:
     single_kernel: DefaultConfig | None = None  # set for CS_KERNEL_STOCKHAM
 
 
-def decide_scheme(length: int, *, batch: int = 1) -> SchemeDecision:
+def decide_scheme(
+    length: int, *, batch: int = 1, multiprocessor_count: int = ROCFFT_DEFAULT_MULTIPROCESSOR_COUNT,
+) -> SchemeDecision:
     """`NodeFactory::Decide1DScheme` (node_factory.cpp:628-819), ported in
     full for the 1D C2C single-precision case this project supports (no
     multi-dimensional `totalBatch` beyond the plain `batch` parameter, no
@@ -811,13 +813,24 @@ def decide_scheme(length: int, *, batch: int = 1) -> SchemeDecision:
     fallback below also fails" -- functionally identical, since that is
     also exactly the condition under which real rocFFT itself would fall
     through to Bluestein.
+
+    `multiprocessor_count`: the real `>SINGLE_KERNEL_OCCUPANCY_THRESHOLD`
+    occupancy heuristic's own CU-count input -- defaults to
+    `ROCFFT_DEFAULT_MULTIPROCESSOR_COUNT` (gfx908's real 120), preserving
+    every existing caller's exact source-faithful behavior. The M2NDP-
+    adapted baseline (`plan_m2ndp`) passes `target.num_ndp_units` (32)
+    instead -- see docs/gpu_planner_m2ndp_target_mapping.md's own rocFFT-
+    default row: both quantities answer the same question this formula
+    asks ("how many independent physical compute units exist to keep
+    busy"), so this is the one rocFFT-default parameter this task's own
+    "hardware input becomes M2NDP-derived" rule actually applies to.
     """
     single = SBRR_TABLE.get(length)
     if single is not None:
         if length > SINGLE_KERNEL_OCCUPANCY_THRESHOLD:
             transforms_per_block = single.workgroup_size // single.threads_per_transform
             total_batch = batch
-            if total_batch // max(transforms_per_block, 1) >= ROCFFT_DEFAULT_MULTIPROCESSOR_COUNT:
+            if total_batch // max(transforms_per_block, 1) >= multiprocessor_count:
                 return SchemeDecision(scheme="CS_KERNEL_STOCKHAM", single_kernel=single)
             # else: fall through to the multi-kernel (CC/TRTRT) path below,
             # exactly as the real source's own "otherwise, fall through to
@@ -954,41 +967,19 @@ def _plan_from_solution_match(
     )
 
 
-def plan(
-    length: int,
-    *,
-    batch: int = 1,
-    inverse: bool = False,
-    target: TargetProfile = DEFAULT_TARGET_PROFILE,
-    kernel_name: str = "FFTRocfftDefault",
+def _plan_from_scheme_decision(
+    decision: SchemeDecision, length: int, *, batch: int, inverse: bool,
+    target: TargetProfile, kernel_name: str, source_label: str,
 ) -> BaselineResult:
-    """Top-level rocFFT-PRODUCTION-DEFAULT baseline entry point. Real
-    production rocFFT probes the shipped solution map (`ApplySolution`)
-    BEFORE `Decide1DScheme` even runs (see `rocfft_upstream_solution_map`'s
-    own module docstring) -- a non-dummy match there can override what
-    `Decide1DScheme` would otherwise pick, so this function checks it
-    first and only falls through to the table lookup + `Decide1DScheme`
-    fallback chain below when no match exists. No search, no benchmarking
-    either way. Only ever builds an M2NDP plan for the `CS_KERNEL_
-    STOCKHAM` (single fused kernel) outcome -- see module docstring's own
-    SCOPE LIMIT for why `CS_L1D_CC`/`CS_L1D_TRTRT` (from either source) are
-    decided faithfully but reported `UNSUPPORTED_CURRENT_CODEGEN` rather
-    than force-mapped onto this repository's unrelated PRE/MIDDLE/POST
-    six-step mechanism.
-    """
-    sol_match = upstream_sol_map.apply_solution(
-        length, placement="op", inverse=inverse, batch=batch,
-        in_stride=(1,), out_stride=(1,), i_dist=length, o_dist=length,
-    )
-    if sol_match is not None:
-        return _plan_from_solution_match(
-            sol_match, length, batch=batch, inverse=inverse, target=target, kernel_name=kernel_name,
-        )
-
-    decision = decide_scheme(length, batch=batch)
-
+    """Shared tail of `plan`/`plan_m2ndp`, once each has its own
+    `decision = decide_scheme(...)` (identical algorithm either way, only
+    `multiprocessor_count` differs) -- extracted so the CS_KERNEL_STOCKHAM/
+    CS_BLUESTEIN/CS_L1D_CC/CS_L1D_TRTRT branch logic is never duplicated
+    (and so cannot silently drift between the two baselines). `source_label`
+    is the only thing that varies between callers, purely for
+    `GPUKernelConfig.source` diagnostics attribution."""
     if decision.scheme == "CS_BLUESTEIN":
-        gpu_config = GPUKernelConfig(source="rocfft-default", length=length, radices=())
+        gpu_config = GPUKernelConfig(source=source_label, length=length, radices=())
         return unsupported(
             BaselineStatus.UNSUPPORTED_GPU_ALGORITHM, gpu_config,
             f"length={length}: Decide1DScheme's own real fallback chain (compiled "
@@ -1002,7 +993,7 @@ def plan(
         assert config is not None
         transforms_per_block = config.workgroup_size // config.threads_per_transform
         gpu_config = GPUKernelConfig(
-            source="rocfft-default", length=length, radices=config.factors,
+            source=source_label, length=length, radices=config.factors,
             extra={
                 "scheme": "CS_KERNEL_STOCKHAM",
                 "workgroup_size": config.workgroup_size,
@@ -1031,7 +1022,7 @@ def plan(
     div1 = decision.div_length1
     div0 = length // div1
     gpu_config = GPUKernelConfig(
-        source="rocfft-default", length=length, radices=(),
+        source=source_label, length=length, radices=(),
         extra={
             "scheme": decision.scheme,
             "div_length1": div1,
@@ -1054,4 +1045,87 @@ def plan(
         f"own SCOPE LIMIT: forcing this onto the unrelated PRE/MIDDLE/POST six-step "
         f"shape clfft.py/vkfft.py use for their own, differently-structured upstream "
         f"algorithms would silently change what rocFFT itself actually does here).",
+    )
+
+
+def plan(
+    length: int,
+    *,
+    batch: int = 1,
+    inverse: bool = False,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    kernel_name: str = "FFTRocfftDefault",
+) -> BaselineResult:
+    """Top-level rocFFT-PRODUCTION-DEFAULT baseline entry point (SOURCE-
+    FAITHFUL: `decide_scheme`'s own occupancy heuristic always uses
+    `ROCFFT_DEFAULT_MULTIPROCESSOR_COUNT`, regardless of `target` -- see
+    `plan_m2ndp` for the M2NDP-adapted sibling and docs/
+    gpu_planner_m2ndp_target_mapping.md). Real production rocFFT probes the
+    shipped solution map (`ApplySolution`) BEFORE `Decide1DScheme` even
+    runs (see `rocfft_upstream_solution_map`'s own module docstring) -- a
+    non-dummy match there can override what `Decide1DScheme` would
+    otherwise pick, so this function checks it first and only falls
+    through to the table lookup + `Decide1DScheme` fallback chain below
+    when no match exists. No search, no benchmarking either way. Only ever
+    builds an M2NDP plan for the `CS_KERNEL_STOCKHAM` (single fused kernel)
+    outcome -- see module docstring's own SCOPE LIMIT for why `CS_L1D_CC`/
+    `CS_L1D_TRTRT` (from either source) are decided faithfully but reported
+    `UNSUPPORTED_CURRENT_CODEGEN` rather than force-mapped onto this
+    repository's unrelated PRE/MIDDLE/POST six-step mechanism.
+    """
+    sol_match = upstream_sol_map.apply_solution(
+        length, placement="op", inverse=inverse, batch=batch,
+        in_stride=(1,), out_stride=(1,), i_dist=length, o_dist=length,
+    )
+    if sol_match is not None:
+        return _plan_from_solution_match(
+            sol_match, length, batch=batch, inverse=inverse, target=target, kernel_name=kernel_name,
+        )
+    decision = decide_scheme(length, batch=batch)
+    return _plan_from_scheme_decision(
+        decision, length, batch=batch, inverse=inverse, target=target,
+        kernel_name=kernel_name, source_label="rocfft-default",
+    )
+
+
+def plan_m2ndp(
+    length: int,
+    *,
+    batch: int = 1,
+    inverse: bool = False,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    kernel_name: str = "FFTRocfftDefaultM2ndp",
+) -> BaselineResult:
+    """M2NDP-ADAPTED top-level rocFFT-default entry point -- the
+    `gpu-rocfft-default-m2ndp` CLI baseline. Identical control flow to
+    `plan` (solution-map probe, then `Decide1DScheme`'s own CS_KERNEL_
+    STOCKHAM/CS_L1D_CC/CS_L1D_TRTRT/CS_BLUESTEIN branches via the shared
+    `_plan_from_scheme_decision`), except `decide_scheme` is given
+    `target.num_ndp_units` instead of rocFFT's own representative-GPU
+    `ROCFFT_DEFAULT_MULTIPROCESSOR_COUNT` -- both answer "how many
+    independent physical compute units exist to keep busy" (see docs/
+    gpu_planner_m2ndp_target_mapping.md's own rocFFT-default row). Note
+    this heuristic only fires when `batch // transforms_per_block` is
+    large enough to matter -- at this project's usual `batch=1`, the
+    branch is never taken regardless of which multiprocessor count is
+    used, so this mapping's effect is batch-size-dependent, not visible
+    in every sweep.
+
+    The solution-map probe (`apply_solution`) is UNCHANGED -- it is
+    proven (module docstring) to match zero configurations in this
+    baseline's own FP32/out-of-place domain, so it has no
+    hardware-parameter surface to adapt at all.
+    """
+    sol_match = upstream_sol_map.apply_solution(
+        length, placement="op", inverse=inverse, batch=batch,
+        in_stride=(1,), out_stride=(1,), i_dist=length, o_dist=length,
+    )
+    if sol_match is not None:
+        return _plan_from_solution_match(
+            sol_match, length, batch=batch, inverse=inverse, target=target, kernel_name=kernel_name,
+        )
+    decision = decide_scheme(length, batch=batch, multiprocessor_count=target.num_ndp_units)
+    return _plan_from_scheme_decision(
+        decision, length, batch=batch, inverse=inverse, target=target,
+        kernel_name=kernel_name, source_label="rocfft-default-m2ndp",
     )

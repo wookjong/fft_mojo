@@ -200,12 +200,34 @@ def _floor_po2(x: int) -> int:
     return 1 << (x.bit_length() - 1)
 
 
-def get_max_1d_length() -> int:
+def get_max_1d_length(lds_bytes: int = CLFFT_LDS_BYTES) -> int:
     """`FFTPlan::GetMax1DLengthStockham` (generator.stockham.cpp lines
     4670-4690): `FloorPo2(limit_LocalMemSize / ElementSize())`, single
     precision only -- see module docstring for why the un-clamped
-    32768-byte default is used unconditionally on this target."""
-    return _floor_po2(CLFFT_LDS_BYTES // CLFFT_ELEM_BYTES)
+    32768-byte default is used unconditionally on the SOURCE-FAITHFUL
+    baseline.
+
+    `lds_bytes`: the LDS-equivalent byte budget this formula is evaluated
+    against -- defaults to clFFT's own representative-GPU constant
+    (`CLFFT_LDS_BYTES`), preserving every existing caller's exact prior
+    behavior. The M2NDP-adapted baseline (`get_max_1d_length_m2ndp`) is the
+    only caller that ever passes a different value -- see docs/
+    gpu_planner_m2ndp_target_mapping.md's own clFFT row for the semantic
+    justification (GPU workgroup-shared LDS -> M2NDP one-NDP-unit
+    scratchpad, `target.spad_capacity_bytes`). The FORMULA itself
+    (`floor_po2(lds/elem_size)`) is never changed -- only which byte
+    budget it is fed, exactly this task's own "hardware input becomes
+    M2NDP-derived, algorithm stays GPU-derived" rule.
+    """
+    return _floor_po2(lds_bytes // CLFFT_ELEM_BYTES)
+
+
+def get_max_1d_length_m2ndp(target: TargetProfile) -> int:
+    """M2NDP-adapted `get_max_1d_length`: identical formula, fed
+    `target.spad_capacity_bytes` (one NDP unit's own scratchpad) instead
+    of clFFT's own representative-GPU `CLFFT_LDS_BYTES` constant -- see
+    docs/gpu_planner_m2ndp_target_mapping.md."""
+    return get_max_1d_length(lds_bytes=target.spad_capacity_bytes)
 
 
 def is_1d_possible(length: int, large1d_threshold: int) -> bool:
@@ -883,10 +905,86 @@ def plan(
     """Top-level clFFT-style baseline entry point -- decides single-kernel
     vs. large-1D exactly the way `clfftBakePlan` does (section 4a-4b of the
     research report): a single Stockham kernel whenever
-    `Is1DPossible(length, GetMax1DLength())`, else the large-1D pipeline."""
+    `Is1DPossible(length, GetMax1DLength())`, else the large-1D pipeline.
+
+    SOURCE-FAITHFUL: `GetMax1DLength` is always evaluated against clFFT's
+    own representative-GPU LDS constant, regardless of `target` -- `target`
+    only ever reaches the M2NDP capacity/feasibility CHECKS inside
+    `map_cooperative_kernel`/`_build_physical_transpose`, never the
+    large-1D SPLIT DECISION itself. See `plan_m2ndp` for the sibling
+    baseline where the decision itself uses `target`'s own scratchpad size
+    (docs/gpu_planner_m2ndp_target_mapping.md) -- this frozen behavior is
+    the `gpu-clfft` CLI baseline and must not change.
+    """
     threshold = get_max_1d_length()
     if is_1d_possible(length, threshold):
         return plan_single_kernel(
             length, total_ffts=batch, inverse=inverse, kernel_name=kernel_name, target=target,
         )
     return plan_large1d(length, batch=batch, inverse=inverse, target=target)
+
+
+def plan_large1d_m2ndp(
+    length: int,
+    *,
+    batch: int = 1,
+    inverse: bool = False,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
+) -> BaselineResult:
+    """M2NDP-adapted sibling of `plan_large1d`: identical algorithm
+    (`_plan_leaf_or_recurse`, `choose_large1d_split`, every table/formula
+    unchanged), fed `get_max_1d_length_m2ndp(target)` as its own
+    `threshold` instead of clFFT's representative-GPU constant. See
+    docs/gpu_planner_m2ndp_target_mapping.md."""
+    threshold = get_max_1d_length_m2ndp(target)
+    node_id = [0]
+    node, failure = _plan_leaf_or_recurse(
+        length, batch, inverse=inverse, is_root=True, node_id=node_id,
+        target=target, threshold=threshold,
+    )
+    if failure is not None:
+        return failure
+    assert node is not None
+    gpu_config = GPUKernelConfig(
+        source="clfft-m2ndp", length=length, radices=(),
+        extra={"decomposition": "large1D_4step", "threshold": threshold},
+    )
+    recursive_plan = RecursiveFFTPlan(
+        n=length, inverse=inverse, root=node,
+        host=MultiKernelHostPlan(n=length, inverse=inverse, tolerance=1.0e-3),
+        batch=batch,
+    )
+    return BaselineResult(status=BaselineStatus.OK, gpu_config=gpu_config, plan=recursive_plan)
+
+
+def plan_m2ndp(
+    length: int,
+    *,
+    batch: int = 1,
+    inverse: bool = False,
+    kernel_name: str = "FFTClfftM2ndp",
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
+) -> BaselineResult:
+    """M2NDP-ADAPTED top-level clFFT-style entry point -- the `gpu-clfft-
+    m2ndp` CLI baseline. Identical control flow to `plan` (single-kernel
+    vs. large-1D via `Is1DPossible`), but the split DECISION itself is
+    evaluated against `target.spad_capacity_bytes` (via
+    `get_max_1d_length_m2ndp`) rather than clFFT's own representative-GPU
+    LDS constant -- i.e. "clFFT's planning algorithm, given M2NDP's own
+    resource characteristics" (see docs/gpu_planner_m2ndp_target_mapping.md
+    and this module's own top docstring's semantics section). Radix
+    selection itself (`get_radices`/`CLFFT_MAX_WGS`) is UNCHANGED from the
+    source-faithful baseline -- `CLFFT_MAX_WGS` is a specialization-TABLE
+    gate, not a hardware capacity query M2NDP has a smaller analogous
+    number for (M2NDP's own worker-wave virtualization already represents
+    any cooperation width via waves of `interleave_chunk_uthreads`
+    physical lanes, so there is no meaningful SMALLER ceiling to substitute
+    without simply crippling which specialization rows apply -- see the
+    mapping doc's own FIXED_ALGORITHM_PARAMETER entry for this constant).
+    """
+    threshold = get_max_1d_length_m2ndp(target)
+    if is_1d_possible(length, threshold):
+        return plan_single_kernel(
+            length, total_ffts=batch, inverse=inverse, kernel_name=kernel_name, target=target,
+        )
+    return plan_large1d_m2ndp(length, batch=batch, inverse=inverse, target=target)

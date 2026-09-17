@@ -75,7 +75,24 @@ from planning.diagnostics.spill_probe import (
 )
 from verification.verify_fft_recursive import run_recursive_plan
 
-PLANNERS = ("m2ndp-native", "gpu-clfft", "gpu-rocfft-default", "gpu-rocfft-tuned", "gpu-vkfft")
+PLANNERS = (
+    "m2ndp-native",
+    # Source-faithful GPU baselines (gpu-baseline-v1, frozen -- see
+    # planning/gpu_baseline/*.py's own module docstrings): GPU algorithm +
+    # a representative real-GPU's own hardware-resource constants
+    # (CLFFT_LDS_BYTES, ROCFFT_DEFAULT_MULTIPROCESSOR_COUNT, VKFFT_WARP_
+    # SIZE), preserved as a reference/debugging baseline. Never mutated by
+    # the M2NDP-adapted work below.
+    "gpu-clfft", "gpu-rocfft-default", "gpu-rocfft-tuned", "gpu-vkfft",
+    # M2NDP-adapted GPU baselines (docs/gpu_planner_m2ndp_target_mapping.md):
+    # the SAME GPU planning algorithm, with every hardware-resource input
+    # that has a meaningful M2NDP equivalent replaced by that equivalent
+    # (M2NDP's own TargetProfile), everything else (specialization tables,
+    # radix decomposition, execution-scheme selection) left untouched. This
+    # is the PRIMARY baseline for GPU-vs-M2NDP-native comparison going
+    # forward -- see that doc's own "why this is primary" section.
+    "gpu-clfft-m2ndp", "gpu-rocfft-default-m2ndp", "gpu-vkfft-m2ndp",
+)
 
 # The task's own required N sweep (small/pow2/mixed-radix/multi-factorable/
 # split-needing/previously-problematic/large) -- kept verbatim; domain
@@ -238,12 +255,25 @@ def get_plan(
         except Exception as exc:  # noqa: BLE001 -- record, never crash the sweep
             return False, None, f"m2ndp-native planning raised {type(exc).__name__}: {exc}"
 
-    module = {
-        "gpu-clfft": clfft, "gpu-rocfft-default": rocfft_default,
-        "gpu-rocfft-tuned": rocfft, "gpu-vkfft": vkfft,
+    # (module, entry-point-name) per planner -- source-faithful baselines
+    # all call the module's own frozen `plan`; the M2NDP-adapted siblings
+    # call `plan_m2ndp` (docs/gpu_planner_m2ndp_target_mapping.md). rocFFT-
+    # tuned (`gpu-rocfft-tuned`) has no M2NDP-adapted sibling at all -- see
+    # that module's own docstring for why it stays a separate, special-
+    # purpose baseline (its own planning already measures real M2NDP
+    # execution to choose among rocFFT-generated candidates, so "give it
+    # M2NDP's resource characteristics" does not apply the same way).
+    module, entry_point = {
+        "gpu-clfft": (clfft, "plan"),
+        "gpu-clfft-m2ndp": (clfft, "plan_m2ndp"),
+        "gpu-rocfft-default": (rocfft_default, "plan"),
+        "gpu-rocfft-default-m2ndp": (rocfft_default, "plan_m2ndp"),
+        "gpu-rocfft-tuned": (rocfft, "plan"),
+        "gpu-vkfft": (vkfft, "plan"),
+        "gpu-vkfft-m2ndp": (vkfft, "plan_m2ndp"),
     }[planner]
     try:
-        result: BaselineResult = module.plan(n, batch=batch, inverse=inverse, target=target)
+        result: BaselineResult = getattr(module, entry_point)(n, batch=batch, inverse=inverse, target=target)
     except Exception as exc:  # noqa: BLE001
         return False, None, f"{planner} planning raised {type(exc).__name__}: {exc}"
     if result.status is not BaselineStatus.OK:

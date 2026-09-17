@@ -886,7 +886,8 @@ def _grouped_batch_seed(fft_dim: int, target: TargetProfile, *, single_upload: b
 
 
 def axisblock_batch_single_pass(
-    fft_dim: int, threads_per_transform: int, target: TargetProfile, *, use_rader: bool = False,
+    fft_dim: int, threads_per_transform: int, target: TargetProfile, *,
+    use_rader: bool = False, warp_size: int = VKFFT_WARP_SIZE,
 ) -> int:
     """`AxisBlockSplitter.h` lines 294-299's `aimThreads`/`warpSize`
     estimate -- the real source's `else` branch of `reorderFourStep &&
@@ -894,13 +895,23 @@ def axisblock_batch_single_pass(
     (single-kernel) leaf starts from. This is only the seed: the real
     source applies a long shared continuation (lines 301-364) to this
     value afterward -- see `_postprocess_axis_upload0`, called by
-    `axisblock_for_leaf` right after this function, never skipped."""
-    if threads_per_transform // VKFFT_WARP_SIZE == 1 and threads_per_transform / VKFFT_WARP_SIZE < 1.5:
-        estimate = VKFFT_AIM_THREADS // VKFFT_WARP_SIZE
+    `axisblock_for_leaf` right after this function, never skipped.
+
+    `warp_size`: the SIMT lockstep-execution-granularity hardware input
+    this formula asks for ("how many threads run in genuine lockstep") --
+    defaults to `VKFFT_WARP_SIZE` (32, source-faithful). The M2NDP-adapted
+    baseline (`plan_m2ndp`) passes `target.interleave_chunk_uthreads` (8)
+    instead -- see docs/gpu_planner_m2ndp_target_mapping.md's own VkFFT
+    row. `VKFFT_AIM_THREADS` is NOT adapted here -- it is VkFFT's own
+    hand-tuned occupancy target (a fixed algorithm parameter, not a
+    hardware query), unchanged either way.
+    """
+    if threads_per_transform // warp_size == 1 and threads_per_transform / warp_size < 1.5:
+        estimate = VKFFT_AIM_THREADS // warp_size
     else:
         estimate = VKFFT_AIM_THREADS // threads_per_transform
     estimate = max(estimate, 1)
-    if threads_per_transform < VKFFT_AIM_THREADS and (threads_per_transform < VKFFT_WARP_SIZE or use_rader):
+    if threads_per_transform < VKFFT_AIM_THREADS and (threads_per_transform < warp_size or use_rader):
         return estimate
     return 1
 
@@ -1057,7 +1068,7 @@ def axisblock_batch_multipass_later(
 
 def axisblock_for_leaf(
     length: int, radices: tuple[int, ...], *, max_rhs: int, num_passes: int, upload_id: int,
-    original_length: int, target: TargetProfile,
+    original_length: int, target: TargetProfile, warp_size: int = VKFFT_WARP_SIZE,
 ) -> tuple[int, int]:
     """One leaf's own `(threads_per_transform, transforms_per_block)` --
     the M2NDP translation's `(workers_per_fft, fft_slots_wanted)` pair --
@@ -1065,11 +1076,14 @@ def axisblock_for_leaf(
     upload) formula above depending on this plan's own `num_passes` and
     this specific leaf's own `upload_id` (0 = this baseline's own
     `near_fft`, the first-processed pass; >0 = any leaf reached only after
-    at least one PRE/MIDDLE transpose)."""
+    at least one PRE/MIDDLE transpose). `warp_size`: forwarded to
+    `axisblock_batch_single_pass` only -- see that function's own
+    docstring; the multi-pass formulas below have no warp-size input at
+    all in the real source."""
     min_regs = min_registers_per_thread_for(length, radices, max_rhs)
     threads_per_transform = axisblock_threads_per_transform(length, min_regs)
     if num_passes == 1:
-        seed = axisblock_batch_single_pass(length, threads_per_transform, target)
+        seed = axisblock_batch_single_pass(length, threads_per_transform, target, warp_size=warp_size)
         threads_per_transform, batch = _postprocess_axis_upload0(
             threads_per_transform, seed, length, target,
             num_passes=num_passes, max_rhs=max_rhs, original_length=original_length,
@@ -1105,6 +1119,7 @@ def axisblock_for_leaf(
 def _leaf_result(
     m: int, r: int, *, inverse: bool, is_root: bool, node_id: list[int],
     target: TargetProfile, num_passes: int, upload_id: int, original_length: int,
+    warp_size: int = VKFFT_WARP_SIZE,
 ) -> tuple[FFTLeafPlan | None, BaselineResult | None]:
     idx = node_id[0]
     node_id[0] += 1
@@ -1123,7 +1138,7 @@ def _leaf_result(
 
     workers_per_fft, fft_slots_wanted = axisblock_for_leaf(
         m, radices, max_rhs=r, num_passes=num_passes, upload_id=upload_id,
-        original_length=original_length, target=target,
+        original_length=original_length, target=target, warp_size=warp_size,
     )
     gpu_config = GPUKernelConfig(
         source="vkfft", length=m, radices=radices,
@@ -1146,6 +1161,7 @@ def _leaf_result(
 def _recursive_result(
     m: int, r: int, factors: tuple[int, ...], *, inverse: bool, is_root: bool,
     node_id: list[int], target: TargetProfile, num_passes: int, upload_id: int, original_length: int,
+    warp_size: int = VKFFT_WARP_SIZE,
 ) -> tuple[FFTNode | None, BaselineResult | None]:
     """`factors`: this level's own (a, b) or (a, b, c) split, near-to-far
     (b == innermost/near, matching this module's own axis-split return
@@ -1159,6 +1175,7 @@ def _recursive_result(
         return _leaf_result(
             m, r, inverse=inverse, is_root=is_root, node_id=node_id, target=target,
             num_passes=num_passes, upload_id=upload_id, original_length=original_length,
+            warp_size=warp_size,
         )
 
     idx = node_id[0]
@@ -1175,6 +1192,7 @@ def _recursive_result(
     near_node, failure = _leaf_result(
         b, r * a, inverse=inverse, is_root=False, node_id=node_id, target=target,
         num_passes=num_passes, upload_id=upload_id, original_length=original_length,
+        warp_size=warp_size,
     )
     if failure is not None:
         return None, failure
@@ -1187,6 +1205,7 @@ def _recursive_result(
     far_node, failure = _recursive_result(
         a, r * b, factors[:-1], inverse=inverse, is_root=False, node_id=node_id, target=target,
         num_passes=num_passes, upload_id=upload_id + 1, original_length=original_length,
+        warp_size=warp_size,
     )
     if failure is not None:
         return None, failure
@@ -1212,12 +1231,23 @@ def plan(
     batch: int = 1,
     inverse: bool = False,
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    warp_size: int = VKFFT_WARP_SIZE,
 ) -> BaselineResult:
     """Top-level VkFFT-style baseline entry point: decides 1/2/3-pass via
     `choose_num_passes`, then splits via this module's own axis-splitting
     functions (pow2 vs. non-pow2), building an M2NDP plan with the same
     PRE/near/MIDDLE/far/POST shape clfft.py's large-1D path already
-    establishes."""
+    establishes.
+
+    SOURCE-FAITHFUL (default `warp_size=VKFFT_WARP_SIZE`): `choose_num_
+    passes`/`split_pow2_*`/`split_non_pow2_*` already consistently use
+    `target.spad_capacity_bytes` for every LDS-equivalent quantity (this
+    baseline's pre-existing target adaptation, unchanged) -- `warp_size`
+    is the ONE remaining fixed-GPU hardware input in this module
+    (`axisblock_batch_single_pass`'s own SIMT-lockstep-granularity
+    estimate). See `plan_m2ndp` for the M2NDP-adapted sibling and docs/
+    gpu_planner_m2ndp_target_mapping.md.
+    """
     is_po2 = (length & (length - 1)) == 0
     try:
         num_passes = choose_num_passes(length, non_strided=True, target=target)
@@ -1262,7 +1292,7 @@ def plan(
     # "pop from the end" convention: factors[-1] is this level's near/b.
     node, failure = _recursive_result(
         length, batch, factors, inverse=inverse, is_root=True, node_id=node_id, target=target,
-        num_passes=num_passes, upload_id=0, original_length=length,
+        num_passes=num_passes, upload_id=0, original_length=length, warp_size=warp_size,
     )
     if failure is not None:
         return failure
@@ -1275,7 +1305,8 @@ def plan(
     if isinstance(node, FFTLeafPlan):
         top_radices = tuple(stage.radix for stage in node.kernel.stages)
     gpu_config = GPUKernelConfig(
-        source="vkfft", length=length, radices=top_radices,
+        source="vkfft" if warp_size == VKFFT_WARP_SIZE else "vkfft-m2ndp",
+        length=length, radices=top_radices,
         extra={"num_passes": num_passes, "factors": factors, "is_pow2": is_po2},
     )
     recursive_plan = RecursiveFFTPlan(
@@ -1283,3 +1314,25 @@ def plan(
         host=MultiKernelHostPlan(n=length, inverse=inverse, tolerance=1.0e-3), batch=batch,
     )
     return BaselineResult(status=BaselineStatus.OK, gpu_config=gpu_config, plan=recursive_plan)
+
+
+def plan_m2ndp(
+    length: int,
+    *,
+    batch: int = 1,
+    inverse: bool = False,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
+) -> BaselineResult:
+    """M2NDP-ADAPTED top-level VkFFT-style entry point -- the `gpu-vkfft-
+    m2ndp` CLI baseline. Identical to `plan` in every respect except
+    `warp_size`: `target.interleave_chunk_uthreads` (8, M2NDP's own
+    physical concurrent-microthread width -- the closest thing this target
+    has to "threads executing in genuine lockstep") instead of VkFFT's own
+    representative-GPU `VKFFT_WARP_SIZE` (32) -- see docs/
+    gpu_planner_m2ndp_target_mapping.md's own VkFFT row. Every other
+    hardware input in this module (`choose_num_passes`/`split_pow2_*`/
+    `split_non_pow2_*`'s own `target.spad_capacity_bytes` usage) was
+    already M2NDP-adapted before this task -- this is the one remaining
+    gap this task's own audit found.
+    """
+    return plan(length, batch=batch, inverse=inverse, target=target, warp_size=target.interleave_chunk_uthreads)
