@@ -11,7 +11,7 @@ why, and CostWeights for how they combine. Nothing here makes a planning
 decision; it only measures one already-built plan.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from planning.strategies.fft_plan_recursive import (
     FFTLeafPlan,
@@ -22,7 +22,7 @@ from planning.strategies.fft_plan_recursive import (
     flatten_recursive_node,
 )
 from planning.core.fft_plan_core import FFTCodegenPlan, FFTStagePlan
-from planning.execution.fft_plan_persistent import num_rounds
+from planning.execution.fft_plan_persistent import flatten_logical_workers_to_physical_lanes, num_rounds
 from planning.core.target_profile import TargetProfile
 
 # Composite/prime radices confirmed clean as a leaf's *first* stage
@@ -221,6 +221,24 @@ class PlanMetrics:
     # section for the real-hardware matched-pair measurements this is
     # based on).
     persistent_worker_stage_batches: int
+    # ADDED 2026-09-22 (logical/physical cost-model correction -- see
+    # docs/logical_vs_physical_cost_model.md). `total_worker_stage_batches`/
+    # `persistent_worker_stage_batches` above are PRESERVED byte-identical
+    # to their pre-existing computation (every existing reader of either
+    # field -- diagnostics, `format_plan_summary`, a revalidation script --
+    # keeps seeing exactly what it always has). These two are the
+    # CORRECTED versions `_execution_cost` actually sums now: identical to
+    # the `total_worker_stage_batches`/`persistent_worker_stage_batches`
+    # pair for every non-persistent stage AND every persistent stage with
+    # `workers_per_fft <= physical_lanes` (i.e. every plan this project's
+    # own ordinary planner/search path has ever built -- see
+    # `StageExecutionMetrics.physical_max_batches_per_lane`'s own
+    # docstring for why), so this change is a no-op for the entire
+    # existing candidate space; it only differs for a GPU-baseline-derived
+    # persistent plan whose `workers_per_fft` exceeds the physical
+    # concurrency ceiling (8).
+    physical_total_worker_stage_batches: int
+    physical_persistent_worker_stage_batches: int
     # `_persistent_extra_rounds`'s own return value -- how many EXTRA
     # host-orchestrated rounds (beyond the first) this plan's own
     # persistent leaves need, summed across leaves. `0` whenever no leaf
@@ -441,9 +459,62 @@ class CostWeights:
     # that does, not a fitted rate; recheck this weight if more benchmark_
     # fft_candidates.sh data at other N/batch combinations disagrees.
     tile_oversaturation_penalty: float = 10.0
+    # ADDED 2026-09-22 (transpose cost-model audit -- see docs/
+    # transpose_cost_model_audit.md and section 14 of the task this was
+    # built from). `transpose_tile_count`/`tile_oversaturation_penalty`
+    # immediately above are BOTH flagged "SUSPECT, NOT YET RE-VERIFIED" in
+    # their own comments -- derived from cycle numbers this project's own
+    # `_parse_ndp_cycles` fix (2026-08-31) later found were very likely
+    # measured with the retired `tail -1`-on-Gantt-log convention (a
+    # confirmed-wrong reading for at least the N=1024 point both weights
+    # cite: "2111 cycles" was actually 49061). Re-measuring against the
+    # corrected parsing pipeline requires the real Mojo -> llc -> M2NDP-
+    # Detour toolchain (see revalidation/measure_transpose_tile_sweep.py's
+    # own module docstring for the exact command) -- not available in
+    # every environment this cost model runs in, and NOT run as part of
+    # this change (see that script's own docstring for why: no synthetic
+    # coefficient was fabricated to replace the suspect one, per the
+    # task's own "measurement이 없으면 바꾸지 말고 invalid로 표시" instruction).
+    # `True` (the default) keeps both weights applied exactly as before --
+    # byte-identical planner behavior/regression-test results to every
+    # commit before this flag existed. Set `False` to zero out BOTH terms
+    # (`_memory_cost` below) for an experiment that wants to rank
+    # candidates without trusting this specific pair of unverified
+    # coefficients -- e.g. while a real re-sweep is in progress. Does not
+    # affect `transpose_tail_risk_penalty` (a different, independently-
+    # confirmed-real-hardware signal -- see its own field comment) or any
+    # other weight.
+    enable_unverified_transpose_tile_term: bool = True
 
 
 DEFAULT_COST_WEIGHTS = CostWeights()
+
+# P1.3 (transpose cost-term policy -- see docs/transpose_cost_model_audit.md
+# and CostWeights.enable_unverified_transpose_tile_term's own docstring).
+# "LEGACY" mode (`DEFAULT_COST_WEIGHTS`, used everywhere in this project
+# unchanged): the unverified `transpose_tile_count`/`tile_oversaturation_
+# penalty` pair stays applied, exactly as every commit before this flag
+# existed -- required for production/regression compatibility (existing
+# candidate rankings must not shift just because this audit happened).
+#
+# "PRIORITY-2 EXPERIMENTAL" mode (`PRIORITY2_COST_WEIGHTS`): the SAME
+# weights with that one unverified pair disabled -- for Priority-2's own
+# controlled A/B execution-mechanism experiments (docs/
+# priority2_execution_strategies.md), so a measured or estimated cycle
+# difference between two M2NDP EXECUTION candidates for the identical GPU
+# logical plan is never contaminated by a cost term this project's own
+# `_parse_ndp_cycles` fix already found was very likely derived from a
+# mis-measured cycle count (see that field's own docstring for the full
+# provenance). Priority-2 code should import and use THIS constant, not
+# `DEFAULT_COST_WEIGHTS`, for any `estimate_cost` call it makes -- see
+# `planning.search.priority2_experiments` for where this is actually wired
+# in. This is NOT a claim that the transpose cost model is now calibrated
+# -- see `CostWeights.enable_unverified_transpose_tile_term`'s own
+# docstring: no synthetic coefficient has been fit to replace the
+# disabled pair, and none should be until a real toolchain measurement
+# exists (docs/transpose_cost_model_audit.md's own re-sweep infrastructure,
+# not run in this environment).
+PRIORITY2_COST_WEIGHTS = replace(DEFAULT_COST_WEIGHTS, enable_unverified_transpose_tile_term=False)
 
 
 @dataclass(frozen=True)
@@ -536,6 +607,48 @@ class StageExecutionMetrics:
     # section for why persistent's own batches need a different per-batch
     # rate than non-cooperative/cooperative's.
     is_persistent: bool
+    # ADDED 2026-09-22 (logical/physical cost-model correction -- see
+    # docs/logical_vs_physical_cost_model.md). `workers_per_fft` above is
+    # the LOGICAL cooperation width this stage's batches were partitioned
+    # across (`len(stage.persistent_vector_batches)` for a persistent
+    # stage) -- for a non-persistent (plain or cooperative) stage that is
+    # already the real PHYSICAL concurrency too (cooperative's own
+    # `workers_per_fft` is always a divisor of `target.
+    # interleave_chunk_uthreads`, i.e. already <= 8 physical lanes, by
+    # construction -- see `fft_plan_cooperative.worker_candidates_per_
+    # fft`'s own docstring), so nothing below changes for those. A
+    # persistent stage's default M2NDP lowering ("physical" mode, see
+    # `codegen.fft_persistent_codegen.ExecutionMode`) instead FLATTENS
+    # `workers_per_fft` logical workers down to `physical_lanes` (8)
+    # physical buckets at codegen time -- `max_batches_per_worker` above,
+    # computed from the raw LOGICAL partition, is what a caller wants for
+    # "how did the planner intend to divide this stage's work," but is
+    # the WRONG quantity for "how long does this stage actually take to
+    # execute on M2NDP" once `workers_per_fft > physical_lanes`: real
+    # physical concurrency never exceeds `physical_lanes` regardless of
+    # how wide a GPU planner's own `workers_per_fft` choice is. `_execution_
+    # cost` uses `physical_max_batches_per_lane` (below), not `max_batches_
+    # per_worker`, for exactly this reason.
+    physical_lanes: int
+    # The busiest PHYSICAL lane's own batch count this stage, after
+    # `planning.execution.fft_plan_persistent.flatten_logical_workers_to_
+    # physical_lanes` collapses `workers_per_fft` logical workers onto
+    # `physical_lanes` physical buckets (persistent stages only; equals
+    # `max_batches_per_worker` unchanged for every non-persistent stage,
+    # and for every persistent stage with `workers_per_fft <= physical_
+    # lanes` too -- see that function's own docstring for why that case is
+    # a byte-identical no-op). THE quantity `_execution_cost` sums instead
+    # of `max_batches_per_worker` for a persistent stage -- see `PlanMetrics.
+    # physical_total_worker_stage_batches`.
+    physical_max_batches_per_lane: int
+    # `node.persistent.lowering_mode` for a persistent stage (the plan's
+    # own INTENDED codegen execution-lowering strategy -- see
+    # `PersistentWorkgroupPlan.lowering_mode`'s own docstring for what
+    # this is and is not authoritative over), `None` otherwise. Exposed so
+    # a plan/report dump (section 16 of the task this was built from) can
+    # show which mode a stage's own cost was evaluated against without a
+    # caller separately re-deriving `is_persistent`.
+    persistent_lowering_mode: str | None = None
 
 
 def _stage_chunk_count(stage: FFTStagePlan, simd_lanes: int) -> int:
@@ -573,6 +686,7 @@ def compute_stage_metrics(plan: RecursiveFFTPlan) -> list[StageExecutionMetrics]
         if isinstance(node, PhysicalTransposePlan):
             continue
         for stage in node.stages:
+            physical_lowering_mode: str | None = None
             if stage.persistent_vector_batches is not None:
                 # Persistent-software-workgroup stage (see PersistentWorkgroupPlan /
                 # fft_plan_persistent.py): `worker_batches` is never set here
@@ -607,6 +721,25 @@ def compute_stage_metrics(plan: RecursiveFFTPlan) -> list[StageExecutionMetrics]
                 worker_utilization = (
                     active_workers / workers_per_fft if workers_per_fft else 1.0
                 )
+                # Physical-lane-flattened shape (see `flatten_logical_
+                # workers_to_physical_lanes`'s own docstring): the SAME
+                # mapping `codegen.fft_persistent_codegen`'s default
+                # "physical" lowering renders, so a wide GPU-baseline-
+                # derived `workers_per_fft` (> `physical_lanes`) is scored
+                # against the real M2NDP physical-concurrency ceiling
+                # (`node.persistent.workers_per_group`, 8) instead of the
+                # LOGICAL cooperation width -- see `physical_max_batches_
+                # per_lane`'s own docstring on `StageExecutionMetrics`.
+                assert node.persistent is not None
+                physical_lanes = node.persistent.workers_per_group
+                physical_lowering_mode = node.persistent.lowering_mode
+                physical_batches = flatten_logical_workers_to_physical_lanes(
+                    vector_batches, scalar_batches,
+                    workers_per_fft=workers_per_fft, workers_per_group=physical_lanes,
+                )
+                physical_max_batches_per_lane = max(
+                    (len(bucket) for bucket in physical_batches), default=0
+                )
             elif stage.worker_batches is None:
                 simd_iteration_count = len(stage.batches)
                 butterfly_count = sum(b.valid_lanes for b in stage.batches)
@@ -614,6 +747,8 @@ def compute_stage_metrics(plan: RecursiveFFTPlan) -> list[StageExecutionMetrics]
                 active_workers = 1
                 max_batches_per_worker = simd_iteration_count
                 worker_utilization = 1.0
+                physical_lanes = 1
+                physical_max_batches_per_lane = max_batches_per_worker
             else:
                 simd_iteration_count = len(stage.batches)
                 butterfly_count = sum(b.valid_lanes for b in stage.batches)
@@ -625,6 +760,13 @@ def compute_stage_metrics(plan: RecursiveFFTPlan) -> list[StageExecutionMetrics]
                 worker_utilization = (
                     active_workers / workers_per_fft if workers_per_fft else 1.0
                 )
+                # Cooperative `workers_per_fft` is already <= physical
+                # concurrency by construction (a divisor of `target.
+                # interleave_chunk_uthreads` -- see `fft_plan_cooperative.
+                # worker_candidates_per_fft`'s own docstring), so no
+                # flattening is needed: physical == logical here already.
+                physical_lanes = workers_per_fft
+                physical_max_batches_per_lane = max_batches_per_worker
             effective_parallelism = (
                 simd_iteration_count / max_batches_per_worker
                 if max_batches_per_worker
@@ -644,6 +786,9 @@ def compute_stage_metrics(plan: RecursiveFFTPlan) -> list[StageExecutionMetrics]
                     effective_parallelism=effective_parallelism,
                     chunks_per_batch=_stage_chunk_count(stage, node.simd_lanes),
                     is_persistent=stage.persistent_vector_batches is not None,
+                    physical_lanes=physical_lanes,
+                    physical_max_batches_per_lane=physical_max_batches_per_lane,
+                    persistent_lowering_mode=physical_lowering_mode,
                 )
             )
         leaf_index += 1
@@ -784,6 +929,13 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
         sm.max_batches_per_worker * sm.chunks_per_batch
         for sm in stage_metrics if sm.is_persistent
     )
+    physical_total_worker_stage_batches = sum(
+        sm.physical_max_batches_per_lane * sm.chunks_per_batch for sm in stage_metrics
+    )
+    physical_persistent_worker_stage_batches = sum(
+        sm.physical_max_batches_per_lane * sm.chunks_per_batch
+        for sm in stage_metrics if sm.is_persistent
+    )
     persistent_extra_rounds = _persistent_extra_rounds(plan, target)
 
     return PlanMetrics(
@@ -798,6 +950,8 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
         worst_worker_utilization=min(utilizations) if utilizations else 1.0,
         total_worker_stage_batches=total_worker_stage_batches,
         persistent_worker_stage_batches=persistent_worker_stage_batches,
+        physical_total_worker_stage_batches=physical_total_worker_stage_batches,
+        physical_persistent_worker_stage_batches=physical_persistent_worker_stage_batches,
         persistent_extra_rounds=persistent_extra_rounds,
         radix_risk_score=radix_risk_score,
         transpose_tail_tile_count=transpose_tail_tile_count,
@@ -817,12 +971,17 @@ def _memory_cost(metrics: PlanMetrics, weights: CostWeights) -> float:
     oversaturation = max(
         0, metrics.max_transpose_stage_uthreads - _TILE_PARALLELISM_SATURATION_UTHREADS
     )
+    tile_term = 0.0
+    if weights.enable_unverified_transpose_tile_term:
+        tile_term = (
+            weights.transpose_tile_count * metrics.total_transpose_tiles
+            + weights.tile_oversaturation_penalty * oversaturation
+        )
     return (
         weights.memory_traffic * metrics.estimated_dram_bytes
         + weights.transpose_passes * metrics.transpose_kernel_count
         + weights.recursion_depth_penalty * metrics.recursion_depth
-        + weights.transpose_tile_count * metrics.total_transpose_tiles
-        + weights.tile_oversaturation_penalty * oversaturation
+        + tile_term
         + weights.transpose_tail_risk_penalty * metrics.transpose_tail_tile_count
     )
 
@@ -903,13 +1062,33 @@ def _execution_cost(metrics: PlanMetrics, weights: CostWeights) -> float:
     docstrings for the real-hardware derivation of each. A plan with no
     persistent leaf at all (`persistent_worker_stage_batches ==
     persistent_extra_rounds == 0`) computes byte-identically to before
-    this change."""
-    nonpersistent_worker_stage_batches = (
-        metrics.total_worker_stage_batches - metrics.persistent_worker_stage_batches
+    this change.
+
+    REVISED 2026-09-22 (logical/physical cost-model correction -- see
+    docs/logical_vs_physical_cost_model.md and `StageExecutionMetrics.
+    physical_max_batches_per_lane`'s own docstring): sums `PlanMetrics.
+    physical_total_worker_stage_batches`/`physical_persistent_worker_
+    stage_batches` now, not `total_worker_stage_batches`/`persistent_
+    worker_stage_batches` -- the physical-lane-flattened pair, so a
+    persistent stage's own contribution reflects M2NDP's real 8-physical-
+    lane concurrency ceiling instead of the LOGICAL `workers_per_fft` a
+    GPU planner chose (which the default "physical" M2NDP lowering never
+    actually runs at simultaneously once it exceeds 8 -- see `codegen.
+    fft_persistent_codegen`'s own `_flatten_to_physical_lanes`). Byte-
+    identical to the pre-existing formula for every plan this project's
+    own ordinary planner/search path has ever built (see the physical
+    fields' own docstrings for why) -- this only changes ranking for a
+    GPU-baseline-derived persistent plan whose `workers_per_fft` exceeds
+    8. The old, logical-only fields stay on `PlanMetrics` unchanged, for
+    any existing caller that reads them directly."""
+    physical_nonpersistent_worker_stage_batches = (
+        metrics.physical_total_worker_stage_batches
+        - metrics.physical_persistent_worker_stage_batches
     )
     weighted_stage_work = (
-        nonpersistent_worker_stage_batches
-        + weights.persistent_stage_batch_multiplier * metrics.persistent_worker_stage_batches
+        physical_nonpersistent_worker_stage_batches
+        + weights.persistent_stage_batch_multiplier
+        * metrics.physical_persistent_worker_stage_batches
         + weights.persistent_extra_round_multiplier * metrics.persistent_extra_rounds
     )
     return weights.stage_work * weighted_stage_work

@@ -28,7 +28,7 @@ import numpy as np
 
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 from planning.gpu_baseline import clfft, rocfft_default, vkfft
-from planning.gpu_baseline.common import BaselineStatus
+from planning.gpu_baseline.common import BaselineStatus, m2ndp_resource_complex_bytes
 from verification.verify_fft_recursive import run_recursive_plan
 
 _FAILURES: list[str] = []
@@ -88,9 +88,45 @@ def verify_clfft_m2ndp_decision_fidelity() -> None:
     t = DEFAULT_TARGET_PROFILE
     src_threshold = clfft.get_max_1d_length()
     m2ndp_threshold = clfft.get_max_1d_length_m2ndp(t)
-    check(m2ndp_threshold != src_threshold, "M2NDP threshold should differ from clFFT's own representative-GPU threshold")
-    check(m2ndp_threshold == clfft._floor_po2(t.spad_capacity_bytes // clfft.CLFFT_ELEM_BYTES),
-          "M2NDP threshold must be exactly floor_po2(spad_capacity_bytes / elem_bytes) -- the SAME formula, different input")
+    # P1.1 fix (docs/clfft_m2ndp_scratchpad_resource_model.md): the M2NDP
+    # threshold now uses BOTH a different byte budget (`target.spad_
+    # capacity_bytes`=122880) AND a different per-element byte count
+    # (`m2ndp_resource_complex_bytes()`=16, the real M2NDP persistent-leaf
+    # requirement -- not clFFT's own 8-byte single-buffer convention) than
+    # the source-faithful pair (`CLFFT_LDS_BYTES`=32768, `CLFFT_ELEM_
+    # BYTES`=8). Checking the INPUTS differ (not the OUTPUT) is the
+    # correct invariant here: `floor_po2` can coincidentally map two
+    # different (budget, elem_bytes) pairs to the identical power-of-two
+    # threshold for this project's own current numbers (`floor_po2(32768
+    # // 8) == floor_po2(122880 // 16) == 4096`) -- a numeric coincidence
+    # of these specific constants, not evidence the M2NDP-specific
+    # resource substitution failed to take effect. An earlier version of
+    # this check asserted the OUTPUT must differ, which broke -- correctly
+    # -- the moment P1.1 fixed the elem_bytes input to its own real value;
+    # asserting on the inputs instead is robust to that kind of
+    # coincidence.
+    check(
+        (t.spad_capacity_bytes, m2ndp_resource_complex_bytes())
+        != (clfft.CLFFT_LDS_BYTES, clfft.CLFFT_ELEM_BYTES),
+        "M2NDP threshold's own (budget, elem_bytes) inputs should differ from clFFT's own "
+        "representative-GPU (CLFFT_LDS_BYTES, CLFFT_ELEM_BYTES) inputs",
+    )
+    check(
+        m2ndp_threshold == clfft.get_max_1d_length(
+            lds_bytes=t.spad_capacity_bytes, elem_bytes=m2ndp_resource_complex_bytes(),
+        ),
+        "M2NDP threshold must be exactly get_max_1d_length fed M2NDP's own resource inputs "
+        "(target.spad_capacity_bytes, m2ndp_resource_complex_bytes()) -- the SAME formula, "
+        "M2NDP-derived inputs",
+    )
+    # NOTE: with the current DEFAULT_TARGET_PROFILE numbers, src_threshold
+    # == m2ndp_threshold == 4096 (see the coincidence noted above), so
+    # this range is empty and the loop body below runs zero times -- that
+    # is expected, not a coverage gap this test needs to compensate for:
+    # the loop's own job is to catch a THRESHOLD WIDENING regression (a
+    # length newly single-kernel-eligible on M2NDP that wasn't on the
+    # source baseline "downgrading" to large-1D), which cannot happen at
+    # all when the two thresholds are equal.
     for n in range(src_threshold + 1, m2ndp_threshold + 1):
         if not clfft.is_1d_possible(n, m2ndp_threshold):
             continue

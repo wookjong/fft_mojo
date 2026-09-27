@@ -423,6 +423,17 @@ class CooperationPlan:
 
     workers_per_fft: int
     fft_slots_per_group: int
+    # ADDED for P2.2 (cooperative batch partition alternatives -- see
+    # docs/priority2_execution_strategies.md). Metadata only, mirroring
+    # `PersistentWorkgroupPlan.lowering_mode`'s own contract: `fft_plan_
+    # cooperative.partition_batches`'s own `mode=` argument remains the
+    # actual, authoritative control -- this field records WHICH mode a
+    # caller actually used to build `worker_batches` on this plan's own
+    # stages, for reporting (never re-derived or guessed). `"round_
+    # robin"` (the default) matches every plan built before this field
+    # existed -- `fft_plan_cooperative._partition_batches`'s own
+    # original, only implementation.
+    partition_mode: Literal["round_robin", "contiguous", "balanced_contiguous"] = "round_robin"
 
 
 @dataclass(frozen=True)
@@ -527,6 +538,23 @@ class PersistentWorkgroupPlan:
     `workers_per_fft > workers_per_group`, "the last worker" means the
     last LOGICAL worker (`workers_per_fft - 1`), which lands on the last
     physical worker of the last wave.
+
+    `lowering_mode`: ADDED 2026-09-22 (logical/physical cost-model
+    correction, docs/logical_vs_physical_cost_model.md) -- which of
+    `codegen.fft_persistent_codegen.ExecutionMode`'s three strategies
+    (`"wave"`/`"fused"`/`"physical"`) this plan is INTENDED to be
+    rendered with. Metadata only: codegen's own `mode=`/`persistent_mode=`
+    argument (`emit_persistent_kernel_struct`, `generate_recursive_fft_
+    kernels`) remains the actual, authoritative control -- a caller doing
+    an explicit A/B mode comparison can still render the SAME plan under a
+    different mode than this field says, exactly as before this field
+    existed. What this field is FOR: `planning.search.fft_cost_model`
+    cannot otherwise know which execution shape a persistent leaf will
+    actually render as (that used to be a pure codegen-time argument, with
+    no representation in the plan the cost model reads at all) -- see
+    `PlanMetrics`'s own `persistent_lowering_mode`-derived fields. Default
+    `"physical"` matches `codegen.fft_persistent_codegen`'s own default,
+    so every plan built before this field existed reads identically.
     """
 
     stripes_per_group: int
@@ -536,6 +564,72 @@ class PersistentWorkgroupPlan:
     software_group_count: int
     logical_block_stride: int
     scalar_worker_mode: Literal["adaptive", "reserved"]
+    lowering_mode: Literal["wave", "fused", "physical"] = "physical"
+    # ADDED for P2.3 (persistent preload/writeback copy strategy -- see
+    # docs/priority2_execution_strategies.md). Metadata only, mirroring
+    # `lowering_mode`'s own contract exactly: `codegen.fft_persistent_
+    # codegen.emit_bulk_copy_phase`'s own `copy_mode=` argument remains
+    # the actual, authoritative control (a caller doing an explicit A/B
+    # comparison can still render the SAME plan under a different copy
+    # mode than this field says). `"scalar"` (the default) matches every
+    # plan built before this field existed -- the pre-existing per-lane
+    # strided one-element-at-a-time DRAM<->scratchpad copy (`emit_bulk_
+    # copy_phase`'s own original implementation). `"vectorized_
+    # contiguous"`: each physical lane instead copies its own CONTIGUOUS
+    # block of `ceil(length / workers_per_group)` elements, `target.
+    # lmul1_float32_lanes`-wide vector loads/stores at a time (scalar
+    # tail for the remainder) -- see `emit_bulk_copy_phase`'s own
+    # docstring for why changing WHICH lane copies WHICH index is
+    # provably correctness-preserving (every stage reads scratchpad by
+    # absolute index, never by which lane wrote it).
+    copy_mode: Literal["scalar", "vectorized_contiguous"] = "scalar"
+
+    @property
+    def logical_workers_per_fft(self) -> int:
+        """Alias for `workers_per_fft`, named per the task's own "logical
+        vs. physical" vocabulary (section 1) -- `workers_per_fft` itself
+        keeps its existing name (no rename -- see this dataclass's own
+        pre-existing docstring and every existing reader of that field)."""
+        return self.workers_per_fft
+
+    @property
+    def physical_workers_per_group(self) -> int:
+        """Alias for `workers_per_group` -- see `logical_workers_per_fft`'s
+        own docstring for why this is an alias, not a rename."""
+        return self.workers_per_group
+
+    @property
+    def logical_worker_groups(self) -> int:
+        """`ceil(workers_per_fft / workers_per_group)` -- how many logical
+        workers, at most, any one physical lane owns for this plan (the
+        same quantity `fft_plan_persistent.worker_waves` computes; kept as
+        a same-value property here too so a reader of `PersistentWorkgroup
+        Plan` alone, without also importing `worker_waves`, can still ask
+        this). NOT the runtime `launch_parallel` call count for any mode
+        except `"wave"` -- see `stage_launches` below, and `worker_waves`'s
+        own docstring, for why those two questions are different since the
+        2026-09-14 worker-wave-fusion revision."""
+        if self.workers_per_group < 1:
+            raise ValueError(f"workers_per_group={self.workers_per_group} must be >= 1")
+        return -(-self.workers_per_fft // self.workers_per_group)
+
+    @property
+    def stage_launches(self) -> int:
+        """How many `launch_parallel[stage_N]()` calls `device_main` emits
+        per stage, per round, UNDER THIS PLAN'S OWN `lowering_mode` -- `1`
+        for `"physical"`/`"fused"` (a physical lane visits every logical
+        worker it owns inside one call, whether via codegen-time
+        flattening or a runtime loop -- see `codegen.fft_persistent_
+        codegen.emit_stage_phase`'s own docstring), `logical_worker_groups`
+        for `"wave"` (one call per wave, the pre-worker-wave-fusion
+        mechanism). Do not confuse this with `logical_worker_groups`
+        itself, which answers a different question (loop trip count /
+        worst-case per-lane logical-worker count) that stays meaningful
+        even under `"physical"`/`"fused"`, where `stage_launches` is
+        always 1 -- see this dataclass's own `lowering_mode` docstring."""
+        if self.lowering_mode == "wave":
+            return self.logical_worker_groups
+        return 1
 
 
 @dataclass(frozen=True)

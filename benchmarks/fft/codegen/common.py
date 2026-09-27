@@ -66,6 +66,7 @@ def emit_reference_check(
     ref_imag: str,
     tolerance: float,
     label: str,
+    var_prefix: str = "",
 ) -> None:
     """A direct O(N^2) DFT, computed at host runtime against whatever input
     was just randomly generated -- independent of whichever radix
@@ -78,9 +79,25 @@ def emit_reference_check(
     `batch_count` independent length-`n` FFTs share one buffer, back to
     back (`batch*n + n_`) -- a single-kernel plan's own total_uthreads;
     always 1 for a decomposed plan (see DecomposedFFTPlan).
+
+    `var_prefix`: namespaces this call's own `pi`/`sign`/`tol` locals (the
+    only three declared directly in the caller's function-body scope,
+    rather than inside a nested `for`/`while` block) -- default `""`
+    keeps every existing single-kernel caller byte-identical. A caller
+    that renders TWO independent kernels' verification blocks into one
+    shared `main()` (`fft_persistent_codegen.generate_persistent_tail_
+    hybrid_kernel`'s own `_emit_persistent_buffers_and_launch`/`_emit_
+    plain_tail_buffers_and_launch`) MUST pass two different prefixes --
+    confirmed as a real toolchain compile failure ("invalid redefinition
+    of 'pi'") whenever both blocks are genuinely non-empty (`full_blocks
+    > 0` and `tail_blocks > 0`, e.g. N_blocks=33/63/65 at num_ndp_units=
+    32) before this parameter existed; see `emit_large_twiddle_table_
+    precompute`'s own docstring for the same collision class, already
+    fixed there the same way.
     """
-    e.add("    var pi = Float64(3.141592653589793)")
-    e.add(f"    var sign = Float64({1.0 if inverse else -1.0})")
+    pi, sign, tol = f"{var_prefix}pi", f"{var_prefix}sign", f"{var_prefix}tol"
+    e.add(f"    var {pi} = Float64(3.141592653589793)")
+    e.add(f"    var {sign} = Float64({1.0 if inverse else -1.0})")
     e.add(f"    for batch in range({batch_count}):")
     e.add(f"        var batch_base = batch * {n}")
     e.add(f"        for k in range({n}):")
@@ -88,7 +105,7 @@ def emit_reference_check(
     e.add("            var acc_i = Float64(0)")
     e.add(f"            for n_ in range({n}):")
     e.add(
-        "                var angle = sign * 2.0 * pi * Float64(n_) * Float64(k) / "
+        f"                var angle = {sign} * 2.0 * {pi} * Float64(n_) * Float64(k) / "
         f"Float64({n})"
     )
     e.add("                var c = host_cos(angle)")
@@ -104,7 +121,7 @@ def emit_reference_check(
     e.add(f"            {ref_imag}[batch_base + k] = Float32(acc_i)")
     e.add()
 
-    e.add(f"    var tol = {f32(tolerance)}")
+    e.add(f"    var {tol} = {f32(tolerance)}")
     e.add(f"    for i in range({n * batch_count}):")
     e.add(f"        var err_r = {output_real}[i] - {ref_real}[i]")
     e.add(f"        var err_i = {output_imag}[i] - {ref_imag}[i]")
@@ -112,7 +129,7 @@ def emit_reference_check(
     e.add("            err_r = -err_r")
     e.add("        if err_i < Float32(0):")
     e.add("            err_i = -err_i")
-    e.add("        if err_r > tol or err_i > tol:")
+    e.add(f"        if err_r > {tol} or err_i > {tol}:")
     e.add(f'            print("[host] {label} mismatch at", i)')
     e.add(f'            print("  expected:", {ref_real}[i], {ref_imag}[i])')
     e.add(f'            print("  actual:  ", {output_real}[i], {output_imag}[i])')

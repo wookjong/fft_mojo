@@ -298,14 +298,43 @@ def get_large_twd_base_steps(large1d_len: int, use_3steps: bool) -> tuple[int, i
     return base, 1
 
 
+def gpu_logical_lds_bytes(length: int, *, half_lds: bool) -> int:
+    """The real GPU LDS bytes ONE cooperating transform's own batch needs
+    under a `KernelConfig`'s own `half_lds` choice -- `DeriveMaxTPB`'s own
+    `bytes_per_batch` computation (`length * BYTES_PER_ELEM`, halved when
+    `half_lds` is set), factored out as a named, reusable function instead
+    of staying duplicated inline math in `derive_max_tpb`/`conservative_
+    max_tpb` (both now call this).
+
+    P1.2 (see docs/rocfft_half_lds_classification.md): exposed so a
+    caller (the GPU/M2NDP execution report, `gpu_baseline.common.
+    reconstruct_gpu_logical_plan`) can show what the GPU planner's own
+    `half_lds` choice actually implies -- "GPU logical LDS bytes" --
+    without re-deriving it, and WITHOUT conflating it with M2NDP's own
+    scratchpad requirement (see `gpu_baseline.common.leaf_scratchpad_
+    bytes`/`m2ndp_resource_complex_bytes`, which have no `half_lds`-
+    equivalent mechanism at all -- M2NDP's own scratchpad halving
+    mechanism, `pingpong_needed`, is keyed on STAGE COUNT, a completely
+    different axis from rocFFT's own per-batch LDS halving). This
+    function is descriptive only -- never used to compute or gate M2NDP
+    resource feasibility, which continues to use `leaf_scratchpad_bytes`/
+    `persistent_leaf_scratchpad_bytes` exclusively, unaffected by
+    `half_lds` either way (see `_map_config`'s own docstring for why that
+    is the CORRECT feasibility answer, not a gap this function should
+    paper over).
+    """
+    bytes_per_batch = length * BYTES_PER_ELEM
+    if half_lds:
+        bytes_per_batch //= 2
+    return bytes_per_batch
+
+
 def derive_max_tpb(
     length: int, *, half_lds: bool, tpt: int, wgs_bound: int,
 ) -> int:
     """`DeriveMaxTPB`, single precision, `use_ltwd_3steps=False` always
     (see module docstring)."""
-    bytes_per_batch = length * BYTES_PER_ELEM
-    if half_lds:
-        bytes_per_batch //= 2
+    bytes_per_batch = gpu_logical_lds_bytes(length, half_lds=half_lds)
     tpb = LDS_BYTE_LIMIT // bytes_per_batch
     while tpt * tpb > wgs_bound:
         tpb -= 1
@@ -314,7 +343,7 @@ def derive_max_tpb(
 
 def conservative_max_tpb(length: int) -> int:
     """`ConservativeMaxTPB`, single precision."""
-    bytes_per_batch = length * BYTES_PER_ELEM
+    bytes_per_batch = gpu_logical_lds_bytes(length, half_lds=False)
     conservative = LDS_BYTE_LIMIT // bytes_per_batch
     if length >= 1024:
         conservative += 1
@@ -676,6 +705,24 @@ def _map_config(
             "transforms_per_block": config.transforms_per_block,
             "workgroup_size": config.workgroup_size,
             "half_lds": config.half_lds,
+            # P1.2 (see gpu_logical_lds_bytes's own docstring and docs/
+            # rocfft_half_lds_classification.md): the real GPU LDS bytes
+            # this config's own half_lds choice implies, single-sourced
+            # from the same formula derive_max_tpb already used to CHOOSE
+            # this config -- so a caller (the GPU/M2NDP execution report)
+            # can show "GPU logical LDS bytes" without re-deriving it or
+            # silently reusing M2NDP's own (unrelated) scratchpad number.
+            "gpu_logical_lds_bytes": gpu_logical_lds_bytes(length, half_lds=config.half_lds),
+            # Classification (M2NDP has NO half_lds-equivalent memory
+            # optimization at all -- see gpu_logical_lds_bytes's own
+            # docstring): never EXACT_EQUIVALENT/M2NDP_ADAPTATION, and
+            # this is descriptive metadata only, never a hard failure --
+            # so NO_EQUIVALENT, not UNSUPPORTED. M2NDP's own scratchpad
+            # requirement (`map_cooperative_kernel`'s own `leaf_
+            # scratchpad_bytes` check, below) is completely unaffected by
+            # this value either way -- resource feasibility already uses
+            # the real M2NDP number, never this GPU-side one.
+            "m2ndp_half_lds_status": "NO_EQUIVALENT",
             "direct_to_from_reg": config.direct_to_from_reg,
             "intrinsic_buffer_inst": config.intrinsic_buffer_inst,
             "use_3steps_large_twd": config.use_3steps_large_twd,

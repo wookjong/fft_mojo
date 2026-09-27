@@ -125,6 +125,8 @@ def run_persistent_kernel(
     compute_lanes: int | None = 4,
     narrow_middle_stages: bool = True,
     mode: str = "physical",
+    copy_mode: str = "scalar",
+    vector_width: int = 4,
 ) -> None:
     if plan.persistent is None:
         raise ValueError("run_persistent_kernel requires a persistent plan")
@@ -210,6 +212,7 @@ def run_persistent_kernel(
         plan=plan, name="preload", software_group_count=software_group_count,
         num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
         to_scratchpad=True, buffer_name=buffer_names[0], bump_round=False,
+        copy_mode=copy_mode, vector_width=vector_width,
     ))
 
     stage_phases: list[tuple[dict, object]] = []
@@ -227,6 +230,7 @@ def run_persistent_kernel(
         plan=plan, name="writeback", software_group_count=software_group_count,
         num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
         to_scratchpad=False, buffer_name=final_buffer, bump_round=True,
+        copy_mode=copy_mode, vector_width=vector_width,
     ))
 
     for _ in range(rounds):

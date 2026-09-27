@@ -1,0 +1,20 @@
+planner,status,reason,count
+gpu-clfft,spilling,(no diagnostics),9
+gpu-clfft,compile_failure,build failed:     if True:  # batch 4 scope\n               ^\n/tmp/fft_spill_probe_oy32wbxe/stage/gen.mojo:106509:16: warning: 'if' conditi,1
+gpu-clfft,compile_failure,build failed: :  # batch 80 scope\n               ^\n/tmp/fft_spill_probe_ocfsrhdc/stage/gen.mojo:102053:16: warning: 'if' condition always ,1
+gpu-clfft,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 18 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-rocfft-default,spilling,(no diagnostics),10
+gpu-rocfft-default,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 10 work items cooperating per transform, which is neither a divisor nor a multiple of t",3
+gpu-rocfft-default,compile_failure,build failed:     ^\n/tmp/fft_spill_probe_crd347_0/stage/gen.mojo:89182:16: warning: 'if' condition always evaluates to 'True'; 'else' branc,1
+gpu-rocfft-default,compile_failure,build failed:   if True:  # batch 95 scope\n               ^\n/tmp/fft_spill_probe_gam0r6zx/stage/gen.mojo:105428:16: warning: 'if' conditio,1
+gpu-rocfft-default,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 12 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-rocfft-default,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 36 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-rocfft-default,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 6 work items cooperating per transform, which is neither a divisor nor a multiple of ta",1
+gpu-vkfft,spilling,(no diagnostics),10
+gpu-vkfft,compile_failure,build failed:           if True:  # batch 62 scope\n               ^\n/tmp/fft_spill_probe_8zl_riv3/stage/gen.mojo:89227:16: warning: 'if' c,1
+gpu-vkfft,compile_failure,build failed:  branch is unreachable\n            if True:  # batch 60 scope\n               ^\n/tmp/fft_spill_probe_vpqh685p/stage/gen.mojo,1
+gpu-vkfft,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 10 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-vkfft,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 20 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-vkfft,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 36 work items cooperating per transform, which is neither a divisor nor a multiple of t",1
+gpu-vkfft,unsupported,"[unsupported_hardware_mapping] the GPU planner wants 5 work items cooperating per transform, which is neither a divisor nor a multiple of ta",1
+m2ndp-native,spilling,(no diagnostics),2

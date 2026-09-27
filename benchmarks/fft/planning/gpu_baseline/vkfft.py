@@ -115,6 +115,7 @@ from .common import (
     BaselineResult,
     BaselineStatus,
     GPUKernelConfig,
+    m2ndp_resource_complex_bytes,
     map_cooperative_kernel,
     unsupported,
 )
@@ -536,24 +537,47 @@ def leaf_radix_sequence(
 # ---------------------------------------------------------------------------
 
 
-def max_sequence_length_shared_memory(target: TargetProfile) -> int:
+def max_sequence_length_shared_memory(
+    target: TargetProfile, *, complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
+) -> int:
     """Non-strided max single-kernel length -- `usedSharedMemory /
     complexSize`, LDS-equivalent mapped to `target.spad_capacity_bytes`
     (see gpu_baseline/common.py's own documented GPU-LDS -> M2NDP-
-    scratchpad translation)."""
-    return target.spad_capacity_bytes // VKFFT_COMPLEX_SIZE_BYTES
+    scratchpad translation).
+
+    `complex_size_bytes`: the "bytes one complex element costs" RESOURCE
+    INPUT -- defaults to `VKFFT_COMPLEX_SIZE_BYTES` (8), real VkFFT's own
+    single-buffer shared-memory convention, so every existing caller
+    (`vkfft.plan()`, the frozen/source-faithful baseline) computes byte-
+    identically to before this parameter existed. `vkfft.plan_m2ndp` (the
+    M2NDP-adapted baseline) passes `gpu_baseline.common.
+    m2ndp_resource_complex_bytes()` (16) instead -- see that function's
+    own docstring for why a real M2NDP persistent-leaf lowering needs
+    double this many bytes per element once cooperation width is wide
+    enough to require worker-wave virtualization, and why substituting it
+    HERE (the algorithm's own resource INPUT), not by hand-patching this
+    formula's shape, is what section 9 of the task this was built from
+    asks for."""
+    return target.spad_capacity_bytes // complex_size_bytes
 
 
-def max_sequence_length_shared_memory_strided(target: TargetProfile) -> int:
+def max_sequence_length_shared_memory_strided(
+    target: TargetProfile, *, complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
+) -> int:
     """Strided max single-kernel length -- `usedSharedMemory /
     coalescedMemory` (never smaller a divisor than `complexSize` -- the
-    real source's own `> complexSize` guard, ported verbatim)."""
-    if VKFFT_COALESCED_MEMORY_BYTES > VKFFT_COMPLEX_SIZE_BYTES:
+    real source's own `> complexSize` guard, ported verbatim).
+
+    `complex_size_bytes`: see `max_sequence_length_shared_memory`'s own
+    docstring -- same default, same M2NDP-adapted override convention."""
+    if VKFFT_COALESCED_MEMORY_BYTES > complex_size_bytes:
         return target.spad_capacity_bytes // VKFFT_COALESCED_MEMORY_BYTES
-    return target.spad_capacity_bytes // VKFFT_COMPLEX_SIZE_BYTES
+    return target.spad_capacity_bytes // complex_size_bytes
 
 
-def max_sequence_length_shared_memory_pow2(target: TargetProfile) -> int:
+def max_sequence_length_shared_memory_pow2(
+    target: TargetProfile, *, complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
+) -> int:
     """`maxSequenceLengthSharedMemoryPow2` (vkFFT_Plan_FFT.h line 123):
     `allowedSharedMemoryPow2 / complexSize`, where `allowedSharedMemoryPow2
     = configuration.sharedMemorySizePow2` -- Structs.h's own documented
@@ -562,10 +586,13 @@ def max_sequence_length_shared_memory_pow2(target: TargetProfile) -> int:
     real source keeps both bounds simultaneously, using each in different
     `VkFFTSplitAxisBlock` checks -- see `_postprocess_axis_upload0`).
     Derived from `target.spad_capacity_bytes` the same GPU-LDS -> M2NDP-
-    scratchpad mapping every other sizing function in this module uses."""
+    scratchpad mapping every other sizing function in this module uses.
+
+    `complex_size_bytes`: see `max_sequence_length_shared_memory`'s own
+    docstring -- same default, same M2NDP-adapted override convention."""
     shared_bytes = target.spad_capacity_bytes
     pow2_bytes = (1 << (shared_bytes.bit_length() - 1)) if shared_bytes > 0 else 0
-    return pow2_bytes // VKFFT_COMPLEX_SIZE_BYTES
+    return pow2_bytes // complex_size_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -575,7 +602,10 @@ def max_sequence_length_shared_memory_pow2(target: TargetProfile) -> int:
 # ---------------------------------------------------------------------------
 
 
-def choose_num_passes(length: int, *, non_strided: bool, target: TargetProfile) -> int:
+def choose_num_passes(
+    length: int, *, non_strided: bool, target: TargetProfile,
+    complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
+) -> int:
     """FIDELITY FIX (found during the Phase-1-through-5 baseline audit,
     2026-09-08): the first version of this function computed `numPasses =
     ceil(log2(temp) / log2(max_strided)) + 1` unconditionally. Re-checked
@@ -604,15 +634,21 @@ def choose_num_passes(length: int, *, non_strided: bool, target: TargetProfile) 
     tested against). This is a baseline-fidelity fix, not an M2NDP-
     performance-driven change: it makes the port match VkFFT's own real,
     default-enabled code path, independent of anything M2NDP-specific.
+
+    `complex_size_bytes`: forwarded to every `max_sequence_length_shared_
+    memory*` call below -- see those functions' own docstrings for the
+    default (real VkFFT's 8-byte single-buffer convention, source-
+    faithful) vs. `plan_m2ndp`'s M2NDP-adapted override.
     """
     max_single = (
-        max_sequence_length_shared_memory(target) if non_strided
-        else max_sequence_length_shared_memory_strided(target)
+        max_sequence_length_shared_memory(target, complex_size_bytes=complex_size_bytes)
+        if non_strided
+        else max_sequence_length_shared_memory_strided(target, complex_size_bytes=complex_size_bytes)
     )
     temp = math.ceil(length / max_single)
     if temp <= 1:
         return 1
-    max_strided = max_sequence_length_shared_memory_strided(target)
+    max_strided = max_sequence_length_shared_memory_strided(target, complex_size_bytes=complex_size_bytes)
     # reorderFourStep=True, no Bluestein (VkFFT's own real default path --
     # see this function's own docstring).
     num_passes = math.ceil(math.log2(length) / math.log2(max_strided))
@@ -636,7 +672,9 @@ def _pow8_size(max_len: int) -> int:
     return 8 ** (int(math.log2(max_len)) // 3)
 
 
-def split_pow2_2pass(length: int, target: TargetProfile) -> tuple[int, int]:
+def split_pow2_2pass(
+    length: int, target: TargetProfile, *, complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
+) -> tuple[int, int]:
     """Power-of-2, 2-pass split (lines 2656-2708): prefer a power-of-8
     first factor (`maxPow8SharedMemory`), falling back to the plain
     shared-memory-limited max sequence length, with a floor of
@@ -644,9 +682,11 @@ def split_pow2_2pass(length: int, target: TargetProfile) -> tuple[int, int]:
     factor always placed first. Returns `(a, b)` with `a >= b`,
     `a * b == length` -- `a` == clFFT/M2NDP notation's "far" (outer,
     potentially-recursed) factor, `b` == "near" (inner, batched-first).
+
+    `complex_size_bytes`: see `choose_num_passes`'s own docstring.
     """
-    shared_mem_max = max_sequence_length_shared_memory(target)
-    strided_max = max_sequence_length_shared_memory_strided(target)
+    shared_mem_max = max_sequence_length_shared_memory(target, complex_size_bytes=complex_size_bytes)
+    strided_max = max_sequence_length_shared_memory_strided(target, complex_size_bytes=complex_size_bytes)
     pow8 = _pow8_size(shared_mem_max)
     if length // pow8 <= strided_max:
         split0 = pow8
@@ -662,15 +702,19 @@ def split_pow2_2pass(length: int, target: TargetProfile) -> tuple[int, int]:
     return a, b
 
 
-def split_non_pow2_2pass(length: int, target: TargetProfile) -> tuple[int, int] | None:
+def split_non_pow2_2pass(
+    length: int, target: TargetProfile, *, complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
+) -> tuple[int, int] | None:
     """Non-power-of-2, 2-pass split (lines 2709-2749): exact-divisor
     search starting at `ceil(sqrt(length))`, walking DOWNWARD, for the
     first divisor `d` with `d <= maxSingleSizeStrided` and `length/d <=
     maxSequenceLengthSharedMemory`. Returns `None` if no such divisor
     exists (the real source falls through to a 3-pass attempt in that
-    case -- see `plan_multi_pass`)."""
-    strided_max = max_sequence_length_shared_memory_strided(target)
-    shared_mem_max = max_sequence_length_shared_memory(target)
+    case -- see `plan_multi_pass`).
+
+    `complex_size_bytes`: see `choose_num_passes`'s own docstring."""
+    strided_max = max_sequence_length_shared_memory_strided(target, complex_size_bytes=complex_size_bytes)
+    shared_mem_max = max_sequence_length_shared_memory(target, complex_size_bytes=complex_size_bytes)
     sqrt_seq = math.ceil(math.sqrt(length))
     for i in range(sqrt_seq):
         d = sqrt_seq - i
@@ -683,24 +727,32 @@ def split_non_pow2_2pass(length: int, target: TargetProfile) -> tuple[int, int] 
     return None
 
 
-def split_pow2_3pass(length: int, target: TargetProfile) -> tuple[int, int, int]:
+def split_pow2_3pass(
+    length: int, target: TargetProfile, *, complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
+) -> tuple[int, int, int]:
     """Power-of-2, 3-pass split (lines 2751-2844): the same power-of-8
     preference applied to pick the first factor, remainder split 2-pass-
-    style between the other two."""
-    a, remainder = split_pow2_2pass(length, target)
-    remainder_a, remainder_b = split_pow2_2pass(remainder, target)
+    style between the other two.
+
+    `complex_size_bytes`: see `choose_num_passes`'s own docstring."""
+    a, remainder = split_pow2_2pass(length, target, complex_size_bytes=complex_size_bytes)
+    remainder_a, remainder_b = split_pow2_2pass(remainder, target, complex_size_bytes=complex_size_bytes)
     return a, remainder_a, remainder_b
 
 
-def split_non_pow2_3pass(length: int, target: TargetProfile) -> tuple[int, int, int] | None:
+def split_non_pow2_3pass(
+    length: int, target: TargetProfile, *, complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
+) -> tuple[int, int, int] | None:
     """Non-power-of-2, 3-pass split (lines 2845-2888): outer divisor
     search near `ceil(N^(1/3))` walking downward, then an inner sqrt-style
     search on the remaining quotient (mirroring the 2-pass search's own
     downward walk) -- `None` if no legal triple exists (the real source's
     own `numPasses=4` -> immediate hard error, ported here as this
     function returning `None`, converted to UNSUPPORTED_GPU_ALGORITHM by the
-    caller)."""
-    strided_max = max_sequence_length_shared_memory_strided(target)
+    caller).
+
+    `complex_size_bytes`: see `choose_num_passes`'s own docstring."""
+    strided_max = max_sequence_length_shared_memory_strided(target, complex_size_bytes=complex_size_bytes)
     cbrt_seq = math.ceil(round(length ** (1.0 / 3.0), 9))
     while cbrt_seq ** 3 < length:
         cbrt_seq += 1
@@ -894,7 +946,10 @@ def axisblock_threads_per_transform(fft_dim: int, min_registers_per_thread: int)
     return max(1, -(-fft_dim // min_registers_per_thread))
 
 
-def _grouped_batch_seed(fft_dim: int, target: TargetProfile, *, single_upload: bool) -> int:
+def _grouped_batch_seed(
+    fft_dim: int, target: TargetProfile, *, single_upload: bool,
+    complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
+) -> int:
     """`AxisBlockSplitter.h` section 2.0's shared top-of-function seed for
     `axis->groupedBatch`, `axis_id==0` only. `single_upload=True` is the
     real source's own `(numAxisUploads[axis_id]==1 && axis_id==0)` case
@@ -903,12 +958,14 @@ def _grouped_batch_seed(fft_dim: int, target: TargetProfile, *, single_upload: b
     makes the real source's `!reorderFourStep && axis_upload_id==0`
     alternative for reaching the non-strided branch unreachable, so
     `single_upload` here is equivalent to `num_passes(this plan) == 1`,
-    not merely `upload_id==0`)."""
+    not merely `upload_id==0`).
+
+    `complex_size_bytes`: see `choose_num_passes`'s own docstring."""
     if single_upload:
-        shared_mem_max = max_sequence_length_shared_memory(target)
+        shared_mem_max = max_sequence_length_shared_memory(target, complex_size_bytes=complex_size_bytes)
         scaled = shared_mem_max // fft_dim
         return scaled if scaled > _MAX_BATCH_COALESCED else _MAX_BATCH_COALESCED
-    strided_max = max_sequence_length_shared_memory_strided(target)
+    strided_max = max_sequence_length_shared_memory_strided(target, complex_size_bytes=complex_size_bytes)
     scaled = strided_max // fft_dim
     return scaled * _MAX_BATCH_COALESCED if scaled > 1 else _MAX_BATCH_COALESCED
 
@@ -954,6 +1011,7 @@ def axisblock_batch_single_pass(
 def _postprocess_axis_upload0(
     axis_block0: int, seed_batch: int, fft_dim: int, target: TargetProfile, *,
     num_passes: int, max_rhs: int, original_length: int,
+    complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
 ) -> tuple[int, int]:
     """`AxisBlockSplitter.h` lines 301-364: the complete shared
     continuation the real source applies to EITHER `axis_upload_id==0`
@@ -986,7 +1044,7 @@ def _postprocess_axis_upload0(
     # comment -- see this project's own established practice for such
     # mismatches, e.g. clFFT's "largest 33%" / rocFFT's utilization-rate
     # comments.)
-    shared_mem_pow2 = max_sequence_length_shared_memory_pow2(target)
+    shared_mem_pow2 = max_sequence_length_shared_memory_pow2(target, complex_size_bytes=complex_size_bytes)
     if (
         (fft_dim % 2 == 0 or axis_block0 < VKFFT_NUM_SHARED_BANKS // 4)
         and batch > 1
@@ -1037,7 +1095,7 @@ def _postprocess_axis_upload0(
     # shared-memory cap -- this is the SAME formula this function used to
     # apply immediately after the seed; the real source applies it HERE,
     # after every step above, which can produce a different final `batch`.
-    max_seq_shared = max_sequence_length_shared_memory(target)
+    max_seq_shared = max_sequence_length_shared_memory(target, complex_size_bytes=complex_size_bytes)
     while batch * fft_dim > max_seq_shared and batch > 1:
         batch //= 2
 
@@ -1055,16 +1113,23 @@ def _postprocess_axis_upload0(
     return axis_block0, max(batch, 1)
 
 
-def axisblock_batch_multipass_first(fft_dim: int, target: TargetProfile) -> int:
+def axisblock_batch_multipass_first(
+    fft_dim: int, target: TargetProfile, *, complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
+) -> int:
     """`AxisBlockSplitter.h` section 2.2: `reorderFourStep(True, fixed) &&
     numAxisUploads>1` -> `axisBlock[1] = axis->groupedBatch` (the seeded
     value, unchanged) -- what upload 0 (this baseline's own `near_fft`
-    leaf, first-processed pass) of a multi-pass plan actually uses."""
-    return _grouped_batch_seed(fft_dim, target, single_upload=False)
+    leaf, first-processed pass) of a multi-pass plan actually uses.
+
+    `complex_size_bytes`: see `choose_num_passes`'s own docstring."""
+    return _grouped_batch_seed(
+        fft_dim, target, single_upload=False, complex_size_bytes=complex_size_bytes,
+    )
 
 
 def axisblock_batch_multipass_later(
     fft_dim: int, threads_per_transform: int, target: TargetProfile, *, stage_start_size: int,
+    complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
 ) -> int:
     """`AxisBlockSplitter.h` section 2.3: a later upload (`axis_upload_id
     > 0` -- every leaf after this baseline's own `near_fft`) grows the
@@ -1075,10 +1140,14 @@ def axisblock_batch_multipass_later(
     recursion depth), the NVIDIA vendor halving loop (section 2.3,
     `vendorID==0x10DE` -- this baseline's own fixed choice, see module
     constant), `maxComputeWorkGroupSize`, and finally the largest-divisor
-    search bringing the product under `maxThreadsNum`."""
-    grouped_batch = _grouped_batch_seed(fft_dim, target, single_upload=False)
+    search bringing the product under `maxThreadsNum`.
+
+    `complex_size_bytes`: see `choose_num_passes`'s own docstring."""
+    grouped_batch = _grouped_batch_seed(
+        fft_dim, target, single_upload=False, complex_size_bytes=complex_size_bytes,
+    )
     scale = VKFFT_AIM_THREADS // max(threads_per_transform * grouped_batch, 1)
-    max_seq_shared = max_sequence_length_shared_memory(target)
+    max_seq_shared = max_sequence_length_shared_memory(target, complex_size_bytes=complex_size_bytes)
     if scale > 1 and fft_dim * grouped_batch * scale <= max_seq_shared:
         grouped_batch *= scale
 
@@ -1104,7 +1173,7 @@ def axisblock_batch_multipass_later(
 def axisblock_for_leaf(
     length: int, radices: tuple[int, ...], *, max_rhs: int, num_passes: int, upload_id: int,
     original_length: int, target: TargetProfile, warp_size: int = VKFFT_WARP_SIZE,
-    num_compute_units: int = 64,
+    num_compute_units: int = 64, complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
 ) -> tuple[int, int]:
     """One leaf's own `(threads_per_transform, transforms_per_block)` --
     the M2NDP translation's `(workers_per_fft, fft_slots_wanted)` pair --
@@ -1116,7 +1185,8 @@ def axisblock_for_leaf(
     `axisblock_batch_single_pass` only -- see that function's own
     docstring; the multi-pass formulas below have no warp-size input at
     all in the real source. `num_compute_units`: forwarded to `min_
-    registers_per_thread_for` (pow2 lengths only)."""
+    registers_per_thread_for` (pow2 lengths only). `complex_size_bytes`:
+    see `choose_num_passes`'s own docstring."""
     min_regs = min_registers_per_thread_for(length, radices, max_rhs, num_compute_units=num_compute_units)
     threads_per_transform = axisblock_threads_per_transform(length, min_regs)
     if num_passes == 1:
@@ -1124,17 +1194,20 @@ def axisblock_for_leaf(
         threads_per_transform, batch = _postprocess_axis_upload0(
             threads_per_transform, seed, length, target,
             num_passes=num_passes, max_rhs=max_rhs, original_length=original_length,
+            complex_size_bytes=complex_size_bytes,
         )
     elif upload_id == 0:
-        seed = axisblock_batch_multipass_first(length, target)
+        seed = axisblock_batch_multipass_first(length, target, complex_size_bytes=complex_size_bytes)
         threads_per_transform, batch = _postprocess_axis_upload0(
             threads_per_transform, seed, length, target,
             num_passes=num_passes, max_rhs=max_rhs, original_length=original_length,
+            complex_size_bytes=complex_size_bytes,
         )
     else:
         stage_start_size = original_length // length
         batch = axisblock_batch_multipass_later(
             length, threads_per_transform, target, stage_start_size=stage_start_size,
+            complex_size_bytes=complex_size_bytes,
         )
     return threads_per_transform, batch
 
@@ -1157,6 +1230,7 @@ def _leaf_result(
     m: int, r: int, *, inverse: bool, is_root: bool, node_id: list[int],
     target: TargetProfile, num_passes: int, upload_id: int, original_length: int,
     warp_size: int = VKFFT_WARP_SIZE, num_compute_units: int = 64,
+    complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
 ) -> tuple[FFTLeafPlan | None, BaselineResult | None]:
     idx = node_id[0]
     node_id[0] += 1
@@ -1176,7 +1250,7 @@ def _leaf_result(
     workers_per_fft, fft_slots_wanted = axisblock_for_leaf(
         m, radices, max_rhs=r, num_passes=num_passes, upload_id=upload_id,
         original_length=original_length, target=target, warp_size=warp_size,
-        num_compute_units=num_compute_units,
+        num_compute_units=num_compute_units, complex_size_bytes=complex_size_bytes,
     )
     gpu_config = GPUKernelConfig(
         source="vkfft", length=m, radices=radices,
@@ -1200,6 +1274,7 @@ def _recursive_result(
     m: int, r: int, factors: tuple[int, ...], *, inverse: bool, is_root: bool,
     node_id: list[int], target: TargetProfile, num_passes: int, upload_id: int, original_length: int,
     warp_size: int = VKFFT_WARP_SIZE, num_compute_units: int = 64,
+    complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
 ) -> tuple[FFTNode | None, BaselineResult | None]:
     """`factors`: this level's own (a, b) or (a, b, c) split, near-to-far
     (b == innermost/near, matching this module's own axis-split return
@@ -1214,6 +1289,7 @@ def _recursive_result(
             m, r, inverse=inverse, is_root=is_root, node_id=node_id, target=target,
             num_passes=num_passes, upload_id=upload_id, original_length=original_length,
             warp_size=warp_size, num_compute_units=num_compute_units,
+            complex_size_bytes=complex_size_bytes,
         )
 
     idx = node_id[0]
@@ -1231,6 +1307,7 @@ def _recursive_result(
         b, r * a, inverse=inverse, is_root=False, node_id=node_id, target=target,
         num_passes=num_passes, upload_id=upload_id, original_length=original_length,
         warp_size=warp_size, num_compute_units=num_compute_units,
+        complex_size_bytes=complex_size_bytes,
     )
     if failure is not None:
         return None, failure
@@ -1244,6 +1321,7 @@ def _recursive_result(
         a, r * b, factors[:-1], inverse=inverse, is_root=False, node_id=node_id, target=target,
         num_passes=num_passes, upload_id=upload_id + 1, original_length=original_length,
         warp_size=warp_size, num_compute_units=num_compute_units,
+        complex_size_bytes=complex_size_bytes,
     )
     if failure is not None:
         return None, failure
@@ -1271,6 +1349,7 @@ def plan(
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
     warp_size: int = VKFFT_WARP_SIZE,
     num_compute_units: int = 64,
+    complex_size_bytes: int = VKFFT_COMPLEX_SIZE_BYTES,
 ) -> BaselineResult:
     """Top-level VkFFT-style baseline entry point: decides 1/2/3-pass via
     `choose_num_passes`, then splits via this module's own axis-splitting
@@ -1279,19 +1358,47 @@ def plan(
     establishes.
 
     SOURCE-FAITHFUL (default `warp_size=VKFFT_WARP_SIZE`,
-    `num_compute_units=64`): `choose_num_passes`/`split_pow2_*`/`split_
-    non_pow2_*` already consistently use `target.spad_capacity_bytes` for
-    every LDS-equivalent quantity (this baseline's pre-existing target
-    adaptation, unchanged). `num_compute_units` feeds `choose_pow2_
-    grouping_radix`'s own workload-balance estimate (radix-grouping
-    DECISION, not just a feasibility check) -- see `plan_m2ndp` for the
-    M2NDP-adapted sibling and docs/gpu_planner_m2ndp_target_mapping.md's
-    own VkFFT row for the full audited mapping, including why `warp_size`
-    stays fixed (NO verified M2NDP equivalent, unlike `num_compute_units`).
+    `num_compute_units=64`, `complex_size_bytes=VKFFT_COMPLEX_SIZE_BYTES`):
+    `choose_num_passes`/`split_pow2_*`/`split_non_pow2_*` already
+    consistently use `target.spad_capacity_bytes` for every LDS-equivalent
+    quantity (this baseline's pre-existing target adaptation, unchanged).
+    `num_compute_units` feeds `choose_pow2_grouping_radix`'s own workload-
+    balance estimate (radix-grouping DECISION, not just a feasibility
+    check) -- see `plan_m2ndp` for the M2NDP-adapted sibling and docs/
+    gpu_planner_m2ndp_target_mapping.md's own VkFFT row for the full
+    audited mapping, including why `warp_size` stays fixed (NO verified
+    M2NDP equivalent, unlike `num_compute_units`).
+
+    `complex_size_bytes` (ADDED 2026-09-22, section 9 of the task this was
+    built from -- see docs/vkfft_m2ndp_scratchpad_resource_model.md):
+    real VkFFT's own `usedSharedMemory / complexSize` shared-memory-sizing
+    convention, `complexSize` fixed at `VKFFT_COMPLEX_SIZE_BYTES` (8) by
+    default -- this is the RESOURCE INPUT every `max_sequence_length_
+    shared_memory*`/pass-count/axis-split/axis-block decision in this
+    module ultimately budgets against. The default keeps this function
+    byte-for-byte source-faithful (every caller before this parameter
+    existed, `plan_m2ndp` included until now, computed identically).
+    `plan_m2ndp` (below) passes `gpu_baseline.common.
+    m2ndp_resource_complex_bytes()` (16) instead, since a wide `workers_
+    per_fft` this baseline's own algorithm picks is typically NOT a
+    divisor of `target.interleave_chunk_uthreads` and therefore gets
+    lowered via `make_persistent_leaf_plan`'s worker-wave path, which
+    needs 16 (not 8) bytes per complex element regardless of stage count
+    -- see that resource-adapter function's own docstring for the exact
+    N=8192 mismatch this closes (a `plan_m2ndp` that still used 8 could
+    pick `numPasses=1` believing it fits `target.spad_capacity_bytes`,
+    when the real M2NDP leaf that maps to actually needs more than the
+    target has). The VkFFT ALGORITHM (pass-count formula, axis-split
+    search, axis-block batching) is completely unchanged either way --
+    only this one resource number differs between the two callers, per
+    section 9's "hardware resource input만 M2NDP 의미로 교체, VkFFT
+    algorithm logic는 유지" instruction.
     """
     is_po2 = (length & (length - 1)) == 0
     try:
-        num_passes = choose_num_passes(length, non_strided=True, target=target)
+        num_passes = choose_num_passes(
+            length, non_strided=True, target=target, complex_size_bytes=complex_size_bytes,
+        )
     except VkfftUnsupportedError as exc:
         gpu_config = GPUKernelConfig(source="vkfft", length=length, radices=())
         return unsupported(BaselineStatus.UNSUPPORTED_GPU_ALGORITHM, gpu_config, str(exc))
@@ -1300,9 +1407,9 @@ def plan(
         factors: tuple[int, ...] = (length,)
     elif num_passes == 2:
         if is_po2:
-            a, b = split_pow2_2pass(length, target)
+            a, b = split_pow2_2pass(length, target, complex_size_bytes=complex_size_bytes)
         else:
-            split = split_non_pow2_2pass(length, target)
+            split = split_non_pow2_2pass(length, target, complex_size_bytes=complex_size_bytes)
             if split is None:
                 gpu_config = GPUKernelConfig(source="vkfft", length=length, radices=())
                 return unsupported(
@@ -1314,9 +1421,9 @@ def plan(
         factors = apply_four_step_reordering((a, b))
     else:
         if is_po2:
-            a, r1, r2 = split_pow2_3pass(length, target)
+            a, r1, r2 = split_pow2_3pass(length, target, complex_size_bytes=complex_size_bytes)
         else:
-            split = split_non_pow2_3pass(length, target)
+            split = split_non_pow2_3pass(length, target, complex_size_bytes=complex_size_bytes)
             if split is None:
                 gpu_config = GPUKernelConfig(source="vkfft", length=length, radices=())
                 return unsupported(
@@ -1334,7 +1441,7 @@ def plan(
     node, failure = _recursive_result(
         length, batch, factors, inverse=inverse, is_root=True, node_id=node_id, target=target,
         num_passes=num_passes, upload_id=0, original_length=length, warp_size=warp_size,
-        num_compute_units=num_compute_units,
+        num_compute_units=num_compute_units, complex_size_bytes=complex_size_bytes,
     )
     if failure is not None:
         return failure
@@ -1392,5 +1499,20 @@ def plan_m2ndp(
     `num_ndp_units=32`. Both answer the identical question, exactly the
     same mapping already applied to rocFFT-default's own `multiprocessor_
     count` (docs/gpu_planner_m2ndp_target_mapping.md).
+
+    `complex_size_bytes=m2ndp_resource_complex_bytes()` (16, ADDED
+    2026-09-22): see `plan`'s own docstring for the full derivation --
+    this is the ONE difference (beyond `num_compute_units`) between this
+    function and the frozen `plan()` it wraps, resource INPUT only, same
+    VkFFT algorithm. `plan()` itself keeps `complex_size_bytes=VKFFT_
+    COMPLEX_SIZE_BYTES` (8) as its own default, so the `gpu-vkfft` (frozen)
+    CLI baseline's behavior is completely unaffected by this parameter's
+    existence (section 11 of the task this was built from -- frozen and
+    M2NDP-adapted baselines never share a resource assumption that differs
+    between them).
     """
-    return plan(length, batch=batch, inverse=inverse, target=target, num_compute_units=target.num_ndp_units)
+    return plan(
+        length, batch=batch, inverse=inverse, target=target,
+        num_compute_units=target.num_ndp_units,
+        complex_size_bytes=m2ndp_resource_complex_bytes(),
+    )

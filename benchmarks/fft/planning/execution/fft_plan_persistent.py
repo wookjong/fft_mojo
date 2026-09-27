@@ -8,13 +8,29 @@ launch -- instead of today's pattern (every other planner in this
 package) where physical launch width scales with logical demand.
 
 Full design: docs/persistent_leaf_design.md. Standalone and opt-in: this
-module is never imported by make_fft_kernel.py, fft_plan_recursive.py,
-fft_plan_search.py, or fft_cost_model.py, and nothing here changes their
-behavior. Two entry points a caller (codegen/fft_persistent_codegen.py,
-or a standalone script) uses:
+module is never imported by make_fft_kernel.py or fft_plan_recursive.py,
+and nothing here changes their behavior for a plan that isn't itself
+persistent. UPDATE 2026-09-22 (logical/physical cost-model correction --
+see docs/logical_vs_physical_cost_model.md): `fft_plan_search.py` and
+`fft_cost_model.py` now both import from here too -- `num_rounds` (cost
+model, pre-existing) and `flatten_logical_workers_to_physical_lanes`/
+`persistent_leaf_scratchpad_bytes` (cost model and gpu_baseline/common.py,
+new) -- so a cost estimate and a VkFFT-M2NDP resource-feasibility check
+can each read the exact same physical-lane/scratchpad-byte formulas
+`codegen.fft_persistent_codegen.py`/`make_persistent_leaf_plan` itself
+already uses, instead of a second, silently-driftable copy. Importing
+these pure, side-effect-free helpers changes nothing about any NON-
+persistent plan's behavior -- the "nothing here changes their behavior"
+invariant above still holds for that case; it now only describes plans
+this module doesn't itself build. Three entry points a caller
+(codegen/fft_persistent_codegen.py, planning/search/fft_cost_model.py,
+planning/gpu_baseline/common.py, or a standalone script) uses:
 
 * `make_persistent_leaf_plan(...)` -- the planner, this module.
 * `generate_persistent_fft_kernel(...)` -- the codegen, a sibling module.
+* `flatten_logical_workers_to_physical_lanes(...)`/`physical_lane_workload(...)`
+  -- the shared logical-worker -> physical-lane mapping both codegen and
+  the cost model now render/measure through (see their own docstrings).
 
 Core invariant, unchanged from every other planner in this package:
 radix decomposition, butterfly arithmetic, twiddle exponents, the
@@ -30,7 +46,7 @@ workers instead of running as one implicit worker (see
 `_partition_vector_scalar`).
 """
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from planning.core.fft_plan_core import (
@@ -45,12 +61,38 @@ from planning.core.fft_plan_core import (
     SIMDBatchPlan,
     _Default,
     _StageLayout,
+    _build_plan,
     _make_load,
     _make_store,
     _make_twiddle,
     layouts_for_radices,
+    pingpong_needed,
 )
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from planning.execution.fft_plan_cooperative import choose_workers_per_fft, make_cooperative_leaf_plan
+
+
+def persistent_leaf_scratchpad_bytes(length: int) -> int:
+    """The ONE authoritative formula for how many scratchpad bytes a
+    persistent-software-workgroup leaf of FFT length `length` needs --
+    `16 * length` (two full ping-pong banks, each `2 * length` Float32
+    elements -- split-complex real+imag -- times 4 bytes, unconditionally,
+    regardless of stage count: see `PersistentWorkgroupPlan`'s own module
+    docstring, "Always exactly two scratchpad buffers regardless of stage_
+    count"). Factored out of `make_persistent_leaf_plan`'s own inline
+    `required_scratchpad_bytes = 16 * length` (still the same formula,
+    unchanged) so a caller OUTSIDE this module that needs to know "how
+    many scratchpad bytes will a persistent leaf of this length actually
+    require" -- `planning.gpu_baseline.common`'s own M2NDP resource
+    adapter for `vkfft.py`'s `plan_m2ndp` (see that module's own docstring
+    for why a VkFFT-style shared-memory-sizing formula must budget against
+    THIS number, not the raw single-buffer GPU-LDS convention, once a
+    leaf's cooperation width needs worker-wave virtualization) -- reads
+    the exact same number `make_persistent_leaf_plan`'s own feasibility
+    check enforces, instead of a second, independently-typed `16 *
+    length` that could silently drift out of sync with it.
+    """
+    return 16 * length
 
 
 def _persistent_read_buffer(stage_id: int, buffer_names: tuple[str, str]) -> str:
@@ -266,6 +308,8 @@ def make_persistent_leaf_plan(
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
     inverse_scale: float | None | _Default = _DEFAULT,
     workers_per_fft: int | None = None,
+    lowering_mode: Literal["wave", "fused", "physical"] = "physical",
+    copy_mode: Literal["scalar", "vectorized_contiguous"] = "scalar",
 ) -> FFTCodegenPlan:
     """A length-`length` leaf FFT (single fused kernel, `radices` its own
     Cooley-Tukey/Stockham stage sequence -- same contract as `_build_plan`/
@@ -320,6 +364,12 @@ def make_persistent_leaf_plan(
     of this function, not by any real architectural limit (see docs/
     ragged_worker_wave_generalization.md for the investigation that
     established this).
+
+    `lowering_mode`: stored verbatim on the returned plan's own
+    `PersistentWorkgroupPlan.lowering_mode` (metadata only -- see that
+    field's own docstring for what it is and is not authoritative over).
+    Default `"physical"` matches every plan built before this parameter
+    existed.
     """
     if num_logical_blocks < 1:
         raise ValueError("num_logical_blocks must be >= 1")
@@ -368,9 +418,9 @@ def make_persistent_leaf_plan(
     if stripes_per_group != 1:
         raise NotImplementedError("only stripes_per_group == 1 is implemented")
 
-    required_scratchpad_bytes = 16 * length
+    required_scratchpad_bytes = persistent_leaf_scratchpad_bytes(length)
     if required_scratchpad_bytes > target.spad_capacity_bytes:
-        max_length = target.spad_capacity_bytes // 16
+        max_length = target.spad_capacity_bytes // persistent_leaf_scratchpad_bytes(1)
         raise ValueError(
             f"length={length} needs {required_scratchpad_bytes} bytes of scratchpad "
             f"(16*length, two banks of split-complex FP32), but "
@@ -475,6 +525,8 @@ def make_persistent_leaf_plan(
             software_group_count=software_group_count,
             logical_block_stride=logical_block_stride,
             scalar_worker_mode=scalar_worker_mode,
+            lowering_mode=lowering_mode,
+            copy_mode=copy_mode,
         ),
     )
 
@@ -558,6 +610,117 @@ def worker_waves(workers_per_fft: int, workers_per_group: int) -> int:
     return -(-workers_per_fft // workers_per_group)
 
 
+def flatten_logical_workers_to_physical_lanes(
+    vector_batches: tuple[tuple[SIMDBatchPlan, ...], ...],
+    scalar_batches: tuple[SIMDBatchPlan, ...],
+    *,
+    workers_per_fft: int,
+    workers_per_group: int,
+) -> tuple[tuple[SIMDBatchPlan, ...], ...]:
+    """THE shared logical-worker -> physical-lane mapping: collapse
+    `workers_per_fft` LOGICAL workers' worth of already-partitioned batches
+    (`vector_batches`/`scalar_batches` -- exactly `stage.persistent_vector_
+    batches`/`stage.persistent_scalar_batches`, built by
+    `_partition_vector_scalar`) down to exactly `workers_per_group`
+    PHYSICAL buckets -- physical lane `p`'s own bucket is the
+    concatenation, in ascending logical-worker order, of every logical
+    worker `j`'s own batches where `j % workers_per_group == p`.
+
+    Moved here (2026-09-22) from `codegen.fft_persistent_codegen.
+    _flatten_to_physical_lanes`, which now calls this function instead of
+    computing its own copy (see that function's own docstring) -- so
+    `codegen.fft_persistent_codegen`'s default "physical" (Mode C)
+    execution-lowering strategy and `planning.search.fft_cost_model`'s own
+    per-stage cost metrics read the identical mapping, instead of the cost
+    model separately reading `persistent_vector_batches` at its raw
+    LOGICAL (`workers_per_fft`-wide) granularity -- the exact "cost model
+    silently assumes workers_per_fft-way physical concurrency, when the
+    default codegen lowering only ever gives M2NDP `workers_per_group`
+    (8) physical lanes" mismatch this refactor closes (see docs/
+    logical_vs_physical_cost_model.md). `workers_per_fft <= workers_per_
+    group` is the identity case: each physical lane gets AT MOST one
+    logical worker's own batches (lane `j` gets logical worker `j`'s
+    batches; lanes `>= workers_per_fft` are empty) -- byte-identical to
+    reading `vector_batches` directly, which is exactly why this change is
+    a no-op for every plan this project's own ordinary planner/search path
+    builds (workers_per_fft is never set above `workers_per_group` there
+    -- see `make_persistent_leaf_plan`'s own `workers_per_fft` docstring;
+    only a GPU-baseline-derived plan, `gpu_baseline.common._map_worker_
+    wave_kernel`, ever sets a wider one).
+
+    The scalar/tail batch (owned by logical worker `workers_per_fft - 1`
+    alone -- see `_partition_vector_scalar`'s own docstring) lands on
+    whichever physical lane that logical worker maps to (`(workers_per_
+    fft - 1) % workers_per_group`), appended AFTER that lane's own vector
+    batches -- matching `codegen.fft_persistent_codegen._worker_body`'s
+    "tail batch owned by the last logical worker, rendered like every
+    other worker's batches" contract exactly.
+    """
+    if len(vector_batches) != workers_per_fft:
+        raise ValueError(
+            f"len(vector_batches)={len(vector_batches)} must equal "
+            f"workers_per_fft={workers_per_fft}"
+        )
+    physical: list[list[SIMDBatchPlan]] = [[] for _ in range(workers_per_group)]
+    for logical_worker_id in range(workers_per_fft):
+        lane = logical_worker_id % workers_per_group
+        physical[lane].extend(vector_batches[logical_worker_id])
+    if scalar_batches:
+        tail_lane = (workers_per_fft - 1) % workers_per_group
+        physical[tail_lane].extend(scalar_batches)
+    return tuple(tuple(bucket) for bucket in physical)
+
+
+@dataclass(frozen=True)
+class PhysicalLaneWorkload:
+    """The physical-lane-flattened shape of one persistent stage's own
+    workload -- what `planning.search.fft_cost_model.compute_stage_
+    metrics` now measures a persistent stage's execution cost against
+    (see `physical_lane_workload` below), and what a plan/report dump
+    (section 16 of the task this was built from) shows per stage."""
+
+    physical_lane_batches: tuple[tuple[SIMDBatchPlan, ...], ...]
+    num_logical_workers: int
+    num_physical_lanes: int
+    max_batches_per_lane: int
+    min_batches_per_lane: int
+    avg_batches_per_lane: float
+    active_physical_lanes: int
+
+
+def physical_lane_workload(
+    vector_batches: tuple[tuple[SIMDBatchPlan, ...], ...],
+    scalar_batches: tuple[SIMDBatchPlan, ...],
+    *,
+    workers_per_fft: int,
+    workers_per_group: int,
+) -> PhysicalLaneWorkload:
+    """`flatten_logical_workers_to_physical_lanes` plus the summary stats a
+    cost model or report dump actually wants -- batch COUNTS here (`len`
+    of each lane's own bucket), not a cost-unit-weighted quantity (see
+    `fft_cost_model.compute_stage_metrics`'s own `chunks_per_batch`
+    weighting for that; this function stays a plain, reusable "how many
+    batches per physical lane" primitive that any caller -- cost model,
+    diagnostics, a future report -- can weight however it needs, rather
+    than baking in one particular cost unit here)."""
+    physical_batches = flatten_logical_workers_to_physical_lanes(
+        vector_batches, scalar_batches,
+        workers_per_fft=workers_per_fft, workers_per_group=workers_per_group,
+    )
+    counts = [len(bucket) for bucket in physical_batches]
+    active = sum(1 for c in counts if c > 0)
+    total = sum(counts)
+    return PhysicalLaneWorkload(
+        physical_lane_batches=physical_batches,
+        num_logical_workers=workers_per_fft,
+        num_physical_lanes=workers_per_group,
+        max_batches_per_lane=max(counts, default=0),
+        min_batches_per_lane=min(counts, default=0),
+        avg_batches_per_lane=(total / workers_per_group) if workers_per_group else 0.0,
+        active_physical_lanes=active,
+    )
+
+
 def num_rounds(num_logical_blocks: int, software_group_count: int) -> int:
     return -(-num_logical_blocks // software_group_count)
 
@@ -567,3 +730,164 @@ def round_active_groups(
 ) -> int:
     round_base = round_index * software_group_count
     return max(0, min(software_group_count, num_logical_blocks - round_base))
+
+
+# =============================================================================
+# P2.4: persistent tail-round hybrid (see docs/priority2_execution_
+# strategies.md). Every persistent leaf's own round count is `ceil(
+# num_logical_blocks / software_group_count)` -- the LAST round is
+# under-utilized whenever `num_logical_blocks` doesn't divide evenly by
+# `software_group_count` (e.g. `num_ndp_units=32`, `num_logical_blocks=33`:
+# round 0 uses all 32 groups, round 1 uses exactly 1). This section adds
+# SELECTABLE alternatives for that tail portion -- reusing `make_
+# persistent_leaf_plan` (full rounds), `fft_plan_core._build_plan` (non-
+# cooperative tail), and `fft_plan_cooperative.make_cooperative_leaf_plan`
+# (cooperative tail) OUTRIGHT, never a new execution mechanism -- per this
+# task's own "reuse the existing execution implementations" instruction.
+# =============================================================================
+
+TailStrategy = Literal["all_persistent", "noncoop_tail", "cooperative_tail"]
+
+
+@dataclass(frozen=True)
+class PersistentTailHybridPlan:
+    """The result of `make_persistent_tail_hybrid_plan`: `full_blocks`
+    logical blocks lowered via the ordinary persistent leaf
+    (`persistent_plan`), plus (unless `tail_strategy == "all_persistent"`
+    or there is no genuine tail at all) `tail_blocks` MORE logical blocks
+    lowered via a SEPARATE, independent kernel (`tail_plan`) using a
+    different execution strategy. `tail_plan is None` exactly when
+    `tail_blocks == 0` -- there is nothing for a second kernel to do, so
+    none is built; `codegen.fft_persistent_codegen.
+    generate_persistent_tail_hybrid_kernel` degenerates to the plain
+    `generate_persistent_fft_kernel` call in that case, byte-identical to
+    before this mechanism existed.
+
+    `persistent_plan`/`tail_plan` are two COMPLETELY INDEPENDENT kernels
+    (separate `NDPTask` structs, separate DRAM buffers, separate launches)
+    -- there is no data dependency between "blocks 0..full_blocks-1" and
+    "blocks full_blocks..num_logical_blocks-1", so no chaining/ordering
+    concern exists beyond both being launched once each from the same
+    host `main()` (see that codegen function's own docstring for why this
+    avoids needing any pointer-offset arithmetic between them, a Mojo
+    idiom this project's own codegen has never used or verified against
+    the real toolchain elsewhere).
+    """
+
+    full_blocks: int
+    tail_blocks: int
+    tail_strategy: TailStrategy
+    # `None` in the one edge case where `full_blocks == 0` (fewer than
+    # `target.num_ndp_units` logical blocks total, under a non-"all_
+    # persistent" strategy): there is no persistent portion at all, every
+    # replica goes through `tail_plan` alone -- see `codegen.fft_
+    # persistent_codegen.generate_persistent_tail_hybrid_kernel`'s own
+    # docstring for how that degenerates (renders `tail_plan` as a plain
+    # standalone kernel, no persistent struct/launch at all).
+    persistent_plan: FFTCodegenPlan | None
+    tail_plan: FFTCodegenPlan | None
+
+
+def make_persistent_tail_hybrid_plan(
+    length: int,
+    radices: tuple[int, ...],
+    *,
+    num_logical_blocks: int,
+    inverse: bool = False,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    tail_strategy: TailStrategy = "all_persistent",
+    tail_cooperative_workers: int | None = None,
+    kernel_name: str = "PersistentFFT",
+    tail_kernel_name: str = "TailFFT",
+    inverse_scale: float | None | _Default = _DEFAULT,
+    workers_per_fft: int | None = None,
+    lowering_mode: Literal["wave", "fused", "physical"] = "physical",
+    copy_mode: Literal["scalar", "vectorized_contiguous"] = "scalar",
+) -> PersistentTailHybridPlan:
+    """Split `num_logical_blocks` into `full_blocks = (num_logical_blocks
+    // target.num_ndp_units) * target.num_ndp_units` (an exact multiple of
+    the physical unit count -- every persistent round in this portion uses
+    ALL `target.num_ndp_units` software groups) plus `tail_blocks =
+    num_logical_blocks - full_blocks` (`0` when it already divided evenly).
+
+    `tail_strategy="all_persistent"` (the default -- byte-identical to
+    every plan built before this function existed): `full_blocks` is
+    forced back to `num_logical_blocks` and `tail_plan` stays `None` --
+    the entire logical-block count goes through one ordinary persistent
+    leaf, tail round under-utilization and all, exactly as `make_
+    persistent_leaf_plan(length, radices, num_logical_blocks=num_logical_
+    blocks, ...)` alone already produces.
+
+    `tail_strategy="noncoop_tail"`: `tail_blocks` replicas (`0` is handled
+    the same as `"all_persistent"` -- no genuine tail to special-case)
+    instead go through `fft_plan_core._build_plan` -- one physical
+    microthread per replica, the plain, always-available fallback
+    strategy every leaf in this project can use.
+
+    `tail_strategy="cooperative_tail"`: `tail_blocks` replicas go through
+    `fft_plan_cooperative.make_cooperative_leaf_plan` instead, at
+    `tail_cooperative_workers` (default: `choose_workers_per_fft`'s own
+    heuristic answer for this `length`/`radices`, the same default every
+    other cooperative leaf in this project uses when not given an
+    explicit override).
+
+    Every leaf-shape decision (radix sequence, stage layout, twiddle
+    placement) is identical across all three strategies -- ONLY the
+    EXECUTION mechanism for the tail differs, per this task's own "GPU
+    logical plan must remain fixed" instruction (there is no GPU baseline
+    involved here at all, but the same discipline applies: `length`/
+    `radices` are never altered by this function, only how the tail's own
+    physical launch is organized).
+    """
+    num_ndp_units = target.num_ndp_units
+    full_blocks = (num_logical_blocks // num_ndp_units) * num_ndp_units
+    tail_blocks = num_logical_blocks - full_blocks
+
+    if tail_strategy == "all_persistent" or tail_blocks == 0:
+        persistent_plan = make_persistent_leaf_plan(
+            length, radices, num_logical_blocks=num_logical_blocks, inverse=inverse,
+            target=target, kernel_name=kernel_name, inverse_scale=inverse_scale,
+            workers_per_fft=workers_per_fft, lowering_mode=lowering_mode, copy_mode=copy_mode,
+        )
+        return PersistentTailHybridPlan(
+            full_blocks=num_logical_blocks, tail_blocks=0, tail_strategy="all_persistent",
+            persistent_plan=persistent_plan, tail_plan=None,
+        )
+
+    # `full_blocks == 0` (fewer than `num_ndp_units` logical blocks total):
+    # no persistent portion at all -- every replica goes through the tail
+    # strategy alone (see `PersistentTailHybridPlan.persistent_plan`'s own
+    # docstring for why this is `None`, not an empty/degenerate persistent
+    # plan `make_persistent_leaf_plan` itself would reject).
+    persistent_plan = (
+        make_persistent_leaf_plan(
+            length, radices, num_logical_blocks=full_blocks, inverse=inverse,
+            target=target, kernel_name=kernel_name, inverse_scale=inverse_scale,
+            workers_per_fft=workers_per_fft, lowering_mode=lowering_mode, copy_mode=copy_mode,
+        )
+        if full_blocks > 0 else None
+    )
+
+    if tail_strategy == "noncoop_tail":
+        tail_plan = _build_plan(
+            length=length, inverse=inverse, total_uthreads=tail_blocks, simd_lanes=8,
+            use_pingpong=pingpong_needed(len(radices)),
+            layouts=layouts_for_radices(length, radices, 8),
+            kernel_name=tail_kernel_name, inverse_scale=inverse_scale,
+        )
+    elif tail_strategy == "cooperative_tail":
+        workers = (
+            tail_cooperative_workers if tail_cooperative_workers is not None
+            else choose_workers_per_fft(length, radices)
+        )
+        tail_plan = make_cooperative_leaf_plan(
+            length, radices, workers_per_fft=workers, total_ffts=tail_blocks, inverse=inverse,
+            kernel_name=tail_kernel_name, inverse_scale=inverse_scale,
+        )
+    else:
+        raise ValueError(f"unknown tail_strategy {tail_strategy!r}")
+
+    return PersistentTailHybridPlan(
+        full_blocks=full_blocks, tail_blocks=tail_blocks, tail_strategy=tail_strategy,
+        persistent_plan=persistent_plan, tail_plan=tail_plan,
+    )

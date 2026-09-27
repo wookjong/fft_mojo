@@ -86,6 +86,7 @@ from .common import (
     BaselineResult,
     BaselineStatus,
     GPUKernelConfig,
+    m2ndp_resource_complex_bytes,
     map_cooperative_kernel,
     unsupported,
     wrap_leaf_as_recursive_plan,
@@ -200,7 +201,9 @@ def _floor_po2(x: int) -> int:
     return 1 << (x.bit_length() - 1)
 
 
-def get_max_1d_length(lds_bytes: int = CLFFT_LDS_BYTES) -> int:
+def get_max_1d_length(
+    lds_bytes: int = CLFFT_LDS_BYTES, *, elem_bytes: int = CLFFT_ELEM_BYTES,
+) -> int:
     """`FFTPlan::GetMax1DLengthStockham` (generator.stockham.cpp lines
     4670-4690): `FloorPo2(limit_LocalMemSize / ElementSize())`, single
     precision only -- see module docstring for why the un-clamped
@@ -218,16 +221,56 @@ def get_max_1d_length(lds_bytes: int = CLFFT_LDS_BYTES) -> int:
     (`floor_po2(lds/elem_size)`) is never changed -- only which byte
     budget it is fed, exactly this task's own "hardware input becomes
     M2NDP-derived, algorithm stays GPU-derived" rule.
+
+    `elem_bytes`: the "bytes ONE complex element costs" RESOURCE INPUT --
+    defaults to `CLFFT_ELEM_BYTES` (8), real clFFT's own single-buffer
+    LDS convention, so every existing caller (this frozen source-faithful
+    baseline's own `plan()`) computes byte-identically to before this
+    parameter existed. `get_max_1d_length_m2ndp` (below) is the only
+    caller that overrides it -- see that function's own docstring (P1.1,
+    docs/clfft_m2ndp_scratchpad_resource_model.md) for why a real M2NDP
+    persistent-leaf lowering needs double this many bytes per element,
+    exactly the same class of fix `vkfft.py`'s `complex_size_bytes`
+    already applies (docs/vkfft_m2ndp_scratchpad_resource_model.md).
     """
-    return _floor_po2(lds_bytes // CLFFT_ELEM_BYTES)
+    return _floor_po2(lds_bytes // elem_bytes)
 
 
 def get_max_1d_length_m2ndp(target: TargetProfile) -> int:
     """M2NDP-adapted `get_max_1d_length`: identical formula, fed
     `target.spad_capacity_bytes` (one NDP unit's own scratchpad) instead
     of clFFT's own representative-GPU `CLFFT_LDS_BYTES` constant -- see
-    docs/gpu_planner_m2ndp_target_mapping.md."""
-    return get_max_1d_length(lds_bytes=target.spad_capacity_bytes)
+    docs/gpu_planner_m2ndp_target_mapping.md.
+
+    `elem_bytes=gpu_baseline.common.m2ndp_resource_complex_bytes()` (16,
+    ADDED for P1.1 -- see docs/clfft_m2ndp_scratchpad_resource_model.md):
+    BEFORE this fix, this function still divided by `CLFFT_ELEM_BYTES=8`
+    -- the real GPU's own single-buffer shared-memory convention -- even
+    though the M2NDP leaf this threshold's own single-kernel-vs-large-1D
+    DECISION selects is, for almost every length, actually lowered via
+    the persistent/worker-wave-virtualization path (`gpu_baseline.common.
+    _map_worker_wave_kernel` -> `make_persistent_leaf_plan`), which needs
+    16 bytes per element UNCONDITIONALLY, regardless of stage count. That
+    mismatch let `is_1d_possible(length, threshold)` judge a length
+    single-kernel-feasible when the real M2NDP mapping later refused it
+    outright (`RESOURCE_INFEASIBLE`) -- concretely, N=8192 against this
+    project's own `target.spad_capacity_bytes=122880`: the old 8-byte
+    threshold is `floor_po2(122880//8)=8192` (`is_1d_possible(8192,8192)`
+    is True), but the real M2NDP requirement is `16*8192=131072 >
+    122880`. The corrected 16-byte threshold is `floor_po2(122880//16)
+    =4096`, correctly routing N=8192 into the large-1D split BEFORE ever
+    attempting (and failing) the single-kernel shape -- exactly the same
+    "resource input becomes M2NDP-derived, algorithm control flow stays
+    clFFT's own" fix `vkfft.py`'s `plan_m2ndp` already applies (see
+    `gpu_baseline.common.m2ndp_resource_complex_bytes`'s own docstring
+    for why 16, single-sourced from `fft_plan_persistent.
+    persistent_leaf_scratchpad_bytes`). `plan()` (frozen) is untouched --
+    it never calls this function at all, only `get_max_1d_length` with
+    the real clFFT default.
+    """
+    return get_max_1d_length(
+        lds_bytes=target.spad_capacity_bytes, elem_bytes=m2ndp_resource_complex_bytes(),
+    )
 
 
 def is_1d_possible(length: int, large1d_threshold: int) -> bool:

@@ -41,6 +41,7 @@ scratchpad) unconditionally, no interleaving knowledge required.
 
 import math
 from dataclasses import replace
+from typing import Literal
 
 from planning.core.fft_plan_core import (
     _DEFAULT,
@@ -238,7 +239,10 @@ def default_cooperative_scratchpad_budget(n: int) -> int:
     return 16 * root
 
 
-def _partition_batches(
+PartitionMode = Literal["round_robin", "contiguous", "balanced_contiguous"]
+
+
+def _partition_batches_round_robin(
     batches: tuple[SIMDBatchPlan, ...], workers_per_fft: int
 ) -> tuple[tuple[SIMDBatchPlan, ...], ...]:
     """Round-robin: worker `w` owns `batches[w], batches[w+workers_per_fft], ...`
@@ -247,11 +251,94 @@ def _partition_batches(
     `active_workers` for a low-parallelism stage, is future work this
     function's caller can layer on without changing its own signature: it
     always returns exactly `workers_per_fft` buckets, some possibly empty
-    when a stage has fewer batches than workers)."""
+    when a stage has fewer batches than workers). This project's own
+    original, only implementation before P2.2 -- see `partition_batches`'s
+    own docstring for the two alternatives added alongside it."""
     buckets: list[list[SIMDBatchPlan]] = [[] for _ in range(workers_per_fft)]
     for i, batch in enumerate(batches):
         buckets[i % workers_per_fft].append(batch)
     return tuple(tuple(bucket) for bucket in buckets)
+
+
+def _partition_batches_contiguous(
+    batches: tuple[SIMDBatchPlan, ...], workers_per_fft: int
+) -> tuple[tuple[SIMDBatchPlan, ...], ...]:
+    """P2.2: worker `w` owns a fixed-size contiguous slice, `batches[w*
+    chunk : (w+1)*chunk]` with `chunk = ceil(len(batches) / workers_per_
+    fft)` -- every worker except possibly the last gets exactly `chunk`
+    batches; the last (only) worker whose own slice would start at or
+    past `len(batches)` gets an EMPTY bucket, never an out-of-range
+    slice (Python slicing itself already clamps, kept explicit here for
+    clarity). Unlike round-robin, a worker's own batches are physically
+    ADJACENT in `batches`' own original order -- a real, different memory-
+    locality shape worth measuring against round-robin's interleaved one
+    (see this module's own P2.2 docstring for why neither is assumed
+    faster without a real measurement)."""
+    n = len(batches)
+    chunk = -(-n // workers_per_fft) if workers_per_fft > 0 else 0
+    buckets: list[tuple[SIMDBatchPlan, ...]] = []
+    for w in range(workers_per_fft):
+        start = w * chunk
+        if start >= n:
+            buckets.append(())
+            continue
+        end = min(n, start + chunk)
+        buckets.append(tuple(batches[start:end]))
+    return tuple(buckets)
+
+
+def _partition_batches_balanced_contiguous(
+    batches: tuple[SIMDBatchPlan, ...], workers_per_fft: int
+) -> tuple[tuple[SIMDBatchPlan, ...], ...]:
+    """P2.2: like `_partition_batches_contiguous`, but the REMAINDER
+    (`len(batches) % workers_per_fft`) is spread one-per-worker across
+    the FIRST `remainder` workers instead of dumped entirely onto a
+    short last slice -- every worker's own bucket size differs from any
+    other's by at most 1 (`base` or `base+1`), the same balance level
+    round-robin already guarantees, but with each worker's own batches
+    still contiguous in the original order (unlike round-robin's
+    interleaved assignment, and unlike plain `_partition_batches_
+    contiguous`'s own front-loaded, possibly ragged-tail shape)."""
+    n = len(batches)
+    if workers_per_fft <= 0:
+        return ()
+    base, extra = divmod(n, workers_per_fft)
+    buckets: list[tuple[SIMDBatchPlan, ...]] = []
+    start = 0
+    for w in range(workers_per_fft):
+        size = base + (1 if w < extra else 0)
+        buckets.append(tuple(batches[start:start + size]))
+        start += size
+    return tuple(buckets)
+
+
+def partition_batches(
+    batches: tuple[SIMDBatchPlan, ...], workers_per_fft: int, *, mode: PartitionMode = "round_robin",
+) -> tuple[tuple[SIMDBatchPlan, ...], ...]:
+    """The one dispatcher every caller (`make_cooperative_leaf_plan`) goes
+    through -- P2.2's own small, bounded candidate set (round_robin,
+    contiguous, balanced_contiguous; see each variant's own docstring),
+    never a larger Cartesian search per this task's own "do not create a
+    huge search" instruction. `mode="round_robin"` (the default) is
+    byte-identical to this project's own pre-P2.2 behavior -- `_partition_
+    batches` (the function this replaces) is kept as a thin backward-
+    compatible alias below."""
+    if mode == "round_robin":
+        return _partition_batches_round_robin(batches, workers_per_fft)
+    if mode == "contiguous":
+        return _partition_batches_contiguous(batches, workers_per_fft)
+    if mode == "balanced_contiguous":
+        return _partition_batches_balanced_contiguous(batches, workers_per_fft)
+    raise ValueError(f"unknown partition mode {mode!r}")
+
+
+def _partition_batches(
+    batches: tuple[SIMDBatchPlan, ...], workers_per_fft: int
+) -> tuple[tuple[SIMDBatchPlan, ...], ...]:
+    """Backward-compatible alias for `partition_batches(..., mode="round_
+    robin")` -- kept so any existing caller/import of this private name
+    (pre-P2.2) keeps working unchanged."""
+    return partition_batches(batches, workers_per_fft, mode="round_robin")
 
 
 def make_cooperative_leaf_plan(
@@ -266,6 +353,7 @@ def make_cooperative_leaf_plan(
     inverse_scale: float | None | _Default = _DEFAULT,
     spad_capacity_bytes: int | None = None,
     max_concurrent_scratchpad_bytes: int | None = None,
+    partition_mode: PartitionMode = "round_robin",
 ) -> FFTCodegenPlan:
     """A length-`length` leaf FFT (single fused kernel, `radices` its own
     Cooley-Tukey/Stockham stage sequence -- same contract as `_build_plan`/
@@ -307,6 +395,15 @@ def make_cooperative_leaf_plan(
     many as the FFT-slot counts `_build_plan` computed. Every other field
     `_build_plan` returned (scratchpad_buffers sized per slot already,
     input/output AddressMapping, host plan, ...) needs no change at all.
+
+    `partition_mode` (P2.2, ADDED -- see docs/priority2_execution_
+    strategies.md): which of `partition_batches`'s own three candidates
+    (`"round_robin"`, `"contiguous"`, `"balanced_contiguous"`) assigns
+    each stage's own SIMD batches to `workers_per_fft` cooperating
+    workers. `"round_robin"` (the default) is byte-identical to every
+    plan built before this parameter existed. Recorded verbatim on the
+    returned plan's own `CooperationPlan.partition_mode` (metadata --
+    see that field's own docstring).
     """
     if workers_per_fft < 1:
         raise ValueError("workers_per_fft must be >= 1")
@@ -328,7 +425,7 @@ def make_cooperative_leaf_plan(
     new_stages = tuple(
         replace(
             stage,
-            worker_batches=_partition_batches(stage.batches, workers_per_fft),
+            worker_batches=partition_batches(stage.batches, workers_per_fft, mode=partition_mode),
         )
         for stage in base.stages
     )
@@ -350,5 +447,50 @@ def make_cooperative_leaf_plan(
         cooperation=CooperationPlan(
             workers_per_fft=workers_per_fft,
             fft_slots_per_group=fft_slots_per_group,
+            partition_mode=partition_mode,
         ),
     )
+
+
+_ALL_PARTITION_MODES: tuple[PartitionMode, ...] = ("round_robin", "contiguous", "balanced_contiguous")
+
+
+def generate_partition_mode_candidates(
+    length: int, radices: tuple[int, ...], *, workers_per_fft: int, total_ffts: int = 1,
+    inverse: bool = False, simd_lanes: int = 8, kernel_name: str = "FFTFP32Coop",
+    inverse_scale: float | None | _Default = _DEFAULT, spad_capacity_bytes: int | None = None,
+    max_concurrent_scratchpad_bytes: int | None = None,
+) -> list[FFTCodegenPlan]:
+    """P2.2's own small, bounded candidate set: one `make_cooperative_
+    leaf_plan` call per `PartitionMode`, deliberately NOT a larger search
+    (this task's own "do not create a huge Cartesian search" instruction)
+    -- every candidate is otherwise identical (same length/radices/
+    workers_per_fft/every other argument), differing only in `partition_
+    mode`. Deduplicates by each candidate's own resulting `worker_batches`
+    shape (per stage, per worker, the exact SEQUENCE of batch ids -- not
+    merely batch COUNTS, so two modes that happen to produce the same
+    counts but a different assignment are still kept distinct) -- two
+    modes collapse to "the same candidate" only when they are PHYSICALLY
+    IDENTICAL assignments, e.g. whenever `len(batches) <= workers_per_fft`
+    for every stage (round-robin, contiguous, and balanced-contiguous all
+    degenerate to "one batch per worker, in order" once there's no
+    remainder to place differently)."""
+    candidates: list[FFTCodegenPlan] = []
+    seen: set[tuple] = set()
+    for mode in _ALL_PARTITION_MODES:
+        plan = make_cooperative_leaf_plan(
+            length, radices, workers_per_fft=workers_per_fft, total_ffts=total_ffts,
+            inverse=inverse, simd_lanes=simd_lanes, kernel_name=kernel_name,
+            inverse_scale=inverse_scale, spad_capacity_bytes=spad_capacity_bytes,
+            max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
+            partition_mode=mode,
+        )
+        signature = tuple(
+            tuple(tuple(b.batch_id for b in bucket) for bucket in stage.worker_batches)
+            for stage in plan.stages
+        )
+        if signature in seen:
+            continue
+        seen.add(signature)
+        candidates.append(plan)
+    return candidates

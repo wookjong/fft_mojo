@@ -64,7 +64,7 @@ from planning.core.fft_plan_core import (
     coalesce_radices,
 )
 from planning.execution.fft_plan_lanes import apply_all_scalar_lanes_to_plan, apply_compute_lanes_to_plan
-from planning.execution.fft_plan_persistent import make_persistent_leaf_plan
+from planning.execution.fft_plan_persistent import make_persistent_leaf_plan, physical_lane_workload
 from planning.strategies.fft_plan_recursive import (
     FFTLeafPlan,
     FFTNode,
@@ -1139,7 +1139,55 @@ def rank_candidates(candidates: list[FFTPlanCandidate]) -> list[FFTPlanCandidate
     return sorted(candidates, key=lambda c: c.metrics.estimated_cost)
 
 
-def _describe_node(node: FFTNode, depth: int, lines: list[str]) -> None:
+def _describe_persistent_leaf(node: FFTLeafPlan, target: TargetProfile, pad: str, lines: list[str]) -> None:
+    """Section 16 of the task this was built from: logical vs. physical
+    worker mapping and scratchpad feasibility, per stage, for one
+    persistent-software-workgroup leaf -- the information a reader
+    previously had to compute by hand from `PersistentWorkgroupPlan.
+    workers_per_fft`/`workers_per_group` and each stage's own `persistent_
+    vector_batches` to answer "how does this leaf's logical cooperation
+    width actually map onto M2NDP's 8 physical lanes."""
+    pw = node.kernel.persistent
+    assert pw is not None
+    scratchpad_bytes = sum(buf.elements for buf in node.kernel.scratchpad_buffers) * 4
+    feasible = "feasible" if scratchpad_bytes <= target.spad_capacity_bytes else "INFEASIBLE"
+    lines.append(
+        f"{pad}  logical_workers_per_fft={pw.logical_workers_per_fft} "
+        f"physical_workers_per_group={pw.physical_workers_per_group} "
+        f"logical_worker_groups={pw.logical_worker_groups} "
+        f"persistent_lowering_mode={pw.lowering_mode} stage_launches={pw.stage_launches}"
+    )
+    lines.append(
+        f"{pad}  scratchpad: estimated_bytes={scratchpad_bytes} "
+        f"capacity={target.spad_capacity_bytes} ({feasible})"
+    )
+    for stage in node.kernel.stages:
+        if stage.persistent_vector_batches is None:
+            continue
+        workload = physical_lane_workload(
+            stage.persistent_vector_batches, stage.persistent_scalar_batches or (),
+            workers_per_fft=pw.workers_per_fft, workers_per_group=pw.workers_per_group,
+        )
+        logical_batches = sum(len(wb) for wb in stage.persistent_vector_batches) + len(
+            stage.persistent_scalar_batches or ()
+        )
+        utilization = (
+            workload.active_physical_lanes / workload.num_physical_lanes
+            if workload.num_physical_lanes else 1.0
+        )
+        lines.append(
+            f"{pad}    stage {stage.stage_id} (radix={stage.radix}): "
+            f"logical_batches={logical_batches} "
+            f"physical_lane_batches={[len(l) for l in workload.physical_lane_batches]} "
+            f"active_physical_lanes={workload.active_physical_lanes} "
+            f"max_physical_work_per_lane={workload.max_batches_per_lane} "
+            f"physical_lane_utilization={utilization:.3f}"
+        )
+
+
+def _describe_node(
+    node: FFTNode, depth: int, lines: list[str], target: TargetProfile = DEFAULT_TARGET_PROFILE,
+) -> None:
     pad = "  " * depth
     if isinstance(node, FFTLeafPlan):
         radices = tuple(s.radix for s in node.kernel.stages)
@@ -1155,24 +1203,37 @@ def _describe_node(node: FFTNode, depth: int, lines: list[str]) -> None:
         lanes = tuple(s.compute_lanes for s in node.kernel.stages)
         lanes_str = f" compute_lanes={list(lanes)}" if any(lane is not None for lane in lanes) else ""
         lines.append(f"{pad}Leaf M={node.m} R={node.r} radices={radices}{workers}{persistent}{lanes_str}")
+        if node.kernel.persistent is not None:
+            # ADDED 2026-09-22 (section 16 of the task this was built from):
+            # logical-worker/physical-lane mapping + scratchpad feasibility,
+            # per stage -- see `_describe_persistent_leaf`'s own docstring.
+            _describe_persistent_leaf(node, target, pad, lines)
         return
     assert isinstance(node, FFTRecursiveNodePlan)
     lines.append(f"{pad}Node M={node.m} R={node.r}  split: A={node.a} B={node.b}")
     pt = node.pre_transpose
     lines.append(f"{pad}  PRE    matrix={pt.rows}x{pt.cols} tile={pt.tile_rows}x{pt.tile_cols} tiles={pt.total_uthreads}")
-    _describe_node(node.near_fft, depth + 1, lines)
+    _describe_node(node.near_fft, depth + 1, lines, target)
     mt = node.middle_transpose
     lines.append(f"{pad}  MIDDLE matrix={mt.rows}x{mt.cols} twiddle_modulus={mt.twiddle_modulus} tile={mt.tile_rows}x{mt.tile_cols}")
-    _describe_node(node.far_child, depth + 1, lines)
+    _describe_node(node.far_child, depth + 1, lines, target)
     pot = node.post_transpose
     lines.append(f"{pad}  POST   matrix={pot.rows}x{pot.cols} tile={pot.tile_rows}x{pot.tile_cols}")
 
 
-def format_plan_summary(candidate: FFTPlanCandidate, *, index: int | None = None) -> str:
+def format_plan_summary(
+    candidate: FFTPlanCandidate, *, index: int | None = None, target: TargetProfile = DEFAULT_TARGET_PROFILE,
+) -> str:
     """Human-readable tree + choices + metrics dump -- everything a reader
     needs to understand *why* this candidate looks the way it does, not
     just its final cost number (section 13's own instruction: never an
-    opaque cost without showing the components)."""
+    opaque cost without showing the components).
+
+    `target`: ADDED 2026-09-22 (section 16 of the task this was built
+    from) -- forwarded to `_describe_node`/`_describe_persistent_leaf` so
+    a persistent leaf's own scratchpad estimate can be shown against a
+    real capacity, feasible/infeasible. Defaults to `DEFAULT_TARGET_
+    PROFILE`, matching every existing caller's implicit assumption."""
     lines: list[str] = []
     header = f"FFT N={candidate.n}{' (inverse)' if candidate.inverse else ''}"
     if index is not None:
@@ -1188,7 +1249,7 @@ def format_plan_summary(candidate: FFTPlanCandidate, *, index: int | None = None
         + (f" lane_variant={c.lane_variant}" if c.lane_variant is not None else "")
     )
     lines.append("")
-    _describe_node(candidate.plan.root, 1, lines)
+    _describe_node(candidate.plan.root, 1, lines, target)
     lines.append("")
     m = candidate.metrics
     lines.append("  estimated metrics:")
@@ -1201,6 +1262,7 @@ def format_plan_summary(candidate: FFTPlanCandidate, *, index: int | None = None
     lines.append(f"    max_scratchpad_bytes     = {m.max_scratchpad_bytes}")
     lines.append(f"    worst_worker_utilization = {m.worst_worker_utilization:.3f}")
     lines.append(f"    total_worker_stage_batches = {m.total_worker_stage_batches}")
+    lines.append(f"    physical_total_worker_stage_batches = {m.physical_total_worker_stage_batches}")
     lines.append(f"    radix_risk_score         = {m.radix_risk_score}")
     lines.append(f"    estimated_cost           = {m.estimated_cost:.1f}")
     return "\n".join(lines)

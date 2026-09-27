@@ -1,0 +1,9 @@
+planner,status,reason,count
+gpu-clfft,spilling,(no diagnostics),9
+gpu-clfft,compile_failure,build failed:  unreachable\n            if True:  # batch 62 scope\n               ^\n/tmp/fft_spill_probe_97zuk1sa/stage/gen.mojo:119791:16,1
+gpu-clfft,compile_failure,build failed: e/gen.mojo:112960:16: warning: 'if' condition always evaluates to 'True'; 'else' branch is unreachable\n            if True:  ,1
+gpu-rocfft-default,spilling,(no diagnostics),13
+gpu-rocfft-default,compile_failure,build failed: ways evaluates to 'True'; 'else' branch is unreachable\n            if True:  # batch 191 scope\n               ^\n/tmp/fft_sp,1
+gpu-vkfft,spilling,(no diagnostics),14
+gpu-vkfft,compile_failure,build failed: ijdseev/stage/gen.mojo:119791:16: warning: 'if' condition always evaluates to 'True'; 'else' branch is unreachable\n          ,1
+m2ndp-native,spilling,(no diagnostics),2

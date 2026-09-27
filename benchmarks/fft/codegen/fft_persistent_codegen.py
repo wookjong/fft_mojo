@@ -77,9 +77,21 @@ from codegen.common import (
     emit_reference_check as _emit_reference_check,
     spad as _spad,
 )
-from codegen.fft_codegen import _emit_stage_batches, _stage_compute_lanes
+from codegen.fft_codegen import (
+    _emit_stage_batches,
+    _stage_compute_lanes,
+    emit_kernel as _emit_kernel,
+    generate_fft_kernel as _generate_fft_kernel,
+)
+from codegen.fft_cooperative_codegen import generate_cooperative_fft_kernel as _generate_cooperative_fft_kernel
 from planning.core.fft_plan_core import FFTCodegenPlan, FFTStagePlan, SIMDBatchPlan
-from planning.execution.fft_plan_persistent import num_rounds, worker_waves as _worker_waves
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from planning.execution.fft_plan_persistent import (
+    PersistentTailHybridPlan,
+    flatten_logical_workers_to_physical_lanes,
+    num_rounds,
+    worker_waves as _worker_waves,
+)
 
 # REVISED 2026-09-14 (physical-lane strip-mining -- see docs/
 # physical_lane_strip_mining.md): three execution-lowering strategies for
@@ -152,6 +164,20 @@ from planning.execution.fft_plan_persistent import num_rounds, worker_waves as _
 # GPU-planner metadata even though M2NDP's own physical execution width
 # is always 8.
 ExecutionMode = Literal["wave", "fused", "physical"]
+
+# P2.3 (persistent preload/writeback copy strategy -- see docs/
+# priority2_execution_strategies.md). "scalar" (the default, unchanged):
+# `emit_bulk_copy_phase`'s own original per-lane strided one-element-at-a-
+# time copy (`i = worker_id`, `i += workers_per_group`). "vectorized_
+# contiguous": each physical lane instead owns one CONTIGUOUS block of
+# `ceil(length / workers_per_group)` elements, copied `vector_width`-wide
+# at a time (real load/store idiom `codegen.fft_codegen._emit_load`/
+# `_emit_store` already use elsewhere in this project, `.load[width=V]`/
+# inferred-width `.store`, never a new one), with a scalar tail for
+# `length`s that don't divide evenly. See `emit_bulk_copy_phase`'s own
+# docstring for why changing the lane<->index mapping this way is
+# provably correctness-preserving.
+CopyMode = Literal["scalar", "vectorized_contiguous"]
 
 
 def _worker_body(
@@ -296,18 +322,27 @@ def _flatten_to_physical_lanes(
     already fully independent within one stage -- see `emit_stage_phase`'s
     own docstring for why (disjoint scratchpad offsets, no same-stage
     producer/consumer relationship between logical workers at all).
+
+    REVISED 2026-09-22: the actual flattening (the loop over `logical_
+    worker_id` below) moved to `planning.execution.fft_plan_persistent.
+    flatten_logical_workers_to_physical_lanes` -- a pure, planning-layer
+    function `planning.search.fft_cost_model` now calls too, so a
+    persistent stage's own cost estimate is measured against the exact
+    same physical-lane mapping this codegen renders, instead of a second,
+    independently-computed copy silently drifting out of sync with it (see
+    docs/logical_vs_physical_cost_model.md). This function is now a thin,
+    codegen-local wrapper (assert the plan-shape invariants codegen itself
+    depends on, unpack `stage.persistent_vector_batches`/`_scalar_batches`,
+    delegate) -- byte-identical output to before this refactor for every
+    existing caller.
     """
     assert stage.persistent_vector_batches is not None
     assert stage.persistent_scalar_batches is not None
     assert len(stage.persistent_vector_batches) == workers_per_fft
-    physical: list[list[SIMDBatchPlan]] = [[] for _ in range(workers_per_group)]
-    for logical_worker_id in range(workers_per_fft):
-        lane = logical_worker_id % workers_per_group
-        physical[lane].extend(stage.persistent_vector_batches[logical_worker_id])
-    if stage.persistent_scalar_batches:
-        tail_lane = (workers_per_fft - 1) % workers_per_group
-        physical[tail_lane].extend(stage.persistent_scalar_batches)
-    return tuple(tuple(bucket) for bucket in physical)
+    return flatten_logical_workers_to_physical_lanes(
+        stage.persistent_vector_batches, stage.persistent_scalar_batches,
+        workers_per_fft=workers_per_fft, workers_per_group=workers_per_group,
+    )
 
 
 def _emit_physical_lane_dispatch(
@@ -561,17 +596,52 @@ def emit_bulk_copy_phase(
     to_scratchpad: bool,
     buffer_name: str,
     bump_round: bool,
+    copy_mode: CopyMode = "scalar",
+    vector_width: int = 4,
 ) -> tuple[str, list[str]]:
-    """Preload (`to_scratchpad=True`) or writeback (`False`): every worker
-    in an active software group copies a disjoint, strided slice
-    (`worker_id, worker_id + workers_per_group, ...`) of this round's own
-    logical block between DRAM (`block_base = logical_block * length`,
-    natural order -- no FFT permutation on either side) and that group's
-    own scratchpad bank. Deliberately fully scalar (one element at a
-    time, `.load[width=1]`/`.store`) rather than vectorized: correctness-
-    first per docs/persistent_leaf_design.md's own priority order --
-    vectorizing this loop is a real follow-up performance opportunity,
-    not attempted here.
+    """Preload (`to_scratchpad=True`) or writeback (`False`) between DRAM
+    (`block_base = logical_block * length`, natural order -- no FFT
+    permutation on either side) and that group's own scratchpad bank.
+
+    `copy_mode="scalar"` (the default, byte-identical to every plan
+    rendered before this parameter existed): every worker in an active
+    software group copies a disjoint, STRIDED slice (`worker_id, worker_
+    id + workers_per_group, ...`), one element at a time (`.load[width=
+    1]`/`.store`). Deliberately fully scalar -- correctness-first per
+    docs/persistent_leaf_design.md's own priority order.
+
+    `copy_mode="vectorized_contiguous"` (P2.3 -- see docs/
+    priority2_execution_strategies.md): each worker instead owns one
+    CONTIGUOUS block of `ceil(length / workers_per_group)` elements
+    (`chunk_start = worker_id * chunk`, clamped to `length`), copied
+    `vector_width` elements at a time via the SAME `.load[width=V]`/
+    inferred-width `.store` idiom `codegen.fft_codegen._emit_load`/
+    `_emit_store` already use for FFT-stage operands elsewhere in this
+    project (never a new one), with a scalar (`width=1`) tail loop for
+    whatever doesn't divide evenly by `vector_width`. `chunk` is a
+    PYTHON-level (compile-time) constant -- `workers_per_group` and
+    `plan.length` are both already known at codegen time -- so no new
+    runtime division is introduced; only `worker_id * chunk` (one
+    multiply) is a runtime expression, exactly as cheap as the scalar
+    mode's own `i = worker_id` seed.
+
+    CORRECTNESS: changing WHICH physical lane copies WHICH element index
+    is provably safe regardless of `copy_mode` -- every stage that later
+    reads this scratchpad bank addresses it by the element's own ABSOLUTE
+    index (`_make_load`'s `force_scratchpad` branch, `base_offset`
+    already an absolute position within this kernel -- see fft_plan_core.
+    AddressMapping's own docstring), never by which lane originally wrote
+    it. Both modes are also full BIJECTIONS on `[0, length)` by
+    construction (scalar: `{worker_id + k*workers_per_group : k >= 0,
+    result < length}` partitions cleanly by residue mod `workers_per_
+    group`; vectorized_contiguous: `[worker_id*chunk, min(length, (worker_
+    id+1)*chunk))` partitions cleanly by consecutive non-overlapping
+    ranges) -- every index visited by exactly one lane, in either mode.
+    Ping-pong buffer selection, twiddle placement, and preload-before-
+    compute/writeback-after-compute ordering (`device_main`'s own
+    `launch_parallel` sequence) are completely unaffected by this
+    parameter -- it only changes the ADDRESS PATTERN and INSTRUCTION
+    WIDTH of one bulk copy, nothing about the FFT math around it.
 
     `bump_round`: writeback only -- after this group's own real copy work
     is done, worker 0 advances the *this physical unit's own* round
@@ -592,20 +662,56 @@ def emit_bulk_copy_phase(
     )
     e.add("        var logical_block = round_base + software_group_id")
     e.add(f"        var block_base = logical_block * {plan.length}")
-    e.add("        var i = worker_id")
-    e.add(f"        while i < {plan.length}:")
     buf = _spad(plan.kernel_name, buffer_name)
-    if to_scratchpad:
-        e.add("            var vr = p.input_real_base.load[width=1](block_base + i)[0]")
-        e.add("            var vi = p.input_imag_base.load[width=1](block_base + i)[0]")
-        e.add(f"            {buf}.store(i, vr)")
-        e.add(f"            {buf}.store({plan.length} + i, vi)")
+
+    if copy_mode == "scalar":
+        e.add("        var i = worker_id")
+        e.add(f"        while i < {plan.length}:")
+        if to_scratchpad:
+            e.add("            var vr = p.input_real_base.load[width=1](block_base + i)[0]")
+            e.add("            var vi = p.input_imag_base.load[width=1](block_base + i)[0]")
+            e.add(f"            {buf}.store(i, vr)")
+            e.add(f"            {buf}.store({plan.length} + i, vi)")
+        else:
+            e.add(f"            var vr = {buf}.load[DType.float32, 1](i)[0]")
+            e.add(f"            var vi = {buf}.load[DType.float32, 1]({plan.length} + i)[0]")
+            e.add("            p.output_real_base.store(block_base + i, vr)")
+            e.add("            p.output_imag_base.store(block_base + i, vi)")
+        e.add(f"            i += {workers_per_group}")
+    elif copy_mode == "vectorized_contiguous":
+        chunk = -(-plan.length // workers_per_group)  # Python-level ceil division
+        e.add(f"        var chunk_start = worker_id * {chunk}")
+        e.add(f"        var chunk_end = chunk_start + {chunk}")
+        e.add(f"        if chunk_end > {plan.length}:")
+        e.add(f"            chunk_end = {plan.length}")
+        e.add("        var i = chunk_start")
+        e.add(f"        while i + {vector_width} <= chunk_end:")
+        if to_scratchpad:
+            e.add(f"            var vr = p.input_real_base.load[width={vector_width}](block_base + i)")
+            e.add(f"            var vi = p.input_imag_base.load[width={vector_width}](block_base + i)")
+            e.add(f"            {buf}.store(i, vr)")
+            e.add(f"            {buf}.store({plan.length} + i, vi)")
+        else:
+            e.add(f"            var vr = {buf}.load[DType.float32, {vector_width}](i)")
+            e.add(f"            var vi = {buf}.load[DType.float32, {vector_width}]({plan.length} + i)")
+            e.add("            p.output_real_base.store(block_base + i, vr)")
+            e.add("            p.output_imag_base.store(block_base + i, vi)")
+        e.add(f"            i += {vector_width}")
+        e.add("        while i < chunk_end:")
+        if to_scratchpad:
+            e.add("            var svr = p.input_real_base.load[width=1](block_base + i)[0]")
+            e.add("            var svi = p.input_imag_base.load[width=1](block_base + i)[0]")
+            e.add(f"            {buf}.store(i, svr)")
+            e.add(f"            {buf}.store({plan.length} + i, svi)")
+        else:
+            e.add(f"            var svr = {buf}.load[DType.float32, 1](i)[0]")
+            e.add(f"            var svi = {buf}.load[DType.float32, 1]({plan.length} + i)[0]")
+            e.add("            p.output_real_base.store(block_base + i, svr)")
+            e.add("            p.output_imag_base.store(block_base + i, svi)")
+        e.add("            i += 1")
     else:
-        e.add(f"            var vr = {buf}.load[DType.float32, 1](i)[0]")
-        e.add(f"            var vi = {buf}.load[DType.float32, 1]({plan.length} + i)[0]")
-        e.add("            p.output_real_base.store(block_base + i, vr)")
-        e.add("            p.output_imag_base.store(block_base + i, vi)")
-    e.add(f"            i += {workers_per_group}")
+        raise ValueError(f"unknown copy_mode {copy_mode!r}")
+
     if bump_round:
         tracker = _round_tracker_name(plan)
         e.add("        if worker_id == 0:")
@@ -630,6 +736,7 @@ def emit_persistent_kernel_struct(
     e: Emitter, *, plan: FFTCodegenPlan, num_logical_blocks: int,
     compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
     mode: ExecutionMode = "physical",
+    copy_mode: CopyMode = "scalar", vector_width: int = 4,
 ) -> None:
     """Append one `NDPTask` struct for a persistent-software-workgroup FFT
     leaf to `e`: `Params`, `buf_a`/`buf_b`/`round_tracker` scratchpad,
@@ -729,6 +836,7 @@ def emit_persistent_kernel_struct(
         plan=plan, name="preload", software_group_count=software_group_count,
         num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
         to_scratchpad=True, buffer_name=buffer_names[0], bump_round=False,
+        copy_mode=copy_mode, vector_width=vector_width,
     )
     e.lines.extend(lines)
 
@@ -748,6 +856,7 @@ def emit_persistent_kernel_struct(
         plan=plan, name="writeback", software_group_count=software_group_count,
         num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
         to_scratchpad=False, buffer_name=final_buffer, bump_round=True,
+        copy_mode=copy_mode, vector_width=vector_width,
     )
     e.lines.extend(lines)
 
@@ -774,6 +883,7 @@ def generate_persistent_fft_kernel(
     plan: FFTCodegenPlan, *, num_logical_blocks: int,
     compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
     mode: ExecutionMode = "physical",
+    copy_mode: CopyMode = "scalar", vector_width: int = 4,
 ) -> str:
     """Render a full persistent-software-workgroup FFT: `emit_persistent_
     kernel_struct`'s one `NDPTask` struct, plus this function's own
@@ -787,6 +897,11 @@ def generate_persistent_fft_kernel(
     `mode`: forwarded to `emit_persistent_kernel_struct`/`emit_stage_
     phase` -- see this module's own top-of-file `ExecutionMode` docstring
     for what `"wave"`/`"fused"`/`"physical"` each render.
+
+    `copy_mode`/`vector_width` (P2.3): forwarded to `emit_persistent_
+    kernel_struct`/`emit_bulk_copy_phase` -- see that function's own
+    docstring for `"scalar"` (default, unchanged) vs. `"vectorized_
+    contiguous"`.
     """
     e = Emitter()
     _emit_prelude(e)
@@ -795,7 +910,7 @@ def generate_persistent_fft_kernel(
     emit_persistent_kernel_struct(
         e, plan=plan, num_logical_blocks=num_logical_blocks,
         compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
-        mode=mode,
+        mode=mode, copy_mode=copy_mode, vector_width=vector_width,
     )
 
     host = plan.host
@@ -866,6 +981,251 @@ def generate_persistent_fft_kernel(
         ref_imag="ref_imag",
         tolerance=host.tolerance,
         label="persistent FFT",
+    )
+
+    return e.text()
+
+
+def _emit_persistent_buffers_and_launch(
+    e: Emitter, *, plan: FFTCodegenPlan, num_logical_blocks: int, prefix: str,
+) -> None:
+    """The exact buffer-alloc/pool-alignment/launch/reference-check block
+    `generate_persistent_fft_kernel`'s own host `main()` already emits,
+    factored out so `generate_persistent_tail_hybrid_kernel` (P2.4) can
+    render it into a SHARED host `main()` alongside a second, independent
+    kernel's own block -- `prefix` (e.g. `"p_"`) namespaces every host
+    variable so the two blocks never collide in that shared scope. Emits
+    byte-identical Mojo (modulo the variable-name prefix) to the pre-
+    existing single-kernel host body."""
+    host = plan.host
+    e.add(f"    var {prefix}total_elems = {host.total_elems}")
+    e.add(f"    var {prefix}input_real = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add(f"    var {prefix}input_imag = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add(f"    var {prefix}output_real = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add(f"    var {prefix}output_imag = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add(f"    var {prefix}ref_real = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add(f"    var {prefix}ref_imag = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add()
+    e.add(f"    for i in range({prefix}total_elems):")
+    e.add(f"        {prefix}input_real[i] = Float32(random_float64(-1.0, 1.0))")
+    e.add(f"        {prefix}input_imag[i] = Float32(random_float64(-1.0, 1.0))")
+    e.add(f"        {prefix}output_real[i] = Float32(0)")
+    e.add(f"        {prefix}output_imag[i] = Float32(0)")
+    e.add(f"        {prefix}ref_real[i] = Float32(0)")
+    e.add(f"        {prefix}ref_imag[i] = Float32(0)")
+    e.add()
+
+    e.add(f"    var {prefix}pool_elems = {host.pool_elems}")
+    e.add(f"    var {prefix}raw_pool = cxl_alloc[Float32]({prefix}pool_elems + 64)")
+    e.add(f"    var {prefix}raw_addr = Int({prefix}raw_pool)")
+    e.add(f"    var {prefix}aligned_addr = ({prefix}raw_addr + 255) // 256 * 256")
+    e.add(f"    if {prefix}aligned_addr % 256 != 0:")
+    e.add(f'        print("[host] persistent pool alignment assertion failed:", {prefix}aligned_addr)')
+    e.add("        return")
+    e.add(
+        f"    var {prefix}uthread_pool = UnsafePointer[Float32, MutAnyOrigin]"
+        f"(unsafe_from_address={prefix}aligned_addr)"
+    )
+    e.add()
+
+    e.add(f"    var {prefix}rc = {plan.kernel_name}.launch(")
+    e.add(f"        PooledRange.over({prefix}uthread_pool, {prefix}pool_elems),")
+    e.add(
+        f"        {plan.kernel_name}Params({prefix}input_real, {prefix}input_imag, "
+        f"{prefix}output_real, {prefix}output_imag),"
+    )
+    e.add("    )")
+    e.add()
+    e.add(f"    if {prefix}rc != 0:")
+    e.add(f'        print("[host] persistent FFT failed, exit", {prefix}rc)')
+    e.add("        return")
+    e.add()
+
+    _emit_reference_check(
+        e, n=plan.length, batch_count=num_logical_blocks, inverse=plan.inverse,
+        input_real=f"{prefix}input_real", input_imag=f"{prefix}input_imag",
+        output_real=f"{prefix}output_real", output_imag=f"{prefix}output_imag",
+        ref_real=f"{prefix}ref_real", ref_imag=f"{prefix}ref_imag",
+        tolerance=host.tolerance, label="persistent-tail-hybrid: full rounds (persistent)",
+        var_prefix=prefix,
+    )
+
+
+def _emit_plain_tail_buffers_and_launch(
+    e: Emitter, *, plan: FFTCodegenPlan, batch_count: int, prefix: str, target: TargetProfile,
+) -> None:
+    """Host body for a `tail_plan` kernel (P2.4): mirrors `codegen.
+    fft_codegen.generate_fft_kernel`'s own host block (non-cooperative
+    tail -- no pool-alignment requirement at all, `plan.cooperation is
+    None`) or `codegen.fft_cooperative_codegen.generate_cooperative_fft_
+    kernel`'s own (cooperative tail -- the SAME interleave-chunk pool
+    alignment fix that module's own docstring documents, required
+    whenever `workers_per_fft > 1`), chosen by `plan.cooperation is not
+    None`, `prefix`-namespaced into the shared host `main()` alongside
+    `_emit_persistent_buffers_and_launch`'s own block. `batch_count`: the
+    number of LOGICAL replicas this tail kernel covers (`plan.total_
+    uthreads` for non-cooperative, already-physical `plan.total_uthreads
+    // plan.cooperation.workers_per_fft` for cooperative -- see
+    `CooperationPlan`'s own docstring for why those differ)."""
+    host = plan.host
+    e.add(f"    var {prefix}total_elems = {host.total_elems}")
+    e.add(f"    var {prefix}input_real = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add(f"    var {prefix}input_imag = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add(f"    var {prefix}output_real = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add(f"    var {prefix}output_imag = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add(f"    var {prefix}ref_real = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add(f"    var {prefix}ref_imag = cxl_alloc[Float32]({prefix}total_elems)")
+    e.add()
+    e.add(f"    for i in range({prefix}total_elems):")
+    e.add(f"        {prefix}input_real[i] = Float32(random_float64(-1.0, 1.0))")
+    e.add(f"        {prefix}input_imag[i] = Float32(random_float64(-1.0, 1.0))")
+    e.add(f"        {prefix}output_real[i] = Float32(0)")
+    e.add(f"        {prefix}output_imag[i] = Float32(0)")
+    e.add(f"        {prefix}ref_real[i] = Float32(0)")
+    e.add(f"        {prefix}ref_imag[i] = Float32(0)")
+    e.add()
+    e.add(f"    var {prefix}pool_elems = {host.pool_elems}")
+
+    if plan.cooperation is not None:
+        chunk_bytes = target.interleave_chunk_uthreads * target.uthread_bytes
+        pad_elems = chunk_bytes // 4
+        e.add(f"    var {prefix}pool_raw = cxl_alloc[Float32]({prefix}pool_elems + {pad_elems})")
+        e.add(f"    var {prefix}pool_raw_addr = Int({prefix}pool_raw)")
+        e.add(
+            f"    var {prefix}pool_addr = ({prefix}pool_raw_addr + {chunk_bytes - 1}) "
+            f"// {chunk_bytes} * {chunk_bytes}"
+        )
+        e.add(f"    if {prefix}pool_addr % {chunk_bytes} != 0:")
+        e.add(f'        print("[host] tail pool alignment assertion failed:", {prefix}pool_addr)')
+        e.add("        return")
+        e.add(
+            f"    var {prefix}uthread_pool = UnsafePointer[Float32, MutAnyOrigin]"
+            f"(unsafe_from_address={prefix}pool_addr)"
+        )
+    else:
+        e.add(f"    var {prefix}uthread_pool = cxl_alloc[Float32]({prefix}pool_elems)")
+    e.add()
+
+    e.add(f"    var {prefix}rc = {plan.kernel_name}.launch(")
+    e.add(f"        PooledRange.over({prefix}uthread_pool, {prefix}pool_elems),")
+    e.add(
+        f"        {plan.kernel_name}Params({prefix}input_real, {prefix}input_imag, "
+        f"{prefix}output_real, {prefix}output_imag),"
+    )
+    e.add("    )")
+    e.add()
+    e.add(f"    if {prefix}rc != 0:")
+    e.add(f'        print("[host] tail FFT failed, exit", {prefix}rc)')
+    e.add("        return")
+    e.add()
+
+    label = "persistent-tail-hybrid: tail (cooperative)" if plan.cooperation is not None else \
+        "persistent-tail-hybrid: tail (non-cooperative)"
+    _emit_reference_check(
+        e, n=plan.length, batch_count=batch_count, inverse=plan.inverse,
+        input_real=f"{prefix}input_real", input_imag=f"{prefix}input_imag",
+        output_real=f"{prefix}output_real", output_imag=f"{prefix}output_imag",
+        ref_real=f"{prefix}ref_real", ref_imag=f"{prefix}ref_imag",
+        tolerance=host.tolerance, label=label,
+        var_prefix=prefix,
+    )
+
+
+def generate_persistent_tail_hybrid_kernel(
+    hybrid: PersistentTailHybridPlan, *,
+    compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
+    mode: ExecutionMode = "physical", copy_mode: CopyMode = "scalar", vector_width: int = 4,
+    tail_compute_lanes: int | None = 4, tail_narrow_middle_stages: bool = True,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
+) -> str:
+    """P2.4: render `hybrid` (`planning.execution.fft_plan_persistent.
+    make_persistent_tail_hybrid_plan`'s own output) as ONE standalone
+    Mojo file. `hybrid.tail_strategy == "all_persistent"` (`hybrid.
+    tail_plan is None`) degenerates to a PLAIN call to `generate_
+    persistent_fft_kernel` -- byte-identical to every plan rendered
+    before this function existed, for the default strategy.
+
+    Otherwise: TWO completely independent `NDPTask` structs (`hybrid.
+    persistent_plan` via `emit_persistent_kernel_struct`, `hybrid.
+    tail_plan` via `codegen.fft_codegen.emit_kernel` -- the SAME struct-
+    only emitter `fft_transpose_codegen.generate_recursive_fft_kernels`
+    already reuses for kernel-chaining, confirmed to already handle a
+    cooperative `plan.cooperation is not None` shape too, since `fft_
+    cooperative_codegen.generate_cooperative_fft_kernel` itself calls the
+    exact same `_emit_params_struct`/`_emit_task_struct` pair `emit_
+    kernel` wraps -- see that module's own `generate_cooperative_fft_
+    kernel` body), TWO separate DRAM buffer sets (`p_*`/`t_*`-prefixed,
+    see `_emit_persistent_buffers_and_launch`/`_emit_plain_tail_buffers_
+    and_launch`), TWO separate `.launch()` calls, and TWO separate
+    reference checks -- one shared host `main()`. No pointer-offset
+    arithmetic between the two buffer sets is used anywhere (an
+    unverified Mojo idiom this project's own codegen has never used
+    elsewhere) -- the two kernels' own logical block ranges never need to
+    share one contiguous DRAM array at all, since neither reads the
+    other's output.
+    """
+    if hybrid.tail_plan is None:
+        assert hybrid.persistent_plan is not None
+        return generate_persistent_fft_kernel(
+            hybrid.persistent_plan, num_logical_blocks=hybrid.full_blocks,
+            compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+            mode=mode, copy_mode=copy_mode, vector_width=vector_width,
+        )
+
+    if hybrid.persistent_plan is None:
+        # `full_blocks == 0` (fewer than target.num_ndp_units logical
+        # blocks total): no persistent portion at all -- render `tail_
+        # plan` as an ordinary standalone kernel via whichever existing
+        # generator matches its own shape, exactly as if the caller had
+        # asked for that strategy alone (never a persistent struct/launch
+        # for zero replicas).
+        if hybrid.tail_plan.cooperation is not None:
+            return _generate_cooperative_fft_kernel(
+                hybrid.tail_plan, compute_lanes=tail_compute_lanes, target=target,
+            )
+        return _generate_fft_kernel(
+            hybrid.tail_plan, compute_lanes=tail_compute_lanes,
+            narrow_middle_stages=tail_narrow_middle_stages,
+        )
+
+    e = Emitter()
+    _emit_prelude(e)
+    e.add(f"comptime N = {hybrid.persistent_plan.length}")
+    e.add()
+    emit_persistent_kernel_struct(
+        e, plan=hybrid.persistent_plan, num_logical_blocks=hybrid.full_blocks,
+        compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+        mode=mode, copy_mode=copy_mode, vector_width=vector_width,
+    )
+    _emit_kernel(
+        e, plan=hybrid.tail_plan, compute_lanes=tail_compute_lanes,
+        narrow_middle_stages=tail_narrow_middle_stages,
+    )
+
+    if hybrid.tail_plan.cooperation is not None:
+        tail_batch_count = hybrid.tail_plan.total_uthreads // hybrid.tail_plan.cooperation.workers_per_fft
+    else:
+        tail_batch_count = hybrid.tail_plan.total_uthreads
+    assert tail_batch_count == hybrid.tail_blocks, (
+        f"tail_plan's own logical replica count ({tail_batch_count}) != hybrid.tail_blocks "
+        f"({hybrid.tail_blocks}) -- inconsistent PersistentTailHybridPlan"
+    )
+
+    e.add("def main() raises:")
+    e.add(f"    if {hybrid.persistent_plan.kernel_name}.emit_ir_if_asked():")
+    e.add("        return")
+    e.add(f"    if {hybrid.tail_plan.kernel_name}.emit_ir_if_asked():")
+    e.add("        return")
+    e.add()
+    e.add("    seed(0)")
+    e.add()
+
+    _emit_persistent_buffers_and_launch(
+        e, plan=hybrid.persistent_plan, num_logical_blocks=hybrid.full_blocks, prefix="p_",
+    )
+    e.add()
+    _emit_plain_tail_buffers_and_launch(
+        e, plan=hybrid.tail_plan, batch_count=hybrid.tail_blocks, prefix="t_", target=target,
     )
 
     return e.text()
