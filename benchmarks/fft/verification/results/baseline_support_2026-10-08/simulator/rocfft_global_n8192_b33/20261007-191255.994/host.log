@@ -1,0 +1,10 @@
+warning: <unknown>:0:0: in function rocfft_global_n8192_b33::FFTRocfftDefaultM2ndp::stage_0() void (): M2NDP kernel spills to memory (16-byte frame); spills go to DRAM
+
+warning: <unknown>:0:0: in function rocfft_global_n8192_b33::FFTRocfftDefaultM2ndp::stage_1() void (): M2NDP kernel spills to memory (320-byte frame); spills go to DRAM
+
+warning: <unknown>:0:0: in function rocfft_global_n8192_b33::FFTRocfftDefaultM2ndp::stage_2() void (): M2NDP kernel spills to memory (368-byte frame); spills go to DRAM
+
+warning: <unknown>:0:0: in function rocfft_global_n8192_b33::FFTRocfftDefaultM2ndp::stage_3() void (): M2NDP kernel spills to memory (400-byte frame); spills go to DRAM
+
+warning: <unknown>:0:0: in function rocfft_global_n8192_b33::FFTRocfftDefaultM2ndp::stage_4() void (): M2NDP kernel spills to memory (320-byte frame); spills go to DRAM
+

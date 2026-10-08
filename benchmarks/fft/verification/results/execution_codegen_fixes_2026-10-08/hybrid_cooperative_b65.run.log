@@ -1,0 +1,35 @@
+#### mojo-ndp ################################################################
+#  Workload     /tmp/fft-execution-hybrid_cooperative_b65 2c379c742f
+#  Config       third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config 8309eda294
+#  Machine      uthread_span  32 B  (vector_reg 32 B)
+#  Toolchain    mojo          1.0.0b2.dev2026061203 (2cf4d08a)
+#               llc           23.1.0-rc1
+#  Simulator    m2ndp_run     0349fff1f293
+#  Third-party  m2ndp-detour  pin unknown  (not checked out)
+#               llvm-project  pin unknown  (not checked out)
+#               LLVM_RELEASE  
+#  Source       ?             
+##############################################################################
+warning: <unknown>:0:0: in function hybrid_cooperative_b65::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (176-byte frame); spills go to DRAM
+
+[host] persistent-tail-hybrid: full rounds (persistent) verification passed
+warning: <unknown>:0:0: in function hybrid_cooperative_b65::TailFFT::stage_0() void (): M2NDP kernel spills to memory (144-byte frame); spills go to DRAM
+
+[host] persistent-tail-hybrid: tail (cooperative) verification passed
+Terminated
+[mojo-ndp] Simulated 21281 NDP cycles over 13 kernel launches (10.64 us)
+[mojo-ndp] 
+[mojo-ndp]   launch          issued   arrived   started  finished  notified
+[mojo-ndp]   0                    0        70        70     13606     13678
+[mojo-ndp]   1                13678     13748     13748     21209     21281
+[mojo-ndp] 
+[mojo-ndp]   kernel                      calls      exec      gap
+[mojo-ndp]   preload()                       2      2651      112
+[mojo-ndp]   stage_0()                       3      7889     1224
+[mojo-ndp]   stage_1()                       3      3627      392
+[mojo-ndp]   stage_2()                       3      2232      442
+[mojo-ndp]   writeback()                     2      1457      228
+[mojo-ndp]   total                          13     17856     2398
+[mojo-ndp] 
+[mojo-ndp] DRAM bandwidth utilisation 0.8 % (mean of 28 channels, 0.8-1.0 %)
+[mojo-ndp] Results in "/fft-work/verification/results/execution_codegen_fixes_2026-10-08/simulator/hybrid_cooperative_b65/fft-execution-hybrid_cooperative_b65_M2NDP/20261007-154240.083"

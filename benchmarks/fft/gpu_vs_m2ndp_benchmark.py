@@ -66,7 +66,7 @@ from planning.strategies.fft_plan_recursive import (
     make_recursive_transpose_plan,
 )
 from planning.gpu_baseline import clfft, rocfft, rocfft_default, vkfft
-from planning.gpu_baseline.common import BaselineResult, BaselineStatus
+from planning.gpu_baseline.common import BaselineResult, BaselineStatus, compute_lowering_overhead, reconstruct_gpu_logical_plan
 from planning.diagnostics.spill_probe import (
     _NDP_CYCLE_RE,
     _TASK_REGISTERED_RE,
@@ -157,6 +157,14 @@ class PlanResult:
     transpose_count: object = "not_available"
     large_twiddle_count: object = "not_available"
     numeric_max_error: object = "not_available"
+    gpu_kernel_count: object = "not_available"
+    physical_plan_nodes: object = "not_available"
+    added_plan_nodes: object = "not_available"
+    added_transpose_nodes: object = "not_available"
+    gpu_full_array_bytes: object = "not_available"
+    m2ndp_full_array_bytes: object = "not_available"
+    additional_full_array_bytes: object = "not_available"
+    full_array_traffic_ratio: object = "not_available"
     diagnostics: str = ""
 
 
@@ -229,6 +237,7 @@ def static_diagnostics(plan: RecursiveFFTPlan) -> dict:
 
 def get_plan(
     planner: str, n: int, target: TargetProfile, *, batch: int, inverse: bool,
+    baseline_results: list[BaselineResult] | None = None,
 ) -> tuple[bool, RecursiveFFTPlan | None, str]:
     """Returns `(ok, plan_or_None, diagnostics)` -- `diagnostics` explains
     an unsupported/failed planning attempt; empty string on success.
@@ -246,6 +255,7 @@ def get_plan(
         try:
             plan = make_recursive_transpose_plan(
                 n, scratchpad_byte_budget=4096, simd_lanes=8, inverse=inverse, batch=batch,
+                target=target,
                 spad_capacity_bytes=target.spad_capacity_bytes,
                 max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
                 cooperative_workers=None,
@@ -276,6 +286,8 @@ def get_plan(
         result: BaselineResult = getattr(module, entry_point)(n, batch=batch, inverse=inverse, target=target)
     except Exception as exc:  # noqa: BLE001
         return False, None, f"{planner} planning raised {type(exc).__name__}: {exc}"
+    if baseline_results is not None:
+        baseline_results.append(result)
     if result.status is not BaselineStatus.OK:
         return False, None, result.diagnostics
     assert isinstance(result.plan, RecursiveFFTPlan)
@@ -288,15 +300,33 @@ def run_one(
     build_timeout: float, run_timeout: float, seed: int,
     persistent_mode: str = "physical",
 ) -> PlanResult:
-    ok, plan, diag = get_plan(planner, n, target, batch=batch, inverse=inverse)
+    baseline_results: list[BaselineResult] = []
+    ok, plan, diag = get_plan(planner, n, target, batch=batch, inverse=inverse,
+                              baseline_results=baseline_results)
     if not ok:
-        return PlanResult(n=n, planner=planner, status="unsupported", diagnostics=diag)
+        refused = PlanResult(n=n, planner=planner, status="unsupported", diagnostics=diag)
+        if baseline_results:
+            try:
+                gpu = reconstruct_gpu_logical_plan(baseline_results[0])
+                refused.gpu_kernel_count = len(gpu)
+                refused.gpu_full_array_bytes = sum(k.gpu_global_read_bytes + k.gpu_global_write_bytes for k in gpu)
+            except ValueError:
+                pass  # unavailable GPU metadata retains the explicit sentinel
+        return refused
 
     result = PlanResult(n=n, planner=planner, status="unsupported")
     result.diagnostics = ""
     diags = static_diagnostics(plan)
     for k, v in diags.items():
         setattr(result, k, v)
+
+    if baseline_results:
+        from dataclasses import asdict
+        try:
+            for key, value in asdict(compute_lowering_overhead(baseline_results[0])).items():
+                setattr(result, key, value)
+        except ValueError as exc:
+            result.diagnostics += f"original GPU accounting unavailable: {exc}; "
 
     # Correctness: the Python-side numeric oracle, no toolchain needed --
     # verification.verify_fft_recursive.run_recursive_plan re-executes the
@@ -365,7 +395,16 @@ CSV_FIELDS = [
     "n", "planner", "status", "correct", "spill", "measured_total_cycles",
     "radix_sequence", "kernel_partition", "num_kernels", "execution_strategy",
     "kernel_cycles", "scratchpad_uthreads", "dram_read_bytes", "dram_write_bytes",
-    "transpose_count", "large_twiddle_count", "numeric_max_error", "diagnostics",
+    "transpose_count", "large_twiddle_count", "numeric_max_error",
+    "gpu_kernel_count",
+    "physical_plan_nodes",
+    "added_plan_nodes",
+    "added_transpose_nodes",
+    "gpu_full_array_bytes",
+    "m2ndp_full_array_bytes",
+    "additional_full_array_bytes",
+    "full_array_traffic_ratio",
+    "diagnostics",
 ]
 
 

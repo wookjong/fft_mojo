@@ -1,0 +1,172 @@
+[
+  {
+    "module": "verify_fft_cooperative_partition_modes",
+    "exit_code": 0,
+    "seconds": 12.71
+  },
+  {
+    "module": "verify_fft_cooperative_workers",
+    "exit_code": 0,
+    "seconds": 8.16
+  },
+  {
+    "module": "verify_fft_execution_cost",
+    "exit_code": 0,
+    "seconds": 3.53
+  },
+  {
+    "module": "verify_fft_execution_invariants",
+    "exit_code": 0,
+    "seconds": 13.04
+  },
+  {
+    "module": "verify_fft_execution_option_search",
+    "exit_code": 0,
+    "seconds": 26.49
+  },
+  {
+    "module": "verify_fft_kernel_registration",
+    "exit_code": 0,
+    "seconds": 16.6
+  },
+  {
+    "module": "verify_fft_launch_support",
+    "exit_code": 0,
+    "seconds": 2.38
+  },
+  {
+    "module": "verify_fft_mechanism_aware_cost",
+    "exit_code": 0,
+    "seconds": 0.68
+  },
+  {
+    "module": "verify_fft_ndp_cycle_parsing",
+    "exit_code": 0,
+    "seconds": 0.64
+  },
+  {
+    "module": "verify_fft_persistent",
+    "exit_code": 0,
+    "seconds": 157.94
+  },
+  {
+    "module": "verify_fft_persistent_copy_modes",
+    "exit_code": 0,
+    "seconds": 3.95
+  },
+  {
+    "module": "verify_fft_persistent_plan_options",
+    "exit_code": 0,
+    "seconds": 8.06
+  },
+  {
+    "module": "verify_fft_persistent_search",
+    "exit_code": 0,
+    "seconds": 3.31
+  },
+  {
+    "module": "verify_fft_persistent_tail_hybrid",
+    "exit_code": 0,
+    "seconds": 2.2
+  },
+  {
+    "module": "verify_fft_physical_lane_cost_model",
+    "exit_code": 0,
+    "seconds": 2.44
+  },
+  {
+    "module": "verify_fft_physical_lane_mapping",
+    "exit_code": 0,
+    "seconds": 0.81
+  },
+  {
+    "module": "verify_fft_plan",
+    "exit_code": 0,
+    "seconds": 141.38
+  },
+  {
+    "module": "verify_fft_recursive_target",
+    "exit_code": 0,
+    "seconds": 3.91
+  },
+  {
+    "module": "verify_fft_search",
+    "exit_code": 0,
+    "seconds": 3.71
+  },
+  {
+    "module": "verify_fft_unit_utilization",
+    "exit_code": 0,
+    "seconds": 92.91
+  },
+  {
+    "module": "verify_gpu_baseline",
+    "exit_code": 0,
+    "seconds": 5.98
+  },
+  {
+    "module": "verify_gpu_baseline_clfft_m2ndp_scratchpad",
+    "exit_code": 0,
+    "seconds": 3.64
+  },
+  {
+    "module": "verify_gpu_baseline_golden",
+    "exit_code": 0,
+    "seconds": 1.27
+  },
+  {
+    "module": "verify_gpu_baseline_m2ndp_adapted",
+    "exit_code": 0,
+    "seconds": 487.53
+  },
+  {
+    "module": "verify_gpu_baseline_rocfft_half_lds",
+    "exit_code": 0,
+    "seconds": 1.46
+  },
+  {
+    "module": "verify_gpu_baseline_rocfft_large1d",
+    "exit_code": 0,
+    "seconds": 13.56
+  },
+  {
+    "module": "verify_gpu_baseline_source_fidelity",
+    "exit_code": 0,
+    "seconds": 92.0
+  },
+  {
+    "module": "verify_gpu_baseline_vkfft_m2ndp_scratchpad",
+    "exit_code": 0,
+    "seconds": 2.14
+  },
+  {
+    "module": "verify_gpu_baseline_vkfft_multipass",
+    "exit_code": 0,
+    "seconds": 19.31
+  },
+  {
+    "module": "verify_gpu_execution_report",
+    "exit_code": 0,
+    "seconds": 2.22
+  },
+  {
+    "module": "verify_gpu_execution_semantics",
+    "exit_code": 0,
+    "seconds": 1.56
+  },
+  {
+    "module": "verify_gpu_m2ndp_execution_mapping",
+    "exit_code": 0,
+    "seconds": 0.61
+  },
+  {
+    "module": "verify_gpu_original_plan",
+    "exit_code": 0,
+    "seconds": 3.16
+  },
+  {
+    "module": "verify_stage_active_workers",
+    "exit_code": 0,
+    "seconds": 0.87
+  }
+]

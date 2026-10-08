@@ -1,0 +1,9 @@
+{
+  "name": "plain_cap1_n64_b64",
+  "config": "M2NDP",
+  "build_returncode": 0,
+  "host_api_bridge": "PooledRange bytes -> MappedDomain microthread count; device code unchanged",
+  "host_link_addition": "libm for the independent DFT reference",
+  "run_returncode": 0,
+  "verified": true
+}

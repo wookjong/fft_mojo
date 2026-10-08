@@ -1,0 +1,16 @@
+.....F....
+======================================================================
+FAIL: test_hybrid_forward_inverse_with_resource_capped_tail_rounds (__main__.ExecutionOptionSearchTests.test_hybrid_forward_inverse_with_resource_capped_tail_rounds)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\james\OneDrive\바탕 화면\26-여름\M2NDP\mojo-m2ndp\benchmarks\fft\verification\verify_fft_execution_option_search.py", line 93, in test_hybrid_forward_inverse_with_resource_capped_tail_rounds
+    self.assertEqual({c.choices.tail_strategy for c in hybrids}, {"noncoop_tail", "cooperative_tail"})
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Items in the second set but not the first:
+'cooperative_tail'
+'noncoop_tail'
+
+----------------------------------------------------------------------
+Ran 10 tests in 17.213s
+
+FAILED (failures=1)

@@ -1,0 +1,31 @@
+#### mojo-ndp ################################################################
+#  Workload     /tmp/fft-execution-persistent_wave_rtx3060_inverse_b57 790d7ceeaf
+#  Config       third_party/m2ndp-detour/config/performance/M2NDP_RTX3060/m2ndp.config c7f80eb4b0
+#  Machine      uthread_span  32 B  (vector_reg 32 B)
+#  Toolchain    mojo          1.0.0b2.dev2026061203 (2cf4d08a)
+#               llc           23.1.0-rc1
+#  Simulator    m2ndp_run     0349fff1f293
+#  Third-party  m2ndp-detour  pin unknown  (not checked out)
+#               llvm-project  pin unknown  (not checked out)
+#               LLVM_RELEASE  
+#  Source       ?             
+##############################################################################
+warning: <unknown>:0:0: in function persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (192-byte frame); spills go to DRAM
+
+[host] persistent FFT verification passed
+Terminated
+[mojo-ndp] Simulated 30291 NDP cycles over 24 kernel launches (18.47 us)
+[mojo-ndp] 
+[mojo-ndp]   launch          issued   arrived   started  finished  notified
+[mojo-ndp]   0                 3116      4150      6282     28320     29733
+[mojo-ndp] 
+[mojo-ndp]   kernel                      calls      exec      gap
+[mojo-ndp]   preload()                       3      4203      323
+[mojo-ndp]   stage_0()                       6      5984      768
+[mojo-ndp]   stage_1()                       6      3602      751
+[mojo-ndp]   stage_2()                       6      2795      767
+[mojo-ndp]   writeback()                     3      1647      338
+[mojo-ndp]   total                          24     18231     2947
+[mojo-ndp] 
+[mojo-ndp] DRAM bandwidth utilisation 0.5 % (mean of 28 channels, 0.4-0.5 %)
+[mojo-ndp] Results in "/fft-work/verification/results/execution_codegen_fixes_2026-10-08/simulator/persistent_wave_rtx3060_inverse_b57/fft-execution-persistent_wave_rtx3060_inverse_b57_M2NDP_RTX3060/20261007-154132.604"

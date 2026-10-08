@@ -1,0 +1,6 @@
+  Physical-lane cost model: no unbounded speedup past the physical concurrency ceiling:
+    OK   W in (8, 16, 24, 32, 64): physical_total_worker_stage_batches and estimated_cost are IDENTICAL across every clean multiple of 8 (physical_total=56, cost=32778.38)
+    OK   contrast: OLD logical total_worker_stage_batches DOES keep shrinking with W ({8: 56, 16: 28, 24: 21, 32: 14, 64: 7}) -- exactly the pattern _execution_cost no longer trusts
+    OK   no W in (8, 9, 10, 12, 14, 16, 20, 24, 32, 36, 64) ever beats the balanced W=8 baseline (cost=32778.38) -- physical concurrency ceiling=8 respected
+    OK   ragged W=9 (imbalanced across 8 physical lanes) costs more than balanced W=8: 32778.38 -> 32786.76
+[verify] physical-lane cost model: all checks passed

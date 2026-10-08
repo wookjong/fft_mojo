@@ -1,0 +1,194 @@
+{
+  "native_costs": [
+    {
+      "n": 30,
+      "identical_source": true,
+      "estimated_costs": [
+        481.7,
+        481.7
+      ]
+    },
+    {
+      "n": 128,
+      "identical_source": true,
+      "estimated_costs": [
+        2054.0,
+        2054.0
+      ]
+    },
+    {
+      "n": 960,
+      "identical_source": true,
+      "estimated_costs": [
+        76700.7,
+        76700.7
+      ]
+    }
+  ],
+  "hybrid": {
+    "source_changed": true,
+    "actual_diagnostics": [
+      {
+        "family": "persistent",
+        "leaf_index": 0,
+        "logical_work_count": 32,
+        "active_units_best": 32,
+        "active_units_worst": 32,
+        "alignment_exact": true
+      },
+      {
+        "family": "cooperative",
+        "leaf_index": 1,
+        "logical_work_count": 2,
+        "active_units_best": 1,
+        "active_units_worst": 1,
+        "alignment_exact": true
+      }
+    ]
+  },
+  "small_target": {
+    "n": 64,
+    "scratchpad_bytes": 512,
+    "default_budget": 4096,
+    "candidate_count": 40,
+    "root_type": "FFTRecursiveNodePlan"
+  },
+  "rocfft": [
+    {
+      "n": 64,
+      "half_lds": false
+    },
+    {
+      "n": 128,
+      "half_lds": true
+    },
+    {
+      "n": 4096,
+      "half_lds": true
+    }
+  ],
+  "clfft_8192": [
+    {
+      "n": 64,
+      "wgs": 128,
+      "tpt": 16,
+      "width": 16,
+      "lds_bytes": 8192,
+      "metadata": [
+        [
+          "block_width",
+          16
+        ],
+        [
+          "active_transforms",
+          8
+        ],
+        [
+          "block_compute_rounds",
+          2
+        ]
+      ]
+    },
+    {
+      "n": 128,
+      "wgs": 128,
+      "tpt": 16,
+      "width": 8,
+      "lds_bytes": 8192,
+      "metadata": [
+        [
+          "block_width",
+          8
+        ],
+        [
+          "active_transforms",
+          8
+        ],
+        [
+          "block_compute_rounds",
+          1
+        ]
+      ]
+    }
+  ],
+  "vkfft_128_batch4": [
+    {
+      "planner_name": "vkfft",
+      "gpu_scheme": "VkFFT upload",
+      "gpu_kernel_id": 0,
+      "pass_id": 0,
+      "fft_length": 128,
+      "radix_sequence": [
+        8,
+        8,
+        2
+      ],
+      "gpu_workgroup_size": 64,
+      "gpu_threads_per_transform": 16,
+      "gpu_transforms_per_workgroup": 4,
+      "gpu_shared_memory_bytes": null,
+      "gpu_fused_operations": [],
+      "gpu_transpose_role": null,
+      "gpu_global_read_bytes": 4096,
+      "gpu_global_write_bytes": 4096,
+      "gpu_memory_optimization": null,
+      "gpu_logical_shared_memory_bytes": null,
+      "m2ndp_memory_optimization_status": null,
+      "gpu_metadata": [
+        [
+          "stage_start_size",
+          1
+        ],
+        [
+          "axis_swapped",
+          true
+        ],
+        [
+          "local_size",
+          [
+            4,
+            16,
+            1
+          ]
+        ],
+        [
+          "min_registers_per_thread",
+          8
+        ],
+        [
+          "registers_per_thread",
+          8
+        ],
+        [
+          "registers_per_radix",
+          [
+            [
+              2,
+              8
+            ],
+            [
+              4,
+              8
+            ],
+            [
+              8,
+              8
+            ]
+          ]
+        ]
+      ]
+    }
+  ],
+  "planner_hashes": {
+    "planning\\gpu_baseline\\vkfft.py": "ad7dea256acbf1d99fc347df17fb3c57a1d8b73b5de0b24340cf0daa506831a3",
+    "planning\\gpu_baseline\\vkfft_registers.py": "62798f4de12abd62dc9cab32641a8bd1b22a3b87367501e03af50d9b94faff78",
+    "planning\\gpu_baseline\\clfft.py": "69eeca5b55130badf5e4e5b4c977193dc4e32adc0cbbeffc0d02d7e261e3c2f1",
+    "planning\\gpu_baseline\\rocfft_default.py": "8296a1b91a6eb73590b1aba1f63126ee6f5997a48d817b86bcfa229a868fa60b",
+    "planning\\gpu_baseline\\logical_plan.py": "3118d3ca35e8222b45b159d1ec959f62112425c5cf04ef857ced59177e19af12",
+    "planning\\search\\fft_plan_search.py": "b9213c6b01976eda567e1de6b5ab85b74ebb17874e44bdffbbad6936c00f724f",
+    "planning\\search\\fft_cost_model.py": "9c7241740b5c9d0987a4c177910ff8901d31ce6a182213992814fcb08ea11e61",
+    "planning\\execution\\fft_plan_lanes.py": "cbdc5483693e5e8efce32b4a2c4f627d72668a2d2a44e260cb27e0785a2cc526",
+    "planning\\strategies\\fft_plan_recursive.py": "fc3bfdbb149679f29934e8df40b3ef4a089bd85c89495afe010994037e85f887",
+    "planning\\diagnostics\\fft_unit_utilization.py": "377823ee36734886dad8403cdf50ef7dbefb4e4261db5a0be5884c79dc35cb7a"
+  }
+}

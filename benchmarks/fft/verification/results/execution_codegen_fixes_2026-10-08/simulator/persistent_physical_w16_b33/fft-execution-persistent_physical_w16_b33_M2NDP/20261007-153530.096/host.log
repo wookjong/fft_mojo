@@ -1,0 +1,3 @@
+warning: <unknown>:0:0: in function persistent_physical_w16_b33::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (176-byte frame); spills go to DRAM
+
+[host] persistent FFT verification passed

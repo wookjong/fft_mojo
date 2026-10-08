@@ -28,14 +28,7 @@ from planning.core.fft_plan_core import FFTCodegenPlan
 
 _VAR_RE = re.compile(r"^(\s*)var ")
 _COMPTIME_RE = re.compile(r"^(\s*)comptime ")
-# The offset argument allows one level of nested parens (e.g. loop_stages'
-# own `base + outer_it * stride` offset expressions are wrapped in an extra
-# `(...)` -- see fft_codegen._emit_load_loop/_emit_twiddle_loop) -- plain
-# `[^()]*` would stop at the first inner `(` and leave the rest of the line
-# untranslated (a SyntaxError from the still-Mojo `.load[width=...]` call).
-_PAREN_ARG = r"(?:[^()]|\([^()]*\))*"
-_LOAD_W_RE = re.compile(rf"\.load\[width=(\w+)\]\(({_PAREN_ARG})\)")
-_LOAD_DT_RE = re.compile(rf"\.load\[DType\.float32,\s*(\w+)\]\(({_PAREN_ARG})\)")
+_LOAD_CALL_RE = re.compile(r"\.load\[(?:width=|DType\.float32,\s*)(\w+)\]\(")
 _SIMD_RE = re.compile(r"SIMD\[DType\.float32,\s*\w+\]\(")
 
 
@@ -59,8 +52,17 @@ def _translate_emitted_lines(lines: list[str]) -> str:
             continue
         line = _VAR_RE.sub(r"\1", line)
         line = _COMPTIME_RE.sub(r"\1", line)
-        line = _LOAD_W_RE.sub(r".load(\2, \1)", line)
-        line = _LOAD_DT_RE.sub(r".load(\2, \1)", line)
+        # Runtime loop offsets can contain arbitrarily nested parentheses.
+        # Match the load's type arguments, then scan the balanced argument.
+        while match := _LOAD_CALL_RE.search(line):
+            first = match.end()
+            end, depth = first, 1
+            while depth and end < len(line):
+                depth += (line[end] == "(") - (line[end] == ")")
+                end += 1
+            if depth:
+                raise ValueError(f"unbalanced emitted load: {line}")
+            line = line[:match.start()] + f".load({line[first:end-1]}, {match.group(1)})" + line[end:]
         line = _SIMD_RE.sub("SIMD(", line)
         assert line.startswith("    "), line
         out.append(line[4:])

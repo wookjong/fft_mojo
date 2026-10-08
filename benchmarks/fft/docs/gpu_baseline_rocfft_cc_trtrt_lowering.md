@@ -1,111 +1,88 @@
-# rocFFT-default CS_L1D_CC / CS_L1D_TRTRT lowering onto M2NDP
+# rocFFT-default large-1D lowering onto M2NDP
 
-## The question
+Updated 2026-10-07 for finding 1 in the GPU baseline review.
 
-`_plan_from_scheme_decision` previously refused (`UNSUPPORTED_CURRENT_
-CODEGEN`) every length where real rocFFT-default selects `CS_L1D_CC`
-(fused SBCC+SBRC) or `CS_L1D_TRTRT` (transpose-row-transpose-row-
-transpose), on the stated belief that these fused block-tiled kernels
-have "no equivalent AddressMapping/codegen mechanism in this repository."
-Before writing any new codegen, the real upstream source was fetched
-directly at this module's own pinned commit
-(`bee97df517907c771de17189cb867d3c401285ae`,
-`projects/rocfft/library/src/tree_node_1D.cpp`) and read line-by-line.
+## Upstream contract
 
-## What the real source actually shows
+Pinned source: `ROCm/rocm-libraries` commit
+`bee97df517907c771de17189cb867d3c401285ae`, under
+`projects/rocfft/library/src/`.
 
-**`TRTRT1DNode::BuildTree_internal`** builds exactly 5 child kernels, in
-this order: `trans1Plan` (CS_KERNEL_TRANSPOSE) → `row1Plan` (recursively
-built via `RecursiveBuildTree` -- i.e. re-invokes the SAME rocFFT
-planning algorithm) → `trans2Plan` (CS_KERNEL_TRANSPOSE, `large1D =
-length[0]` -- the twiddle-multiply flag) → `row2Plan` (forced straight to
-`CS_KERNEL_STOCKHAM`, never re-decided) → `trans3Plan` (CS_KERNEL_
-TRANSPOSE). The name itself says it: Transpose-Row-Transpose-Row-
-Transpose. `lenFactor1 = length.back()` (`= Decide1DScheme`'s own
-`divLength1`, confirmed directly in `node_factory.cpp`'s own
-`nodeData.length.emplace_back(divLength1)`), `lenFactor0 = length[0] /
-lenFactor1`. `row1Plan` gets length `lenFactor1`/batch `lenFactor0`;
-`row2Plan` gets length `lenFactor0`/batch `lenFactor1`. Two OPTIONAL
-"fuse shims" (`FT_TRANS_WITH_STOCKHAM`, `FT_STOCKHAM_WITH_TRANS`) may
-merge adjacent kernel pairs when profitable -- a GPU-specific
-micro-optimization with no dataflow effect.
+`tree_node_1D.cpp` constructs these children in execution order:
 
-**`CC1DNode::BuildTree_internal`** builds exactly 2 child kernels:
-`col2colPlan` (`CS_KERNEL_STOCKHAM_BLOCK_CC`, length `(lenFactor1,
-lenFactor0)`, `large1D = length[0]`, reading the ORIGINAL buffer with a
-column stride and writing packed/transposed -- a transpose+FFT+twiddle
-kernel fused into one) and `row2colPlan` (`CS_KERNEL_STOCKHAM_BLOCK_RC`,
-length `(lenFactor0, lenFactor1)`, reading the packed intermediate and
-writing the final, transposed-back output -- an FFT+transpose kernel
-fused into one). Both are ALWAYS leaves (`CreateNodeFromScheme`, never
-`RecursiveBuildTree`) -- consistent with `Decide1DScheme` only choosing
-`CS_L1D_CC` when `MAP_1D_LENGTH_SINGLE` already guarantees both factors
-are compiled-single-kernel-safe.
+| Scheme | First FFT (`near_fft`) | Second FFT (`far_child`) |
+| --- | --- | --- |
+| `CS_L1D_CC` | `div1`, forced `CS_KERNEL_STOCKHAM_BLOCK_CC` | `div0`, forced `CS_KERNEL_STOCKHAM_BLOCK_RC` |
+| `CS_L1D_TRTRT` | `div1`, `RecursiveBuildTree` | `div0`, forced `CS_KERNEL_STOCKHAM` |
 
-**Both schemes are the identical `(lenFactor1, lenFactor0)` Cooley-Tukey
-split** `Decide1DScheme` already computes (the same `divLength1` this
-repo's own `rocfft_default.py` already names `div_length1`) -- `CS_L1D_
-CC` simply fuses what `CS_L1D_TRTRT`'s 3 transpose kernels do into the 2
-FFT kernels' own strided access instead. This is dataflow-identical to
-this project's own existing `_build_recursive_node`-shaped five-kernel
-PRE-transpose/near-FFT/MIDDLE-transpose/far-FFT/POST-transpose structure
-(already used for clFFT's large-1D path, and for clFFT's SBCC -- see
-docs/gpu_baseline_clfft_sbcc_lowering.md, the same finding as there) --
-with `near = row2Plan`/`row2colPlan` (length `div_length0 = lenFactor0`,
-ALWAYS a plain leaf) and `far = row1Plan`/`col2colPlan`'s counterpart
-(length `div_length1 = lenFactor1`, the ONLY one that may recurse, and
-only for TRTRT).
+Here `div1 = div_length1` and `div0 = N / div1`. CC does not re-run
+`Decide1DScheme` for either child. TRTRT re-runs it only for the first
+child, with the caller's multiprocessor count and multiplied batch.
+The previous implementation reversed the children and substituted plain
+SBRR configs for SBCC/SBRC. Numerical agreement alone did not detect this:
+both factor orders can compute a correct FFT but select different kernels.
 
-## What changed
+## Implemented mapping
 
-New `_rocfft_leaf_or_recurse` (`planning/gpu_baseline/rocfft_default.py`)
-mirrors clFFT's own `_plan_leaf_or_recurse`: given `decide_scheme`'s own
-`(div_length1, div_length0)`, it builds the same PRE/near/MIDDLE/far/POST
-`FFTRecursiveNodePlan` -- `near` always a plain `CS_KERNEL_STOCKHAM` leaf
-(matching real rocFFT's own `row2Plan`/`row2colPlan`, which never
-consults `Decide1DScheme` at all), `far` recursing back into `_rocfft_
-leaf_or_recurse` itself when still too large (matching real rocFFT's own
-`RecursiveBuildTree` on `row1Plan` -- this task's own section 4B
-requirement: the child row FFT plan calls the SAME rocFFT planning
-algorithm with M2NDP target inputs, never the M2NDP-native recursive
-splitter). `_plan_from_scheme_decision`'s `CS_L1D_CC`/`CS_L1D_TRTRT`
-branch now calls this instead of refusing. No new plan IR node type was
-needed -- `FFTRecursiveNodePlan` already represents this dataflow.
+`rocfft_default._rocfft_leaf_or_recurse` now sets the common IR split to
+`a = div0, b = div1`, yielding:
 
-If `decide_scheme` applied to the `near`/`div_length0` factor does NOT
-itself resolve to `CS_KERNEL_STOCKHAM` (an upstream behavior real rocFFT
-sidesteps by never calling `Decide1DScheme` there at all), this baseline
-refuses honestly (`UNSUPPORTED_CURRENT_CODEGEN`) rather than guessing --
-not observed in any length tested so far.
+1. PRE transpose: `div1 x div0`.
+2. First FFT: length `div1`, replicas `batch * div0`.
+3. MIDDLE transpose: `div0 x div1`, with the node's `W_N` twiddle.
+4. Second FFT: length `div0`, replicas `batch * div1`.
+5. POST transpose: `div1 x div0`, applying `1/N` only at the inverse root.
 
-`multiprocessor_count` (docs/gpu_planner_m2ndp_target_mapping.md) is
-threaded into every recursive `decide_scheme` call too, so the M2NDP-
-adapted baseline's own mapping never silently reverts to the
-source-faithful constant partway through a recursive CS_L1D_CC/TRTRT
-tree.
+Both children in `FFTRecursiveNodePlan` can now contain recursive nodes.
+Flattening, cost-model replica collection, diagnostics, and index verification
+walk both children. Native planners retain their existing tree shapes.
+
+`rocfft_block_configs.py` ports all 32 generic SBCC and 20 generic SBRC
+rows from `device/kernels/configs/config_sbcc.py` and `config_sbrc.py`.
+Workgroup sizing follows `device/kernel-generator.py` and
+`device/generator/stockham_gen.cpp`, `stockham_gen_base.h`:
+
+- SBCC's default desired WGS is `16 * length / min(radices)`; an explicit
+  half-LDS setting doubles it, capped at 1024.
+- TPT defaults to `length / min(radices)` (`uwide`), or
+  `length / max(radices)` (`wide`), unless explicitly specified.
+- Generic kernels use 64 KiB LDS with occupancy two, hence a 32 KiB budget.
+  The shared SP/DP kernel key sizes transforms using 16-byte elements.
+- TPB is limited by LDS and `floor(desired_WGS / TPT)`; final WGS is
+  `TPT * TPB`, which can differ from the config's requested WGS.
+
+Radices and TPT feed the existing M2NDP mapping. Half-LDS and direct-register
+flags are retained as upstream metadata and do not halve M2NDP scratchpad
+requirements. `gpu_config.extra['leaf_configs']` records the original leaf
+settings in execution order for both `plan()` and `plan_m2ndp()`.
+
+| N | Correct first FFT | Correct second FFT |
+| --- | --- | --- |
+| 8192 | SBCC 64, radices `(8,8)`, TPT 8, WGS 256 | SBRC 128, radices `(8,4,4)`, TPT 16, WGS 128 |
+| 4704 | SBCC 96, radices `(8,3,4)`, TPT 32, WGS 256 | SBRC 49, radices `(7,7)`, TPT 7, WGS 196 |
+| 2058 | Stockham 42 | Forced Stockham 49 |
 
 ## Verification
 
-- `CS_L1D_CC`: 5 representative lengths (4704, 4913, 5488, 6144, 6561)
-  all build and match `numpy.fft.fft` to within 2.6e-7.
-- `CS_L1D_TRTRT`: 8 representative lengths (1029, 2057, 2058, 2079, 2080,
-  2100, 2106, 2112) all build and match BOTH `numpy.fft.fft` (to within
-  1.6e-7) and `numpy.fft.ifft` (to within 7.4e-11).
-- Power-of-2 `CS_L1D_TRTRT` (only reachable above `CS_L1D_CC_POW2_
-  THRESHOLD=262144`): N=524288, 1048576, and 16777216 (this repo's own
-  existing solution-map test's named representative) all build
-  successfully, confirming the recursive construction terminates
-  correctly even for a length two levels beyond the compiled-single-
-  kernel table.
-- Some sampled `CS_L1D_TRTRT` lengths (e.g. N=1002-1006) recurse into a
-  PRIME `div_length1` (167, 59, 251, 67, 503) with no compiled single
-  kernel -- these correctly fall through to `UNSUPPORTED_GPU_ALGORITHM`
-  (Bluestein territory, explicitly out of this task's scope), not a bug.
+Run from `benchmarks/fft`:
 
-## What did NOT change
+```
+python -m verification.verify_gpu_baseline_rocfft_large1d
+```
 
-The `CS_KERNEL_STOCKHAM`/`CS_BLUESTEIN` branches, `Decide1DScheme`'s own
-table/formula logic, and the solution-map override layer are all
-untouched. `map_cooperative_kernel`/`_build_physical_transpose` are
-reused verbatim, mechanically -- no new lowering utility was needed
-beyond the recursive orchestration itself.
+The regression suite checks upstream expected order/radices/worker settings,
+batches 1 and 3, forced-child decision calls, generator sizing edge cases,
+and table coverage for every hardcoded CC split. It checks forward/inverse
+numerical output against NumPy for N=2058, 4704, and 8192, including the
+M2NDP-adapted entry point. A real N=2^27 split exercises a recursive first
+child through flattening, cost estimation, and code generation with a larger
+scratchpad profile; it does not allocate or numerically execute that large FFT.
+All 52 block-table rows were also compared with the pinned upstream files.
+
+## Remaining performance limitation
+
+CC still expands upstream's two fused SBCC/SBRC kernels into five M2NDP
+kernels. Extra launches and full-array memory passes affect performance.
+This correction resolves execution order and selected block configurations;
+it does not resolve finding 3 (fused-kernel lowering). Python numerical
+verification does not establish compiled simulator execution correctness.

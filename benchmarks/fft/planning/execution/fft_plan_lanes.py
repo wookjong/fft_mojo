@@ -187,6 +187,7 @@ def generate_compute_lane_candidates(
 
 def _apply_to_node(
     node: FFTNode, *, compute_lanes: int | None, narrow_middle_stages: bool, all_scalar: bool,
+    only_unset: bool = False,
 ) -> FFTNode:
     """Every leaf `apply_compute_lanes`/`generate_compute_lane_candidates`
     already knows how to handle one `FFTCodegenPlan` at a time -- a
@@ -200,26 +201,35 @@ def _apply_to_node(
     docstring: transpose kernels have their own separate width story).
     """
     if isinstance(node, FFTLeafPlan):
-        if all_scalar:
-            new_kernel = replace(
-                node.kernel,
-                stages=tuple(replace(s, compute_lanes=1) for s in node.kernel.stages),
-            )
-        else:
-            new_kernel = apply_compute_lanes(
-                node.kernel, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
-            )
-        return replace(node, kernel=new_kernel)
+        def rewrite(kernel: FFTCodegenPlan | None) -> FFTCodegenPlan | None:
+            if kernel is None:
+                return None
+            resolved = (replace(kernel, stages=tuple(replace(s, compute_lanes=1) for s in kernel.stages))
+                        if all_scalar else apply_compute_lanes(kernel, compute_lanes=compute_lanes,
+                                                               narrow_middle_stages=narrow_middle_stages))
+            if only_unset:
+                resolved = replace(resolved, stages=tuple(
+                    old if old.compute_lanes is not None else new
+                    for old, new in zip(kernel.stages, resolved.stages)))
+            return resolved
+
+        hybrid = node.tail_hybrid
+        if hybrid is not None:
+            hybrid = replace(hybrid, persistent_plan=rewrite(hybrid.persistent_plan),
+                             tail_plan=rewrite(hybrid.tail_plan))
+        return replace(node, kernel=rewrite(node.kernel), tail_hybrid=hybrid)
     assert isinstance(node, FFTRecursiveNodePlan)
     return replace(
         node,
         near_fft=_apply_to_node(
             node.near_fft, compute_lanes=compute_lanes,
             narrow_middle_stages=narrow_middle_stages, all_scalar=all_scalar,
+            only_unset=only_unset,
         ),
         far_child=_apply_to_node(
             node.far_child, compute_lanes=compute_lanes,
             narrow_middle_stages=narrow_middle_stages, all_scalar=all_scalar,
+            only_unset=only_unset,
         ),
     )
 
@@ -255,3 +265,15 @@ def apply_all_scalar_lanes_to_plan(plan: RecursiveFFTPlan) -> RecursiveFFTPlan:
             plan.root, compute_lanes=None, narrow_middle_stages=False, all_scalar=True,
         ),
     )
+
+
+def resolve_compute_lanes_to_plan(
+    plan: RecursiveFFTPlan, *, compute_lanes: int | None, narrow_middle_stages: bool = True,
+) -> RecursiveFFTPlan:
+    """Decide unset arithmetic widths before costing; retain explicit variants.
+
+    Both root hybrid tasks are resolved too. Codegen and cost then consume
+    the same per-stage widths, independent of render-time fallback defaults.
+    """
+    return replace(plan, root=_apply_to_node(plan.root, compute_lanes=compute_lanes,
+        narrow_middle_stages=narrow_middle_stages, all_scalar=False, only_unset=True))

@@ -1,0 +1,39 @@
+#### mojo-ndp ################################################################
+#  Workload     /tmp/fft-execution-global_n64_w17_b65 7007feee75
+#  Config       third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config 8309eda294
+#  Machine      uthread_span  32 B  (vector_reg 32 B)
+#  Toolchain    mojo          1.0.0b2.dev2026061203 (2cf4d08a)
+#               llc           23.1.0-rc1
+#  Simulator    m2ndp_run     0349fff1f293
+#  Third-party  m2ndp-detour  pin unknown  (not checked out)
+#               llvm-project  pin unknown  (not checked out)
+#               LLVM_RELEASE  
+#  Source       ?             
+##############################################################################
+warning: <unknown>:0:0: in function global_n64_w17_b65::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (160-byte frame); spills go to DRAM
+
+warning: <unknown>:0:0: in function global_n64_w17_b65::PersistentFFT::stage_1() void (): M2NDP kernel spills to memory (16-byte frame); spills go to DRAM
+
+[host] persistent FFT verification passed
+[mojo-ndp] Simulated 18143 NDP cycles over 12 kernel launches (9.07 us)
+[mojo-ndp] 
+[mojo-ndp]   launch          issued   arrived   started  finished  notified
+[mojo-ndp]   0                    0        70        70     18071     18143
+[mojo-ndp] 
+[mojo-ndp]   kernel                      started  finished     exec    gap
+[mojo-ndp]   stage_0()                       927      4896     3969      -
+[mojo-ndp]   stage_1()                      5009      7498     2489    113
+[mojo-ndp]   stage_2()                      7683      9285     1602    185
+[mojo-ndp]   writeback()                    9397      9655      258    112
+[mojo-ndp]   stage_0()                      9760     11725     1965    105
+[mojo-ndp]   stage_1()                     11835     12918     1083    110
+[mojo-ndp]   stage_2()                     13030     13590      560    112
+[mojo-ndp]   writeback()                   13697     13817      120    107
+[mojo-ndp]   stage_0()                     14035     15973     1938    218
+[mojo-ndp]   stage_1()                     16078     17159     1081    105
+[mojo-ndp]   stage_2()                     17257     17813      556     98
+[mojo-ndp]   writeback()                   17930     18046      116    117
+[mojo-ndp]   total                                            15737   1382
+[mojo-ndp] 
+[mojo-ndp] DRAM bandwidth utilisation 1.0 % (mean of 28 channels, 0.9-1.2 %)
+[mojo-ndp] Results in "/fft-work/verification/results/baseline_support_2026-10-08/simulator/global_n64_w17_b65/20261007-192742.733"

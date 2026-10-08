@@ -1,0 +1,6 @@
+  Unified GPU/M2NDP execution report:
+    OK   report structure (GPU/M2NDP sections, KERNEL block count, section ordering) holds across 7 representative case(s)
+    OK   GPU vocabulary (gpu_threads_per_transform, gpu_transforms_per_workgroup) and M2NDP vocabulary (logical_workers_per_fft, fft_slots_per_group) both appear as distinct, separately-labeled fields -- never merged into one value
+    OK   a transpose kernel's own block reports strategy='transpose' and a PRE/MIDDLE/POST role tag
+[verify] GPU execution report: all checks passed
+

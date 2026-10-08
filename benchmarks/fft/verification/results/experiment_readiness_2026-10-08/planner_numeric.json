@@ -1,0 +1,454 @@
+{
+  "scope": "Planner IR numeric evaluation vs NumPy; no simulator/config audit",
+  "passed": 56,
+  "rows": [
+    {
+      "n": 64,
+      "batch": 2,
+      "inverse": false,
+      "planner": "m2ndp-native",
+      "max_error": 1.1342693389435465e-08,
+      "passed": true
+    },
+    {
+      "n": 64,
+      "batch": 2,
+      "inverse": false,
+      "planner": "clfft-m2ndp",
+      "max_error": 1.1342693389435465e-08,
+      "passed": true
+    },
+    {
+      "n": 64,
+      "batch": 2,
+      "inverse": false,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 1.1342693389435465e-08,
+      "passed": true
+    },
+    {
+      "n": 64,
+      "batch": 2,
+      "inverse": false,
+      "planner": "vkfft-m2ndp",
+      "max_error": 1.1342690799931303e-08,
+      "passed": true
+    },
+    {
+      "n": 64,
+      "batch": 2,
+      "inverse": true,
+      "planner": "m2ndp-native",
+      "max_error": 2.0411914739268016e-10,
+      "passed": true
+    },
+    {
+      "n": 64,
+      "batch": 2,
+      "inverse": true,
+      "planner": "clfft-m2ndp",
+      "max_error": 2.0411914739268016e-10,
+      "passed": true
+    },
+    {
+      "n": 64,
+      "batch": 2,
+      "inverse": true,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 2.0411914739268016e-10,
+      "passed": true
+    },
+    {
+      "n": 64,
+      "batch": 2,
+      "inverse": true,
+      "planner": "vkfft-m2ndp",
+      "max_error": 1.6803571994541697e-10,
+      "passed": true
+    },
+    {
+      "n": 128,
+      "batch": 2,
+      "inverse": false,
+      "planner": "m2ndp-native",
+      "max_error": 1.9131948672901813e-14,
+      "passed": true
+    },
+    {
+      "n": 128,
+      "batch": 2,
+      "inverse": false,
+      "planner": "clfft-m2ndp",
+      "max_error": 3.0238755818855663e-08,
+      "passed": true
+    },
+    {
+      "n": 128,
+      "batch": 2,
+      "inverse": false,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 2.6569213660018098e-08,
+      "passed": true
+    },
+    {
+      "n": 128,
+      "batch": 2,
+      "inverse": false,
+      "planner": "vkfft-m2ndp",
+      "max_error": 2.527864799599867e-08,
+      "passed": true
+    },
+    {
+      "n": 128,
+      "batch": 2,
+      "inverse": true,
+      "planner": "m2ndp-native",
+      "max_error": 9.437916079723832e-17,
+      "passed": true
+    },
+    {
+      "n": 128,
+      "batch": 2,
+      "inverse": true,
+      "planner": "clfft-m2ndp",
+      "max_error": 1.560111681435893e-10,
+      "passed": true
+    },
+    {
+      "n": 128,
+      "batch": 2,
+      "inverse": true,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 1.812663687300685e-10,
+      "passed": true
+    },
+    {
+      "n": 128,
+      "batch": 2,
+      "inverse": true,
+      "planner": "vkfft-m2ndp",
+      "max_error": 1.4591137696031082e-10,
+      "passed": true
+    },
+    {
+      "n": 256,
+      "batch": 2,
+      "inverse": false,
+      "planner": "m2ndp-native",
+      "max_error": 2.1610313646285627e-14,
+      "passed": true
+    },
+    {
+      "n": 256,
+      "batch": 2,
+      "inverse": false,
+      "planner": "clfft-m2ndp",
+      "max_error": 3.99948957368319e-08,
+      "passed": true
+    },
+    {
+      "n": 256,
+      "batch": 2,
+      "inverse": false,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 3.99948957368319e-08,
+      "passed": true
+    },
+    {
+      "n": 256,
+      "batch": 2,
+      "inverse": false,
+      "planner": "vkfft-m2ndp",
+      "max_error": 3.4858847393973985e-08,
+      "passed": true
+    },
+    {
+      "n": 256,
+      "batch": 2,
+      "inverse": true,
+      "planner": "m2ndp-native",
+      "max_error": 8.777083671441753e-17,
+      "passed": true
+    },
+    {
+      "n": 256,
+      "batch": 2,
+      "inverse": true,
+      "planner": "clfft-m2ndp",
+      "max_error": 1.830675856347787e-10,
+      "passed": true
+    },
+    {
+      "n": 256,
+      "batch": 2,
+      "inverse": true,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 1.830675856347787e-10,
+      "passed": true
+    },
+    {
+      "n": 256,
+      "batch": 2,
+      "inverse": true,
+      "planner": "vkfft-m2ndp",
+      "max_error": 1.5476159420477008e-10,
+      "passed": true
+    },
+    {
+      "n": 512,
+      "batch": 2,
+      "inverse": false,
+      "planner": "m2ndp-native",
+      "max_error": 3.7102052229097315e-14,
+      "passed": true
+    },
+    {
+      "n": 512,
+      "batch": 2,
+      "inverse": false,
+      "planner": "clfft-m2ndp",
+      "max_error": 5.961806087181334e-08,
+      "passed": true
+    },
+    {
+      "n": 512,
+      "batch": 2,
+      "inverse": false,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 5.961806087181334e-08,
+      "passed": true
+    },
+    {
+      "n": 512,
+      "batch": 2,
+      "inverse": false,
+      "planner": "vkfft-m2ndp",
+      "max_error": 5.961806087181334e-08,
+      "passed": true
+    },
+    {
+      "n": 512,
+      "batch": 2,
+      "inverse": true,
+      "planner": "m2ndp-native",
+      "max_error": 7.850462293418876e-17,
+      "passed": true
+    },
+    {
+      "n": 512,
+      "batch": 2,
+      "inverse": true,
+      "planner": "clfft-m2ndp",
+      "max_error": 1.1405037219020865e-10,
+      "passed": true
+    },
+    {
+      "n": 512,
+      "batch": 2,
+      "inverse": true,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 1.1405037219020865e-10,
+      "passed": true
+    },
+    {
+      "n": 512,
+      "batch": 2,
+      "inverse": true,
+      "planner": "vkfft-m2ndp",
+      "max_error": 1.1405037219020865e-10,
+      "passed": true
+    },
+    {
+      "n": 1024,
+      "batch": 2,
+      "inverse": false,
+      "planner": "m2ndp-native",
+      "max_error": 5.1237965343830035e-14,
+      "passed": true
+    },
+    {
+      "n": 1024,
+      "batch": 2,
+      "inverse": false,
+      "planner": "clfft-m2ndp",
+      "max_error": 9.068046594480686e-08,
+      "passed": true
+    },
+    {
+      "n": 1024,
+      "batch": 2,
+      "inverse": false,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 9.068046594480686e-08,
+      "passed": true
+    },
+    {
+      "n": 1024,
+      "batch": 2,
+      "inverse": false,
+      "planner": "vkfft-m2ndp",
+      "max_error": 9.152370304053775e-08,
+      "passed": true
+    },
+    {
+      "n": 1024,
+      "batch": 2,
+      "inverse": true,
+      "planner": "m2ndp-native",
+      "max_error": 5.003707553108402e-17,
+      "passed": true
+    },
+    {
+      "n": 1024,
+      "batch": 2,
+      "inverse": true,
+      "planner": "clfft-m2ndp",
+      "max_error": 1.0911990012730564e-10,
+      "passed": true
+    },
+    {
+      "n": 1024,
+      "batch": 2,
+      "inverse": true,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 1.0911990012730564e-10,
+      "passed": true
+    },
+    {
+      "n": 1024,
+      "batch": 2,
+      "inverse": true,
+      "planner": "vkfft-m2ndp",
+      "max_error": 1.3043724990668624e-10,
+      "passed": true
+    },
+    {
+      "n": 2048,
+      "batch": 2,
+      "inverse": false,
+      "planner": "m2ndp-native",
+      "max_error": 2.8832664864132497e-08,
+      "passed": true
+    },
+    {
+      "n": 2048,
+      "batch": 2,
+      "inverse": false,
+      "planner": "clfft-m2ndp",
+      "max_error": 1.4299285182492889e-07,
+      "passed": true
+    },
+    {
+      "n": 2048,
+      "batch": 2,
+      "inverse": false,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 1.4163641427302252e-07,
+      "passed": true
+    },
+    {
+      "n": 2048,
+      "batch": 2,
+      "inverse": false,
+      "planner": "vkfft-m2ndp",
+      "max_error": 1.4299285182492889e-07,
+      "passed": true
+    },
+    {
+      "n": 2048,
+      "batch": 2,
+      "inverse": true,
+      "planner": "m2ndp-native",
+      "max_error": 1.602548090300598e-11,
+      "passed": true
+    },
+    {
+      "n": 2048,
+      "batch": 2,
+      "inverse": true,
+      "planner": "clfft-m2ndp",
+      "max_error": 7.390740710318016e-11,
+      "passed": true
+    },
+    {
+      "n": 2048,
+      "batch": 2,
+      "inverse": true,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 7.527379495631338e-11,
+      "passed": true
+    },
+    {
+      "n": 2048,
+      "batch": 2,
+      "inverse": true,
+      "planner": "vkfft-m2ndp",
+      "max_error": 7.390740710318016e-11,
+      "passed": true
+    },
+    {
+      "n": 4096,
+      "batch": 2,
+      "inverse": false,
+      "planner": "m2ndp-native",
+      "max_error": 1.24959892600685e-07,
+      "passed": true
+    },
+    {
+      "n": 4096,
+      "batch": 2,
+      "inverse": false,
+      "planner": "clfft-m2ndp",
+      "max_error": 2.2632400526899543e-07,
+      "passed": true
+    },
+    {
+      "n": 4096,
+      "batch": 2,
+      "inverse": false,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 2.647648869014851e-07,
+      "passed": true
+    },
+    {
+      "n": 4096,
+      "batch": 2,
+      "inverse": false,
+      "planner": "vkfft-m2ndp",
+      "max_error": 2.2632400526899543e-07,
+      "passed": true
+    },
+    {
+      "n": 4096,
+      "batch": 2,
+      "inverse": true,
+      "planner": "m2ndp-native",
+      "max_error": 3.118492365044891e-11,
+      "passed": true
+    },
+    {
+      "n": 4096,
+      "batch": 2,
+      "inverse": true,
+      "planner": "clfft-m2ndp",
+      "max_error": 6.108391339751713e-11,
+      "passed": true
+    },
+    {
+      "n": 4096,
+      "batch": 2,
+      "inverse": true,
+      "planner": "rocfft-default-m2ndp",
+      "max_error": 6.483317029461056e-11,
+      "passed": true
+    },
+    {
+      "n": 4096,
+      "batch": 2,
+      "inverse": true,
+      "planner": "vkfft-m2ndp",
+      "max_error": 6.108391339751713e-11,
+      "passed": true
+    }
+  ]
+}

@@ -1,0 +1,666 @@
+[
+  {
+    "experiment": "D",
+    "label": "N64_444_W16",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      7532,
+      7532,
+      7532
+    ],
+    "median_cycles": 7532.0,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": "diag_stage0_active=2 diag_stage0_idle=6 diag_batches_per_lane=(1, 1, 0, 0, 0, 0, 0, 0)"
+  },
+  {
+    "experiment": "D",
+    "label": "N105_357_W10_ragged",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      16112,
+      16112,
+      16112
+    ],
+    "median_cycles": 16112.0,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": "diag_stage0_active=4 diag_stage0_idle=4 diag_batches_per_lane=(1, 2, 1, 1, 0, 0, 0, 0)"
+  },
+  {
+    "experiment": "C",
+    "label": "N31/all_persistent",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      7715,
+      7715,
+      7715
+    ],
+    "median_cycles": 7715,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=31 tail_blocks=0 tail_plan_is_none=True"
+  },
+  {
+    "experiment": "C",
+    "label": "N31/noncoop_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "TailFFT",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      12992,
+      12992,
+      12992
+    ],
+    "median_cycles": 12992,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=0 tail_blocks=31 tail_plan_is_none=False"
+  },
+  {
+    "experiment": "C",
+    "label": "N31/cooperative_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      6718,
+      6718,
+      6718
+    ],
+    "median_cycles": 6718,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=0 tail_blocks=31 tail_plan_is_none=False"
+  },
+  {
+    "experiment": "C",
+    "label": "N32/all_persistent",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      7713,
+      7713,
+      7713
+    ],
+    "median_cycles": 7713,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=32 tail_blocks=0 tail_plan_is_none=True"
+  },
+  {
+    "experiment": "C",
+    "label": "N32/noncoop_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      7713,
+      7713,
+      7713
+    ],
+    "median_cycles": 7713,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=32 tail_blocks=0 tail_plan_is_none=True"
+  },
+  {
+    "experiment": "C",
+    "label": "N32/cooperative_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      7713,
+      7713,
+      7713
+    ],
+    "median_cycles": 7713,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=32 tail_blocks=0 tail_plan_is_none=True"
+  },
+  {
+    "experiment": "C",
+    "label": "N33/all_persistent",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      11940,
+      11940,
+      11940
+    ],
+    "median_cycles": 11940,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=33 tail_blocks=0 tail_plan_is_none=True"
+  },
+  {
+    "experiment": "C",
+    "label": "N63/all_persistent",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      11970,
+      11970,
+      11970
+    ],
+    "median_cycles": 11970,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=63 tail_blocks=0 tail_plan_is_none=True"
+  },
+  {
+    "experiment": "C",
+    "label": "N64/all_persistent",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      11974,
+      11974,
+      11974
+    ],
+    "median_cycles": 11974,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=64 tail_blocks=0 tail_plan_is_none=True"
+  },
+  {
+    "experiment": "C",
+    "label": "N64/noncoop_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      11974,
+      11974,
+      11974
+    ],
+    "median_cycles": 11974,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=64 tail_blocks=0 tail_plan_is_none=True"
+  },
+  {
+    "experiment": "C",
+    "label": "N64/cooperative_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      11974,
+      11974,
+      11974
+    ],
+    "median_cycles": 11974,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=64 tail_blocks=0 tail_plan_is_none=True"
+  },
+  {
+    "experiment": "C",
+    "label": "N65/all_persistent",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      15461,
+      15461,
+      15461
+    ],
+    "median_cycles": 15461,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=65 tail_blocks=0 tail_plan_is_none=True"
+  },
+  {
+    "experiment": "C",
+    "label": "N33/noncoop_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "TailFFT",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      20435,
+      20435,
+      20435
+    ],
+    "median_cycles": 20435,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=32 tail_blocks=1 tail_plan_is_none=False"
+  },
+  {
+    "experiment": "C",
+    "label": "N33/cooperative_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      13280,
+      13280,
+      13280
+    ],
+    "median_cycles": 13280,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=32 tail_blocks=1 tail_plan_is_none=False"
+  },
+  {
+    "experiment": "C",
+    "label": "N63/noncoop_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "TailFFT",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      20514,
+      20514,
+      20514
+    ],
+    "median_cycles": 20514,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=32 tail_blocks=31 tail_plan_is_none=False"
+  },
+  {
+    "experiment": "C",
+    "label": "N63/cooperative_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "TailFFT",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      15380,
+      15380,
+      15380
+    ],
+    "median_cycles": 15380,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=32 tail_blocks=31 tail_plan_is_none=False"
+  },
+  {
+    "experiment": "C",
+    "label": "N65/noncoop_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "TailFFT",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      24651,
+      24651,
+      24651
+    ],
+    "median_cycles": 24651,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=64 tail_blocks=1 tail_plan_is_none=False"
+  },
+  {
+    "experiment": "C",
+    "label": "N65/cooperative_tail",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      17541,
+      17541,
+      17541
+    ],
+    "median_cycles": 17541,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | full_blocks=64 tail_blocks=1 tail_plan_is_none=False"
+  },
+  {
+    "experiment": "A",
+    "label": "regular_W4_total8/round_robin",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "FFTFP32Coop",
+        "stage_0()"
+      ],
+      [
+        "FFTFP32Coop",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      9597,
+      9597,
+      9597
+    ],
+    "median_cycles": 9597,
+    "estimated_cost_legacy": 8192.599999999999,
+    "estimated_cost_priority2": 8192.599999999999,
+    "host_verification": "passed",
+    "notes": ""
+  },
+  {
+    "experiment": "A",
+    "label": "regular_W4_total8/contiguous",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "FFTFP32Coop",
+        "stage_0()"
+      ],
+      [
+        "FFTFP32Coop",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      9597,
+      9597,
+      9597
+    ],
+    "median_cycles": 9597,
+    "estimated_cost_legacy": 8192.599999999999,
+    "estimated_cost_priority2": 8192.599999999999,
+    "host_verification": "passed",
+    "notes": ""
+  },
+  {
+    "experiment": "A",
+    "label": "regular_W4_total8/balanced_contiguous",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "FFTFP32Coop",
+        "stage_0()"
+      ],
+      [
+        "FFTFP32Coop",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      9597,
+      9597,
+      9597
+    ],
+    "median_cycles": 9597,
+    "estimated_cost_legacy": 8192.599999999999,
+    "estimated_cost_priority2": 8192.599999999999,
+    "host_verification": "passed",
+    "notes": ""
+  },
+  {
+    "experiment": "A",
+    "label": "workers_lt_physical_W2_total5/round_robin",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "FFTFP32Coop",
+        "stage_0()"
+      ],
+      [
+        "FFTFP32Coop",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      9586,
+      9586,
+      9586
+    ],
+    "median_cycles": 9586,
+    "estimated_cost_legacy": 5120.6,
+    "estimated_cost_priority2": 5120.6,
+    "host_verification": "passed",
+    "notes": ""
+  },
+  {
+    "experiment": "A",
+    "label": "workers_lt_physical_W2_total5/contiguous",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "FFTFP32Coop",
+        "stage_0()"
+      ],
+      [
+        "FFTFP32Coop",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      9586,
+      9586,
+      9586
+    ],
+    "median_cycles": 9586,
+    "estimated_cost_legacy": 5120.6,
+    "estimated_cost_priority2": 5120.6,
+    "host_verification": "passed",
+    "notes": ""
+  },
+  {
+    "experiment": "A",
+    "label": "workers_lt_physical_W2_total5/balanced_contiguous",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "FFTFP32Coop",
+        "stage_0()"
+      ],
+      [
+        "FFTFP32Coop",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      9586,
+      9586,
+      9586
+    ],
+    "median_cycles": 9586,
+    "estimated_cost_legacy": 5120.6,
+    "estimated_cost_priority2": 5120.6,
+    "host_verification": "passed",
+    "notes": ""
+  },
+  {
+    "experiment": "A",
+    "label": "ragged_W4_total17/round_robin",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "FFTFP32Coop",
+        "stage_0()"
+      ],
+      [
+        "FFTFP32Coop",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      9622,
+      9622,
+      9622
+    ],
+    "median_cycles": 9622,
+    "estimated_cost_legacy": 17408.6,
+    "estimated_cost_priority2": 17408.6,
+    "host_verification": "passed",
+    "notes": ""
+  },
+  {
+    "experiment": "A",
+    "label": "ragged_W4_total17/contiguous",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "FFTFP32Coop",
+        "stage_0()"
+      ],
+      [
+        "FFTFP32Coop",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      9622,
+      9622,
+      9622
+    ],
+    "median_cycles": 9622,
+    "estimated_cost_legacy": 17408.6,
+    "estimated_cost_priority2": 17408.6,
+    "host_verification": "passed",
+    "notes": ""
+  },
+  {
+    "experiment": "A",
+    "label": "ragged_W4_total17/balanced_contiguous",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": false,
+    "spilling_kernels": [
+      [
+        "FFTFP32Coop",
+        "stage_0()"
+      ],
+      [
+        "FFTFP32Coop",
+        "stage_1()"
+      ]
+    ],
+    "cycles_raw": [
+      9622,
+      9622,
+      9622
+    ],
+    "median_cycles": 9622,
+    "estimated_cost_legacy": 17408.6,
+    "estimated_cost_priority2": 17408.6,
+    "host_verification": "passed",
+    "notes": ""
+  },
+  {
+    "experiment": "B",
+    "label": "copy_mode=scalar",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      7532,
+      7532,
+      7532
+    ],
+    "median_cycles": 7532,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | asm_verdict=VECTORIZATION_PHYSICALLY_CONFIRMED vector_mnemonic_hits={'vle32': 152, 'vse32': 205, 'vfadd': 132, 'vfmul': 56, 'vfsub': 132, 'vmv.v': 6, 'vfmacc': 24}"
+  },
+  {
+    "experiment": "B",
+    "label": "copy_mode=vectorized_contiguous",
+    "build_ok": true,
+    "run_ok": true,
+    "spill_free": true,
+    "spilling_kernels": [],
+    "cycles_raw": [
+      6722,
+      6722,
+      6722
+    ],
+    "median_cycles": 6722,
+    "estimated_cost_legacy": null,
+    "estimated_cost_priority2": null,
+    "host_verification": "passed",
+    "notes": " | asm_verdict=VECTORIZATION_PHYSICALLY_CONFIRMED vector_mnemonic_hits={'vle32': 156, 'vse32': 209, 'vfadd': 132, 'vfmul': 56, 'vfsub': 132, 'vmv.v': 6, 'vfmacc': 24}"
+  }
+]

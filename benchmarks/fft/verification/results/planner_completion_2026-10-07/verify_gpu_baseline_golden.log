@@ -1,0 +1,6 @@
+GOLDEN: clFFT complete planning result, N=2..4096
+GOLDEN: rocFFT-default complete planning result, N=2..4096
+GOLDEN: VkFFT complete planning result, N=2..4096
+GOLDEN: rocFFT-tuned deterministic candidate-generation shape, N=24
+
+ALL GOLDEN CHECKS PASSED

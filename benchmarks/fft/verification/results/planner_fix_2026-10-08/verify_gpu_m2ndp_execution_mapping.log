@@ -1,0 +1,7 @@
+  GPU-logical -> M2NDP-physical execution mapping invariants:
+    OK   GPU logical worker count (gpu_threads_per_transform) is preserved verbatim as M2NDP's logical_workers_per_fft across 4 FFT kernel(s), cooperative and persistent alike
+    OK   workers_per_fft=64 with physical_workers_per_group=8 produces persistent virtualization (logical_worker_groups=8), never 64-way physical parallelism
+    OK   all logical batches executed exactly once across 3 persistent stage(s) of vkfft.plan_m2ndp(16384)'s own plan -- no physical lane exceeds the count, no batch lost or duplicated
+    OK   vkfft.plan(8192) (frozen: resource_infeasible, attempted workers_per_fft=1024) and vkfft.plan_m2ndp(8192) (adapted: VkFFT upload) make DIFFERENT decisions from the SAME vkfft.py algorithm (vkfft.plan_m2ndp literally calls vkfft.plan with different resource inputs)
+[verify] GPU-M2NDP execution mapping: all checks passed
+

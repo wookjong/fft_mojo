@@ -1,0 +1,175 @@
+{
+  "config": "M2NDP",
+  "config_md5": "33d240c5",
+  "config_path": "/work/third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config",
+  "core_mhz": 2000,
+  "cycles": 19419,
+  "detour": "",
+  "dir": "/fft-work/verification/results/execution_codegen_fixes_2026-10-08/simulator/recursive_cooperative_n960_b2/fft-execution-recursive_cooperative_n960_b2_M2NDP/20261007-154353.012",
+  "dram": {
+    "channels": 28,
+    "max_pct": 1.24,
+    "mean_pct": 1.01,
+    "min_pct": 0.67
+  },
+  "exit": 0,
+  "finished": "2026-10-07T15:44:22+00:00",
+  "host_log": "host.log",
+  "kernels": [
+    {
+      "finished": 2001,
+      "launch_id": "0",
+      "name": "recursive_cooperative_n960_b2::FFTRecPre0::stage_0()",
+      "started": 922
+    },
+    {
+      "finished": 4403,
+      "launch_id": "1",
+      "name": "recursive_cooperative_n960_b2::FFTRecNear0::stage_0()",
+      "started": 2912
+    },
+    {
+      "finished": 6091,
+      "launch_id": "2",
+      "name": "recursive_cooperative_n960_b2::FFTRecNear0::stage_1()",
+      "started": 4511
+    },
+    {
+      "finished": 8937,
+      "launch_id": "3",
+      "name": "recursive_cooperative_n960_b2::FFTRecNear0::stage_2()",
+      "started": 6208
+    },
+    {
+      "finished": 10808,
+      "launch_id": "4",
+      "name": "recursive_cooperative_n960_b2::FFTRecMid0::stage_0()",
+      "started": 9740
+    },
+    {
+      "finished": 14337,
+      "launch_id": "5",
+      "name": "recursive_cooperative_n960_b2::FFTRecLeaf1::stage_0()",
+      "started": 11905
+    },
+    {
+      "finished": 16755,
+      "launch_id": "6",
+      "name": "recursive_cooperative_n960_b2::FFTRecLeaf1::stage_1()",
+      "started": 14448
+    },
+    {
+      "finished": 17561,
+      "launch_id": "7",
+      "name": "recursive_cooperative_n960_b2::FFTRecLeaf1::stage_2()",
+      "started": 16865
+    },
+    {
+      "finished": 19312,
+      "launch_id": "8",
+      "name": "recursive_cooperative_n960_b2::FFTRecPost0::stage_0()",
+      "started": 18450
+    }
+  ],
+  "launch_spans": [
+    2108,
+    6930,
+    1878,
+    6750,
+    1753
+  ],
+  "launches": 9,
+  "log": "simulator.log",
+  "repo": "",
+  "stats": {
+    "ctrl.addr_issue": 1048,
+    "ctrl.cycle": 0,
+    "ctrl.exit_issue": 0,
+    "ctrl.f_issue": 0,
+    "ctrl.i_issue": 1086,
+    "ctrl.inst_issue": 2134,
+    "ctrl.ldst_issue": 91,
+    "ctrl.sf_issue": 0,
+    "ctrl.spad_issue": 957,
+    "ctrl.spad_read": 0,
+    "ctrl.spad_write": 0,
+    "ctrl.v_addr_issue": 0,
+    "ctrl.v_issue": 0,
+    "ctrl.v_ldst_issue": 0,
+    "ctrl.v_sf_issue": 0,
+    "ctrl.v_spad_issue": 0,
+    "launches": 9,
+    "ndp.addr_issue": 22576,
+    "ndp.cycle": 0,
+    "ndp.exit_issue": 2184,
+    "ndp.f_issue": 1848,
+    "ndp.i_issue": 153772,
+    "ndp.inst_issue": 276536,
+    "ndp.ldst_issue": 2176,
+    "ndp.sf_issue": 0,
+    "ndp.spad_issue": 20400,
+    "ndp.spad_read": 0,
+    "ndp.spad_write": 0,
+    "ndp.v_addr_issue": 49636,
+    "ndp.v_issue": 46520,
+    "ndp.v_ldst_issue": 19476,
+    "ndp.v_sf_issue": 0,
+    "ndp.v_spad_issue": 30160
+  },
+  "stats_file": "stats.txt",
+  "tasks": [
+    {
+      "arrived": 70,
+      "called": 0,
+      "finished": 2036,
+      "issued": 0,
+      "launch": 0,
+      "notified": 2108,
+      "started": 70,
+      "task": 0
+    },
+    {
+      "arrived": 2178,
+      "called": 2108,
+      "finished": 8966,
+      "issued": 2108,
+      "launch": 1,
+      "notified": 9038,
+      "started": 2178,
+      "task": 1
+    },
+    {
+      "arrived": 9108,
+      "called": 9038,
+      "finished": 10844,
+      "issued": 9038,
+      "launch": 2,
+      "notified": 10916,
+      "started": 9108,
+      "task": 2
+    },
+    {
+      "arrived": 10986,
+      "called": 10916,
+      "finished": 17594,
+      "issued": 10916,
+      "launch": 3,
+      "notified": 17666,
+      "started": 10986,
+      "task": 3
+    },
+    {
+      "arrived": 17736,
+      "called": 17666,
+      "finished": 19347,
+      "issued": 17666,
+      "launch": 4,
+      "notified": 19419,
+      "started": 17736,
+      "task": 4
+    }
+  ],
+  "time_us": 9.71,
+  "wall_s": 28.0,
+  "workload": "fft-execution-recursive_cooperative_n960_b2"
+}

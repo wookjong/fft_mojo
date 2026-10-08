@@ -1,0 +1,8 @@
+  Cooperative batch partition alternatives (P2.2):
+    OK   all 3 partition modes: union==all batches, no duplicates, deterministic, across 9 (batch_count, worker_count) combinations
+    OK   n=17 workers=4: contiguous sizes=[5, 5, 5, 2] (ragged tail) != balanced_contiguous sizes=[5, 4, 4, 4] (remainder spread across the front) -- genuinely distinct partitions, not just distinct orderings
+    OK   partition_batches(mode='round_robin') matches the pre-P2.2 strided formula exactly
+    OK   N=2048 radices=(4,4,4,4,4,2): all 3 partition modes compute bit-for-bit identical, numpy-correct FFT output (max_err < 1e-3 vs numpy.fft)
+    OK   generate_partition_mode_candidates dedups correctly: 1 candidate for a small leaf (all modes degenerate identically), 2 for a larger one (round_robin distinct, contiguous==balanced_contiguous when evenly divisible)
+[verify] cooperative batch partition alternatives: all checks passed
+

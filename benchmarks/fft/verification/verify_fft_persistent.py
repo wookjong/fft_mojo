@@ -24,32 +24,11 @@ codegen.fft_persistent_codegen's own top docstring for why round-specific
 functions don't work on the real simulator) and called `rounds` times in
 a row, exactly mirroring device_main's own repeated `launch_parallel`
 calls to the same function; round state threads through the same
-per-physical-unit `round_tracker` scratchpad cell the real generated code
-uses, not a Python-level round counter this harness invents separately.
+worker-private `round_tracker` scratchpad cells used by generated code.
+The harness uses ordinary shared-memory loads, with no phase snapshots.
+`phase_worker_order` can reorder workers independently for every phase to
+exercise round and wave counter independence, including ragged worker waves.
 
-REVISED 2026-09-14 (worker-wave FUSION -- see docs/worker_wave_fusion.md):
-a stage phase is called exactly ONCE per round now, regardless of
-`workers_per_fft` -- `codegen.fft_persistent_codegen.emit_stage_phase`
-moved the "visit every logical worker" loop INSIDE the compiled stage
-function itself (a plain runtime `while` loop over `logical_worker_id`),
-so this harness's own translated-and-exec'd Python function already
-performs that loop when called, the same way it already handles
-`emit_bulk_copy_phase`'s own pre-existing `while i < length: ...`
-strided-copy loop -- no new translation machinery, no `wave_tracker`
-scratchpad mirror needed any more (removed, since the real generated code
-no longer has one).
-
-REVISED 2026-09-14 (physical-lane strip-mining -- see docs/
-physical_lane_strip_mining.md): `run_persistent_kernel` now takes a
-`mode` parameter (`"wave"`/`"fused"`/`"physical"`, forwarded straight to
-`codegen.fft_persistent_codegen.emit_stage_phase` -- see that module's
-own `ExecutionMode` docstring) so this harness can exercise and cross-
-check all three execution-lowering strategies against the SAME plan.
-`wave_tracker` is restored here (mirroring `round_tracker`) but only
-matters for `mode="wave"` -- harmless, unused scratchpad for the other
-two modes, the same "always present, only sometimes referenced by the
-translated source" discipline this file already used before Mode B's
-own `wave_tracker` was removed from production codegen.
 """
 
 import re
@@ -65,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codegen.fft_persistent_codegen import (
     emit_bulk_copy_phase,
+    resolve_persistent_options,
     emit_stage_phase,
     generate_persistent_fft_kernel,
 )
@@ -77,43 +57,6 @@ from planning.execution.fft_plan_persistent import (
 from verification.verify_fft_harness import Ptr, SimdVec, _simd, _translate_emitted_lines
 
 
-class _FrozenReadPtr:
-    """Wraps one group's `round_tracker` for the duration of a single
-    phase's own `launch_parallel` call: every worker's `.load(...)` sees
-    the value as of the *start* of this call, regardless of the order
-    this harness happens to iterate workers in -- matching real
-    hardware's own apparent guarantee (confirmed via a from-scratch
-    real-hardware experiment this session, not kept in-repo: every one
-    of 256 workers across 32 independent physical units read the
-    identical tracker value within one `launch_parallel` call, even
-    though worker_id==0 of each group also writes that same tracker
-    within the same call). `.store(...)` writes straight through to the
-    real `Ptr`, so the write is visible starting the *next* phase call --
-    only same-call visibility is frozen. This harness runs workers in a
-    plain sequential Python loop (`run_kernel`'s own established
-    idiom -- see its docstring), which has no such same-call ordering
-    guarantee on its own; without this wrapper, worker 0's own bump
-    would leak into worker 1..7's reads later in the same loop, purely
-    an artifact of this harness's own execution order, not a real race.
-    Only `round_tracker` needs this: `buf_a`/`buf_b` are never read and
-    written by different workers within the same phase call (preload
-    writes buf_a but never reads it; a stage reads buf[i%2]/writes
-    buf[(i+1)%2], never the same bank in one call) -- see
-    codegen.fft_persistent_codegen's own top docstring.
-    """
-
-    def __init__(self, snapshot: "np.ndarray", real: Ptr) -> None:
-        self._snapshot = snapshot
-        self._real = real
-
-    def load(self, offset: int, width: int) -> SimdVec:
-        offset = int(offset)
-        return self._snapshot[offset : offset + int(width)].copy().view(SimdVec)
-
-    def store(self, offset: int, value) -> None:
-        self._real.store(offset, value)
-
-
 def run_persistent_kernel(
     plan: FFTCodegenPlan,
     *,
@@ -124,12 +67,14 @@ def run_persistent_kernel(
     output_imag: Ptr,
     compute_lanes: int | None = 4,
     narrow_middle_stages: bool = True,
-    mode: str = "physical",
-    copy_mode: str = "scalar",
+    mode: str | None = None,
+    copy_mode: str | None = None,
     vector_width: int = 4,
+    phase_worker_order=None,
 ) -> None:
     if plan.persistent is None:
         raise ValueError("run_persistent_kernel requires a persistent plan")
+    mode, copy_mode = resolve_persistent_options(plan, mode=mode, copy_mode=copy_mode)
     pw = plan.persistent
     workers_per_group = pw.workers_per_group
     workers_per_fft = pw.workers_per_fft
@@ -142,15 +87,12 @@ def run_persistent_kernel(
         ns = types.SimpleNamespace()
         for buf in plan.scratchpad_buffers:
             setattr(ns, buf.name, Ptr(buf.elements))
-        # One independent round_tracker per physical unit, zero-initialized
-        # -- matches codegen.fft_persistent_codegen's own scratchpad
-        # round_tracker exactly (see that module's own top docstring for
-        # why round state lives here instead of a compile-time constant).
-        ns.round_tracker = Ptr(1)
+        # One private cell per worker, zero-initialized, on each physical unit.
+        ns.round_tracker = Ptr(workers_per_group)
         # Only referenced by mode="wave"'s own translated source -- see
         # this module's own top docstring for why it's harmless to always
         # allocate regardless of mode.
-        ns.wave_tracker = Ptr(1)
+        ns.wave_tracker = Ptr(workers_per_group)
         group_namespaces.append(ns)
 
     p_ns = types.SimpleNamespace(
@@ -159,6 +101,8 @@ def run_persistent_kernel(
         output_real_base=output_real,
         output_imag_base=output_imag,
     )
+    for buffer in plan.workspace_buffers:
+        setattr(p_ns, buffer.name, Ptr(buffer.elements))
 
     current = {"global_id": 0}
 
@@ -177,25 +121,23 @@ def run_persistent_kernel(
         exec(code, namespace)
         return namespace, namespace[name]
 
+    phase_index = 0
+
     def run_phase(namespace: dict, fn) -> None:
-        # Fresh frozen round_tracker snapshot for THIS phase call only --
-        # see _FrozenReadPtr's own docstring. buf_a/buf_b pass straight
-        # through (same real Ptr every group already holds).
-        phase_views = [
-            types.SimpleNamespace(
-                round_tracker=_FrozenReadPtr(ns.round_tracker.arr.copy(), ns.round_tracker),
-                wave_tracker=_FrozenReadPtr(ns.wave_tracker.arr.copy(), ns.wave_tracker),
-                **{buf.name: getattr(ns, buf.name) for buf in plan.scratchpad_buffers},
-            )
-            for ns in group_namespaces
-        ]
-        for global_id in range(launch_uthreads):
+        nonlocal phase_index
+        order = (list(range(launch_uthreads)) if phase_worker_order is None
+                 else list(phase_worker_order(phase_index, launch_uthreads)))
+        phase_index += 1
+        if sorted(order) != list(range(launch_uthreads)):
+            raise ValueError("phase_worker_order must visit every physical worker exactly once")
+        for global_id in order:
             current["global_id"] = global_id
             software_group_id = global_id // workers_per_group
-            namespace[plan.kernel_name] = phase_views[software_group_id]
+            namespace[plan.kernel_name] = group_namespaces[software_group_id]
             fn()
 
-    buffer_names = tuple(b.name for b in plan.scratchpad_buffers)
+    uses_spad = pw.storage_mode == "scratchpad"
+    buffer_names = tuple(b.name for b in plan.scratchpad_buffers) if uses_spad else ("buf_a", "buf_b")
     final_buffer = buffer_names[len(plan.stages) % 2]
     rounds = num_rounds(num_logical_blocks, software_group_count)
     waves = _worker_waves(workers_per_fft, workers_per_group)
@@ -213,9 +155,10 @@ def run_persistent_kernel(
         num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
         to_scratchpad=True, buffer_name=buffer_names[0], bump_round=False,
         copy_mode=copy_mode, vector_width=vector_width,
-    ))
+    )) if uses_spad else None
 
     stage_phases: list[tuple[dict, object]] = []
+    twiddle_table: list[tuple[float,float]] = []
     for stage in plan.stages:
         name, lines = emit_stage_phase(
             plan=plan, stage=stage, software_group_count=software_group_count,
@@ -223,8 +166,15 @@ def run_persistent_kernel(
             workers_per_fft=workers_per_fft,
             compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
             mode=mode,
+            twiddle_table=twiddle_table,
         )
         stage_phases.append(compile_phase(name, lines))
+    if pw.loop_stages:
+        p_ns.loop_twiddle_real_base = Ptr(max(1,len(twiddle_table)))
+        p_ns.loop_twiddle_imag_base = Ptr(max(1,len(twiddle_table)))
+        for i,(r,v) in enumerate(twiddle_table):
+            p_ns.loop_twiddle_real_base.arr[i] = r
+            p_ns.loop_twiddle_imag_base.arr[i] = v
 
     writeback_phase = compile_phase(*emit_bulk_copy_phase(
         plan=plan, name="writeback", software_group_count=software_group_count,
@@ -234,7 +184,8 @@ def run_persistent_kernel(
     ))
 
     for _ in range(rounds):
-        run_phase(*preload_phase)
+        if preload_phase is not None:
+            run_phase(*preload_phase)
         for namespace, fn in stage_phases:
             for _ in range(stage_repeat):
                 run_phase(namespace, fn)

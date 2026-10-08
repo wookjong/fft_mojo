@@ -1,0 +1,5 @@
+warning: <unknown>:0:0: in function global_n64_w17_b65::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (160-byte frame); spills go to DRAM
+
+warning: <unknown>:0:0: in function global_n64_w17_b65::PersistentFFT::stage_1() void (): M2NDP kernel spills to memory (16-byte frame); spills go to DRAM
+
+[host] persistent FFT verification passed

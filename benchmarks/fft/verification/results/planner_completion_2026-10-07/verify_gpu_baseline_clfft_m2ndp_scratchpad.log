@@ -1,0 +1,7 @@
+  clFFT M2NDP-adapted scratchpad resource model (N=8192 regression, P1.1):
+    OK   m2ndp_resource_complex_bytes()=16 (shared with the VkFFT fix, single-sourced from persistent_leaf_scratchpad_bytes)
+    OK   N=8192: 8-byte convention -> threshold=8192 (looks single-kernel-feasible) but real M2NDP leaf needs 131072 > 122880 bytes; 16-byte-corrected convention -> threshold=4096 (correctly routes into the large-1D split up front)
+    OK   frozen clfft.plan(N=8192) unaffected: its own threshold (get_max_1d_length()) still uses CLFFT_LDS_BYTES/CLFFT_ELEM_BYTES=8 unconditionally, independent of `target` and of this fix
+    OK   clfft.plan_m2ndp(N=8192) now builds an OK, numerically correct plan (decomposition=large1D_4step, max_err=1.776e-07) -- no more late RESOURCE_INFEASIBLE mismatch
+    OK   clfft.get_max_1d_length()'s own default (elem_bytes omitted) == explicit elem_bytes=CLFFT_ELEM_BYTES=8 -- adding this parameter did not change the frozen baseline's default behavior
+[verify] clFFT M2NDP-adapted scratchpad resource model: all checks passed

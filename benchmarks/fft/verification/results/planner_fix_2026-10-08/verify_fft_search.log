@@ -1,0 +1,18 @@
+  fft_plan_search.py: radix x execution joint search (step 9):
+    OK   N=960 near=30: 'default' radix tier x 8 distinct worker sequences: [('persistent', 'persistent'), ('persistent', 2), ('persistent', None), (2, 'persistent'), (2, 2), (2, None), (None, 'persistent'), (None, 2)]
+    OK   N=960 near=30: worker_sequence=(None, 2) x 2 distinct radix tiers: ['default', 'wide']
+    OK   N=960 near=30: distinct (radix, worker) pairs coexist: ('wide', ('persistent', None)) and ('default', (2, None))
+    OK   N=960 near=30: per-leaf sequences (2, None) and (None, 2) both generated and distinct (w=2)
+    OK   N=960 near=30: illegal worker-sequence-length combination rejected without crashing the search (8 legal candidates survived)
+    OK   N=105: identically-coalescing 'wide' tier deduped against 'default' (only ['default'] survived)
+    OK   N=960: 109 candidates, all distinct plan signatures (21 cooperative/persistent, surviving via whichever step built them first)
+    OK   N=144: generate_candidates includes 7 candidate(s) only step 9 could produce (non-default tier x worker sequence) among 148 total
+    OK   N=144: probe_and_rerank_candidates' own signature/field expectations hold for 7 step-9 candidate(s) (real-hardware rank_by_cycles run separately, not part of this fast check)
+[verify] fft_plan_search step-9 joint search: all checks passed
+
+  fft_plan_search.py: compute_lanes variant sweep (step 11):
+    OK   N=960: generate_candidates includes both compute_lanes variants ('unnarrowed', 'all_scalar'), every leaf stage's own compute_lanes set
+    OK   N=960: 2 lane-variant candidate(s) each have a _plan_signature distinct from the plain baseline's
+    OK   N=960: probe_and_rerank_candidates' own signature/field expectations hold for 2 step-11 candidate(s) (real-hardware run separately)
+[verify] fft_plan_search step-11 compute_lanes sweep: all checks passed
+

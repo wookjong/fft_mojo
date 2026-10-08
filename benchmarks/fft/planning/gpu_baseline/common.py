@@ -44,7 +44,7 @@ path, and never letting codegen make a choice a GPU baseline was supposed
 to have made already.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from planning.execution.fft_plan_cooperative import make_cooperative_leaf_plan
@@ -489,19 +489,28 @@ def map_cooperative_kernel(
        architectural wall -- see the doc above for why that belief was
        itself the limit, not the hardware). Neither status is reachable
        from a `workers_per_fft` reason any more.
-    3. RESOURCE_INFEASIBLE when the GPU planner's own chosen
-       `fft_slots_wanted` worth of cooperating FFT slots does not fit in
-       one NDP unit's own scratchpad (`target.spad_capacity_bytes`),
-       computed from `leaf_scratchpad_bytes` above -- never from M2NDP's
-       own `_cap_max_uthread`'s auto-shrinking behavior, which would
-       silently replace the GPU's own chosen value with a smaller,
-       M2NDP-convenient one (exactly what section 2 forbids). Only
-       reachable from case 1 above; case 2's own worker-wave path has a
-       different, unconditional capacity check instead (`make_persistent_
-       leaf_plan`'s own `16 * length` byte requirement) -- see
-       `_map_worker_wave_kernel`'s own docstring for why `fft_slots_
-       wanted` does not apply there.
+    3. If the original local-bank/slot allocation does not fit, preserve
+       the radix and logical workers using persistent global staging.
+       Original workgroup slots are serialized on the physical groups;
+       the first/last FFT stages access input/output directly. Extra DRAM
+       traffic and CXL workspace are reported explicitly. This is a
+       storage lowering, not a different GPU scheme/radix decision or a
+       claimed implementation of GPU half-LDS. RESOURCE_INFEASIBLE is
+       still returned for insufficient tracker space or registrations.
     """
+    # Preserve the original choice before feasibility checks/slot trimming.
+    from .logical_plan import leaf
+    original = leaf(gpu_config.source, length, total_ffts, radices,
+                    dict(gpu_config.extra, threads_per_transform=workers_per_fft,
+                         transforms_per_block=fft_slots_wanted))
+    gpu_config = replace(gpu_config, extra=dict(gpu_config.extra,
+                                               original_gpu_plan=(original,)))
+    from radix_spec import SUPPORTED_RADICES
+    missing = sorted(set(radices) - SUPPORTED_RADICES)
+    if missing:
+        return unsupported(BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN, gpu_config,
+            f"Original GPU radix sequence {radices} requires unsupported M2NDP butterflies {missing}; "
+            "the original decision is retained without substituting a different planner choice")
     if workers_per_fft <= 0 or fft_slots_wanted <= 0:
         return unsupported(
             BaselineStatus.UNSUPPORTED_HARDWARE_MAPPING, gpu_config,
@@ -527,13 +536,11 @@ def map_cooperative_kernel(
     if bytes_per_fft > 0:
         needed = fft_slots_wanted * bytes_per_fft
         if needed > target.spad_capacity_bytes:
-            return unsupported(
-                BaselineStatus.RESOURCE_INFEASIBLE, gpu_config,
-                f"the GPU planner's own {fft_slots_wanted} cooperating FFT "
-                f"slots of length={length} (radices={radices}) need {needed} "
-                f"bytes of scratchpad (LDS-equivalent), but target."
-                f"spad_capacity_bytes={target.spad_capacity_bytes} allows less "
-                f"-- refusing to silently shrink this to fit",
+            return _map_worker_wave_kernel(
+                length=length, radices=radices, workers_per_fft=workers_per_fft,
+                total_ffts=total_ffts, inverse=inverse, inverse_scale=inverse_scale,
+                kernel_name=kernel_name, target=target, gpu_config=gpu_config,
+                storage_mode="global",
             )
         forced_spad_capacity = needed
 
@@ -552,7 +559,11 @@ def map_cooperative_kernel(
             # own docstring; the only capacity check here is the one just
             # performed above, against the GPU planner's own real requirement.
             max_concurrent_scratchpad_bytes=None,
+            interleave_chunk_uthreads=target.interleave_chunk_uthreads,
         )
+        from planning.execution.kernel_registration import validate_kernel_registration
+        validate_kernel_registration(built_plan, max_kernel_register=target.max_kernel_register,
+                                     loop_stages=True)
     except ValueError as exc:
         return unsupported(BaselineStatus.RESOURCE_INFEASIBLE, gpu_config, str(exc))
 
@@ -570,6 +581,7 @@ def _map_worker_wave_kernel(
     kernel_name: str,
     target: TargetProfile,
     gpu_config: GPUKernelConfig,
+    storage_mode: str | None = None,
 ) -> BaselineResult:
     """Legalize ANY positive GPU-planner-chosen `workers_per_fft` that
     fails the `chunk % workers_per_fft == 0` divisor test above --
@@ -621,14 +633,16 @@ def _map_worker_wave_kernel(
     separated" instruction is exactly what licenses this -- concurrency
     is a physical scheduling choice, not part of the GPU algorithm itself.
 
-    Capacity: `make_persistent_leaf_plan` has its own unconditional
-    scratchpad check (`16 * length` bytes, two ping-pong banks -- see its
-    own docstring), independent of `workers_per_fft`/waves entirely
-    (scratchpad is sized by `length` alone, never duplicated per logical
-    worker -- see PersistentWorkgroupPlan's own module docstring), so no
-    separate capacity computation is needed here the way the cooperative
-    path above needs one from `leaf_scratchpad_bytes`.
+    Capacity: local ping-pong banks are used when they fit with private
+    trackers; otherwise CXL banks are reused across rounds. Global staging
+    loops over proved load/store offsets to keep large kernels compilable.
+    Neither storage choice changes the GPU radix or logical worker count.
     """
+    if storage_mode is None:
+        from planning.execution.fft_plan_persistent import persistent_tracker_scratchpad_bytes
+        required = persistent_leaf_scratchpad_bytes(length) + persistent_tracker_scratchpad_bytes(
+            target.interleave_chunk_uthreads)
+        storage_mode = "scratchpad" if required <= target.spad_capacity_bytes else "global"
     try:
         built_plan = make_persistent_leaf_plan(
             length,
@@ -639,6 +653,8 @@ def _map_worker_wave_kernel(
             target=target,
             inverse_scale=inverse_scale,
             workers_per_fft=workers_per_fft,
+            storage_mode=storage_mode,
+            loop_stages=length >= 256,
         )
     except (ValueError, NotImplementedError) as exc:
         return unsupported(BaselineStatus.RESOURCE_INFEASIBLE, gpu_config, str(exc))
@@ -732,50 +748,12 @@ def wrap_leaf_as_recursive_plan(
 
 @dataclass(frozen=True)
 class GPULogicalKernelPlan:
-    """One kernel/pass in the ORIGINAL GPU library's own execution model --
-    descriptive only (section 4 of the task this was built from: "these
-    fields must NOT automatically control M2NDP physical scheduling," and
-    indeed nothing in this package reads a `GPULogicalKernelPlan` back
-    into a planning decision -- it is built AFTER a plan already exists,
-    purely for reporting/comparison).
+    """Immutable GPU kernel decision captured before M2NDP lowering.
 
-    `gpu_threads_per_transform`/`gpu_transforms_per_workgroup`: GPU
-    vocabulary (clFFT's `workgroup_size // num_transforms` and
-    `num_transforms`; rocFFT's `threads_per_transform`/`transforms_per_
-    block`; VkFFT's `axisblock_threads_per_transform`/the AxisBlockSplitter
-    batch) -- `None` for a transpose kernel (PRE/MIDDLE/POST), which is not
-    a "transform" in this sense at all (see `gpu_transpose_role`).
-    `gpu_transforms_per_workgroup` (only) is ALSO `None` for an FFT kernel
-    lowered via M2NDP's persistent/worker-wave-virtualization path: the
-    GPU planner's own chosen value there is discarded before the M2NDP
-    plan is even built (`gpu_baseline.common._map_worker_wave_kernel`
-    forces exactly one FFT slot per physical group, architecturally, and
-    never records what the GPU's own `fft_slots_wanted` had asked for) --
-    genuinely NOT RECOVERABLE from the plan tree, not merely omitted here;
-    see `reconstruct_gpu_logical_plan`'s own comment at that branch.
-    `gpu_threads_per_transform` is always recoverable (the GPU's own
-    cooperation-width choice is never clamped -- see this section's own
-    top docstring).
-
-    `gpu_shared_memory_bytes`: this kernel's own one workgroup/group's LDS-
-    equivalent footprint (`gpu_baseline.common`'s own documented GPU-LDS ->
-    M2NDP-scratchpad translation -- the byte NUMBER a real GPU and this
-    plan's own M2NDP scratchpad allocation agree on, even though the two
-    architectures reach it differently, e.g. persistent's own forced two-
-    ping-pong-bank scheme vs. a real GPU's in-place shared-memory reuse --
-    see docs/vkfft_m2ndp_scratchpad_resource_model.md for exactly where
-    that difference matters).
-
-    `gpu_transpose_role`: `"PRE"`/`"MIDDLE"`/`"POST"` for a transpose
-    kernel (derived from this project's own `kernel_name` convention --
-    every baseline's transpose-kernel builder names it `..Pre{idx}`/
-    `..Mid{idx}`/`..Post{idx}`, see e.g. `vkfft._recursive_result`), `None`
-    for an FFT kernel.
-
-    `gpu_fused_operations`: descriptive tags only (`"twiddle"` when a
-    transpose kernel also applies a cross-block twiddle -- clFFT/VkFFT's
-    own `fft_3StepTwiddle`/large-twiddle-table mechanism; `"large_twiddle"`
-    when an FFT kernel's own last stage fuses one -- see `LargeTwiddlePlan`).
+    WGS/TPT/TPB retain the original choice even when physical slots are
+    trimmed or workers virtualized. LDS is source metadata, or None when
+    not extracted; it never refers to an M2NDP scratchpad allocation.
+    Traffic is an FP32 full-array read/write estimate, not a hardware counter.
     """
 
     planner_name: str
@@ -787,7 +765,7 @@ class GPULogicalKernelPlan:
     gpu_workgroup_size: int | None
     gpu_threads_per_transform: int | None
     gpu_transforms_per_workgroup: int | None
-    gpu_shared_memory_bytes: int
+    gpu_shared_memory_bytes: int | None
     gpu_fused_operations: tuple[str, ...]
     gpu_transpose_role: str | None
     gpu_global_read_bytes: int
@@ -810,12 +788,11 @@ class GPULogicalKernelPlan:
     # set (M2NDP's own scratchpad-halving mechanism, `pingpong_needed`, is
     # keyed on stage count, a completely different axis from rocFFT's own
     # per-batch LDS halving -- see `rocfft.gpu_logical_lds_bytes`'s own
-    # docstring) -- `gpu_shared_memory_bytes` (M2NDP's REAL scratchpad
-    # allocation, what resource feasibility actually uses) is completely
-    # unaffected by this field either way.
+    # docstring). Physical scratchpad allocation is reported separately.
     gpu_memory_optimization: str | None = None
     gpu_logical_shared_memory_bytes: int | None = None
     m2ndp_memory_optimization_status: str | None = None
+    gpu_metadata: tuple[tuple[str, object], ...] = ()
 
 
 def _transpose_role_from_kernel_name(kernel_name: str) -> str:
@@ -832,134 +809,18 @@ def _transpose_role_from_kernel_name(kernel_name: str) -> str:
     )
 
 
-def _gpu_scheme_label(gpu_config: GPUKernelConfig) -> str:
-    """A short, human-readable scheme label from this baseline's own root
-    `GPUKernelConfig` -- e.g. `"vkfft: num_passes=2 is_pow2=True"`,
-    `"clfft-m2ndp: decomposition=large1D_4step"`. Every baseline's own
-    `extra` dict already carries this information (populated at each
-    baseline's own top-level `plan`/`plan_m2ndp` entry point) -- this just
-    formats it consistently instead of a caller reaching into `extra` by
-    hand with baseline-specific key knowledge."""
-    parts = [f"{k}={v}" for k, v in gpu_config.extra.items()]
-    return f"{gpu_config.source}: " + (", ".join(parts) if parts else "(no scheme metadata)")
+def reconstruct_gpu_logical_plan(result: BaselineResult) -> tuple[GPULogicalKernelPlan, ...]:
+    """Return the immutable pre-lowering snapshot, including failed mappings.
 
-
-def reconstruct_gpu_logical_plan(
-    result: BaselineResult,
-) -> tuple[GPULogicalKernelPlan, ...]:
-    """Walk `result.plan` (already built) and reconstruct one
-    `GPULogicalKernelPlan` per kernel, in execution order -- see this
-    section's own top docstring for why this is a RECONSTRUCTION (from
-    `CooperationPlan`/`PersistentWorkgroupPlan`/stage radices/host byte
-    counts already on the plan) rather than a value threaded through from
-    each baseline's own recursive builder, and what that costs (some per-
-    leaf GPU-native metadata, e.g. VkFFT's own per-leaf `upload_id`, is not
-    recoverable this way -- only the ROOT `gpu_config` survives).
-    `result.status` must be `BaselineStatus.OK` (a refusal has no plan to
-    walk)."""
-    if result.status is not BaselineStatus.OK:
-        raise ValueError(
-            f"reconstruct_gpu_logical_plan requires status=OK, got {result.status}"
-        )
-    assert result.plan is not None
-    scheme = _gpu_scheme_label(result.gpu_config)
-    planner_name = result.gpu_config.source
-
-    entries: list[GPULogicalKernelPlan] = []
-    for kernel_id, node in enumerate(flatten_recursive_node(result.plan.root)):
-        if isinstance(node, PhysicalTransposePlan):
-            bytes_moved = node.replica_count * node.rows * node.cols * 2 * 4
-            entries.append(
-                GPULogicalKernelPlan(
-                    planner_name=planner_name, gpu_scheme=scheme, gpu_kernel_id=kernel_id,
-                    pass_id=kernel_id, fft_length=node.rows * node.cols,
-                    radix_sequence=(), gpu_workgroup_size=None,
-                    gpu_threads_per_transform=None, gpu_transforms_per_workgroup=None,
-                    gpu_shared_memory_bytes=node.scratchpad_elements * 4,
-                    gpu_fused_operations=("twiddle",) if node.twiddle_modulus is not None else (),
-                    gpu_transpose_role=_transpose_role_from_kernel_name(node.kernel_name),
-                    gpu_global_read_bytes=bytes_moved, gpu_global_write_bytes=bytes_moved,
-                )
-            )
-            continue
-
-        assert isinstance(node, FFTCodegenPlan)
-        radices = tuple(stage.radix for stage in node.stages)
-        if node.cooperation is not None:
-            threads_per_transform = node.cooperation.workers_per_fft
-            transforms_per_workgroup = node.cooperation.fft_slots_per_group
-        elif node.persistent is not None:
-            # `threads_per_transform`: the GPU planner's own LOGICAL
-            # choice, verbatim -- see this section's own top docstring.
-            #
-            # `transforms_per_workgroup`: DELIBERATELY `None`, not `1`.
-            # `_map_worker_wave_kernel` (this module, reached whenever
-            # cooperation width needs worker-wave virtualization) DISCARDS
-            # the GPU planner's own `fft_slots_wanted`/`num_transforms`
-            # choice entirely before building the M2NDP plan at all (see
-            # that function's own docstring: "fft_slots_per_group is
-            # architecturally forced to 1 in this regime... a GPU
-            # planner's own fft_slots_wanted > 1 in this regime is honored
-            # by running those transforms one after another"). The GPU's
-            # own intended value is therefore NOT RECOVERABLE from the
-            # plan tree at all here -- reporting `1` would silently
-            # substitute M2NDP's own forced PHYSICAL value for the GPU's
-            # own LOGICAL intent, exactly the conflation section 7 of the
-            # task this was built from forbids ("do NOT change the GPU
-            # logical plan... to fit M2NDP"). See `M2NDPPhysicalKernel
-            # Execution.fft_slots_per_group` (always `1` here) for the
-            # M2NDP-physical side of this same fact, and docs/
-            # gpu_m2ndp_execution_boundary.md's own "G. Remaining
-            # mismatches" for this exact gap.
-            threads_per_transform = node.persistent.workers_per_fft
-            transforms_per_workgroup = None
-        else:
-            # Non-cooperative: one physical microthread owns one whole
-            # sub-FFT outright -- GPU vocabulary's "one work-item per
-            # transform," `max_uthread` transforms sharing physical launch
-            # width (not a single "workgroup" in the GPU sense, but the
-            # closest available count of co-resident transforms).
-            threads_per_transform = 1
-            transforms_per_workgroup = node.max_uthread
-        workgroup_size = (
-            threads_per_transform * transforms_per_workgroup
-            if transforms_per_workgroup is not None else None
-        )
-        shared_bytes = sum(buf.elements for buf in node.scratchpad_buffers) * 4
-        bytes_moved = node.host.total_elems * 2 * 4
-        # P1.2 (rocFFT half_lds -- see docs/rocfft_half_lds_classification.md):
-        # only ever present in `result.gpu_config.extra` for a rocFFT-
-        # sourced root config (rocfft.py's own `_map_config`) -- `None`
-        # for every other baseline/kernel. rocfft.py's own single-kernel-
-        # leaf scope (see that module's own SCOPE LIMIT) means there is
-        # always exactly one kernel, so this ROOT-level metadata IS this
-        # one kernel's own metadata -- no per-leaf-loss the way VkFFT's
-        # own upload_id has (see this section's own top docstring).
-        half_lds = result.gpu_config.extra.get("half_lds")
-        memory_optimization = "half_lds" if half_lds else None
-        gpu_logical_shared_bytes = (
-            result.gpu_config.extra.get("gpu_logical_lds_bytes") if half_lds else None
-        )
-        memory_optimization_status = (
-            result.gpu_config.extra.get("m2ndp_half_lds_status") if half_lds else None
-        )
-        entries.append(
-            GPULogicalKernelPlan(
-                planner_name=planner_name, gpu_scheme=scheme, gpu_kernel_id=kernel_id,
-                pass_id=kernel_id, fft_length=node.length, radix_sequence=radices,
-                gpu_workgroup_size=workgroup_size,
-                gpu_threads_per_transform=threads_per_transform,
-                gpu_transforms_per_workgroup=transforms_per_workgroup,
-                gpu_shared_memory_bytes=shared_bytes,
-                gpu_fused_operations=("large_twiddle",) if node.large_twiddle is not None else (),
-                gpu_transpose_role=None,
-                gpu_global_read_bytes=bytes_moved, gpu_global_write_bytes=bytes_moved,
-                gpu_memory_optimization=memory_optimization,
-                gpu_logical_shared_memory_bytes=gpu_logical_shared_bytes,
-                m2ndp_memory_optimization_status=memory_optimization_status,
-            )
-        )
-    return tuple(entries)
+    The historical function name remains for callers. No physical tree,
+    scratchpad buffer or clipped FFT-slot count is read to construct it.
+    """
+    original = result.gpu_config.extra.get("original_gpu_plan")
+    if original is None:
+        raise ValueError("baseline has no preserved original GPU plan")
+    if not original:
+        raise ValueError(result.gpu_config.extra.get("gpu_plan_capture_error") or "original GPU plan is unavailable")
+    return tuple(original)
 
 
 @dataclass(frozen=True)
@@ -1000,7 +861,7 @@ class M2NDPPhysicalKernelExecution:
     """
 
     strategy: str
-    gpu_kernel_id: int
+    physical_node_id: int
     logical_workers_per_fft: int | None
     physical_workers_per_group: int | None
     fft_slots_per_group: int | None
@@ -1011,15 +872,20 @@ class M2NDPPhysicalKernelExecution:
     scratchpad_bytes: int
     lowering_mode: str | None
     needs_round_split: bool | None
+    storage_mode: str | None = None
+    workspace_bytes: int = 0
+
+
+    @property
+    def gpu_kernel_id(self) -> int:
+        """Compatibility alias for the physical node index, not a GPU mapping."""
+        return self.physical_node_id
 
 
 def reconstruct_m2ndp_physical_plan(
     result: BaselineResult, *, target: TargetProfile,
 ) -> tuple[M2NDPPhysicalKernelExecution, ...]:
-    """The M2NDP-physical-execution counterpart to `reconstruct_gpu_
-    logical_plan` -- same kernel order, same `gpu_kernel_id` indexing, so
-    a caller (`format_gpu_m2ndp_execution_report`) can zip the two
-    sequences by index without any further lookup."""
+    """Physical nodes in execution order, indexed independently of GPU kernels."""
     if result.status is not BaselineStatus.OK:
         raise ValueError(
             f"reconstruct_m2ndp_physical_plan requires status=OK, got {result.status}"
@@ -1031,7 +897,7 @@ def reconstruct_m2ndp_physical_plan(
         if isinstance(node, PhysicalTransposePlan):
             entries.append(
                 M2NDPPhysicalKernelExecution(
-                    strategy="transpose", gpu_kernel_id=kernel_id,
+                    strategy="transpose", physical_node_id=kernel_id,
                     logical_workers_per_fft=None, physical_workers_per_group=None,
                     fft_slots_per_group=None, logical_worker_groups=None,
                     stage_launches=None, persistent_rounds=None, stage_physical_work=(),
@@ -1046,7 +912,7 @@ def reconstruct_m2ndp_physical_plan(
         if node.cooperation is not None:
             entries.append(
                 M2NDPPhysicalKernelExecution(
-                    strategy="cooperative", gpu_kernel_id=kernel_id,
+                    strategy="cooperative", physical_node_id=kernel_id,
                     logical_workers_per_fft=node.cooperation.workers_per_fft,
                     physical_workers_per_group=node.cooperation.workers_per_fft,
                     fft_slots_per_group=node.cooperation.fft_slots_per_group,
@@ -1075,19 +941,21 @@ def reconstruct_m2ndp_physical_plan(
                 )
             entries.append(
                 M2NDPPhysicalKernelExecution(
-                    strategy="persistent", gpu_kernel_id=kernel_id,
+                    strategy="persistent", physical_node_id=kernel_id,
                     logical_workers_per_fft=pw.logical_workers_per_fft,
                     physical_workers_per_group=pw.physical_workers_per_group,
                     fft_slots_per_group=1, logical_worker_groups=pw.logical_worker_groups,
                     stage_launches=pw.stage_launches, persistent_rounds=rounds,
                     stage_physical_work=tuple(stage_lines), scratchpad_bytes=scratchpad_bytes,
                     lowering_mode=pw.lowering_mode, needs_round_split=None,
+                    storage_mode=pw.storage_mode,
+                    workspace_bytes=sum(b.elements * 4 for b in node.workspace_buffers),
                 )
             )
         else:
             entries.append(
                 M2NDPPhysicalKernelExecution(
-                    strategy="non_cooperative", gpu_kernel_id=kernel_id,
+                    strategy="non_cooperative", physical_node_id=kernel_id,
                     logical_workers_per_fft=None, physical_workers_per_group=None,
                     fft_slots_per_group=node.max_uthread, logical_worker_groups=None,
                     stage_launches=1, persistent_rounds=None, stage_physical_work=(),
@@ -1098,82 +966,92 @@ def reconstruct_m2ndp_physical_plan(
     return tuple(entries)
 
 
-def format_gpu_m2ndp_execution_report(
-    result: BaselineResult, *, target: TargetProfile,
-) -> str:
-    """Unified GPU-logical / M2NDP-physical execution report for one
-    `BaselineResult` -- section 9 of the task this was built from. Two
-    clearly separated sections per kernel; no field is ever merged across
-    them (a reader sees the GPU planner's own choice and M2NDP's own
-    physical realization of it side by side, never collapsed into one
-    number). `result.status` must be `BaselineStatus.OK`."""
-    gpu_plan = reconstruct_gpu_logical_plan(result)
-    m2ndp_plan = reconstruct_m2ndp_physical_plan(result, target=target)
-    assert len(gpu_plan) == len(m2ndp_plan)
+@dataclass(frozen=True)
+class LoweringOverhead:
+    gpu_kernel_count: int
+    physical_plan_nodes: int
+    added_plan_nodes: int
+    added_transpose_nodes: int
+    gpu_full_array_bytes: int
+    m2ndp_full_array_bytes: int
+    additional_full_array_bytes: int
+    full_array_traffic_ratio: float | None
 
-    lines: list[str] = []
-    lines.append(f"BASELINE RESULT: {result.gpu_config.source} length={result.gpu_config.length}")
-    lines.append(f"status: {result.status.value}")
-    lines.append("")
 
-    for gpu_kernel, m2ndp_kernel in zip(gpu_plan, m2ndp_plan):
-        lines.append(f"{'=' * 50}")
-        lines.append(
-            f"KERNEL {gpu_kernel.gpu_kernel_id}"
-            + (f" ({gpu_kernel.gpu_transpose_role} transpose)" if gpu_kernel.gpu_transpose_role else " (FFT)")
-        )
-        lines.append(f"{'=' * 50}")
-        lines.append("-- GPU LOGICAL EXECUTION --")
-        lines.append(f"  planner:                       {gpu_kernel.planner_name}")
-        lines.append(f"  scheme:                        {gpu_kernel.gpu_scheme}")
-        lines.append(f"  pass_id:                       {gpu_kernel.pass_id}")
-        lines.append(f"  fft_length:                    {gpu_kernel.fft_length}")
-        lines.append(f"  radices:                       {gpu_kernel.radix_sequence}")
-        lines.append(f"  gpu_workgroup_size:            {gpu_kernel.gpu_workgroup_size}")
-        lines.append(f"  gpu_threads_per_transform:     {gpu_kernel.gpu_threads_per_transform}")
-        lines.append(f"  gpu_transforms_per_workgroup:  {gpu_kernel.gpu_transforms_per_workgroup}")
-        lines.append(f"  gpu_shared_memory_bytes:       {gpu_kernel.gpu_shared_memory_bytes}")
-        lines.append(f"  gpu_fused_operations:          {gpu_kernel.gpu_fused_operations}")
-        lines.append(f"  gpu_transpose_role:            {gpu_kernel.gpu_transpose_role}")
-        lines.append(f"  gpu_global_read_bytes:         {gpu_kernel.gpu_global_read_bytes}")
-        lines.append(f"  gpu_global_write_bytes:        {gpu_kernel.gpu_global_write_bytes}")
-        if gpu_kernel.gpu_memory_optimization is not None:
-            # P1.2 (rocFFT half_lds) -- section format matches the task's
-            # own worked example exactly: GPU logical value, then M2NDP's
-            # own equivalence status, kept as separate lines from (never
-            # merged into) `gpu_shared_memory_bytes`/`scratchpad_bytes`.
-            lines.append(f"  gpu_memory_optimization:       {gpu_kernel.gpu_memory_optimization}")
-            lines.append(f"  gpu_logical_shared_memory_bytes: {gpu_kernel.gpu_logical_shared_memory_bytes}")
-            lines.append(f"  m2ndp_memory_optimization_status: {gpu_kernel.m2ndp_memory_optimization_status}")
-        lines.append("")
-        lines.append("-- M2NDP PHYSICAL EXECUTION --")
-        lines.append(f"  strategy:                      {m2ndp_kernel.strategy}")
-        lines.append(f"  logical_workers_per_fft:       {m2ndp_kernel.logical_workers_per_fft}")
-        lines.append(f"  physical_workers_per_group:    {m2ndp_kernel.physical_workers_per_group}")
-        lines.append(f"  fft_slots_per_group:           {m2ndp_kernel.fft_slots_per_group}")
-        lines.append(f"  logical_worker_groups:         {m2ndp_kernel.logical_worker_groups}")
-        lines.append(f"  stage_launches:                {m2ndp_kernel.stage_launches}")
-        lines.append(f"  persistent_rounds:             {m2ndp_kernel.persistent_rounds}")
-        lines.append(f"  lowering_mode:                 {m2ndp_kernel.lowering_mode}")
-        lines.append(f"  scratchpad_bytes:              {m2ndp_kernel.scratchpad_bytes}")
-        lines.append(f"  needs_round_split:             {m2ndp_kernel.needs_round_split}")
-        for stage_line in m2ndp_kernel.stage_physical_work:
-            lines.append(f"    {stage_line}")
-        lines.append("")
-
-    lines.append(f"{'=' * 50}")
-    lines.append("OVERALL")
-    lines.append(f"{'=' * 50}")
-    lines.append(f"  kernel_count:                  {len(gpu_plan)}")
-    lines.append(
-        f"  fft_kernels:                   "
-        f"{sum(1 for k in gpu_plan if k.gpu_transpose_role is None)}"
+def compute_lowering_overhead(result: BaselineResult) -> LoweringOverhead:
+    """Array read/write estimate, not measured DRAM traffic or launch counts."""
+    gpu = reconstruct_gpu_logical_plan(result)
+    if result.status is not BaselineStatus.OK or result.plan is None:
+        raise ValueError("lowering overhead requires a successfully mapped plan")
+    nodes = flatten_recursive_node(result.plan.root)
+    physical_bytes = sum(
+        k.replica_count * k.rows * k.cols * 16 if isinstance(k, PhysicalTransposePlan)
+        else k.estimated_dram_bytes for k in nodes)
+    gpu_bytes = sum(k.gpu_global_read_bytes + k.gpu_global_write_bytes for k in gpu)
+    return LoweringOverhead(
+        len(gpu), len(nodes), len(nodes) - len(gpu),
+        sum(isinstance(k, PhysicalTransposePlan) for k in nodes)
+        - sum(k.gpu_transpose_role is not None for k in gpu),
+        gpu_bytes, physical_bytes, physical_bytes - gpu_bytes,
+        physical_bytes / gpu_bytes if gpu_bytes else None,
     )
-    lines.append(
-        f"  transpose_kernels:             "
-        f"{sum(1 for k in gpu_plan if k.gpu_transpose_role is not None)}"
-    )
-    lines.append(f"  resource feasibility:          {result.status.value}")
-    lines.append(f"  spill_free:                    {result.spill_free}")
-    lines.append(f"  ndp_cycles:                    {result.ndp_cycles}")
+
+
+def format_gpu_m2ndp_execution_report(result: BaselineResult, *, target: TargetProfile) -> str:
+    """Independent GPU and physical sequences; they need not have equal counts."""
+    try:
+        gpu = reconstruct_gpu_logical_plan(result)
+        capture_error = None
+    except ValueError as exc:
+        gpu, capture_error = (), str(exc)
+    physical = reconstruct_m2ndp_physical_plan(result, target=target) if result.status is BaselineStatus.OK else ()
+    lines = [f"BASELINE RESULT: {result.gpu_config.source} length={result.gpu_config.length}",
+             f"status: {result.status.value}", "", "-- GPU LOGICAL EXECUTION --"]
+    if capture_error:
+        lines.append(f"  original_gpu_plan: unavailable ({capture_error})")
+    for k in gpu:
+        lines += [f"KERNEL {k.gpu_kernel_id}",
+                  f"  scheme:                        {k.gpu_scheme}",
+                  f"  pass_id:                       {k.pass_id}",
+                  f"  fft_length:                    {k.fft_length}",
+                  f"  radices:                       {k.radix_sequence}",
+                  f"  gpu_metadata:                  {k.gpu_metadata}",
+                  f"  gpu_workgroup_size:            {k.gpu_workgroup_size}",
+                  f"  gpu_threads_per_transform:     {k.gpu_threads_per_transform}",
+                  f"  gpu_transforms_per_workgroup:  {k.gpu_transforms_per_workgroup}",
+                  f"  gpu_shared_memory_bytes:       {k.gpu_shared_memory_bytes}",
+                  f"  gpu_fused_operations:          {k.gpu_fused_operations}",
+                  f"  gpu_transpose_role:            {k.gpu_transpose_role}",
+                  f"  gpu_global_read_bytes:         {k.gpu_global_read_bytes}",
+                  f"  gpu_global_write_bytes:        {k.gpu_global_write_bytes}",
+                  f"  gpu_memory_optimization:       {k.gpu_memory_optimization}",
+                  f"  gpu_logical_shared_memory_bytes: {k.gpu_logical_shared_memory_bytes}",
+                  f"  m2ndp_memory_optimization_status: {k.m2ndp_memory_optimization_status}", ""]
+    lines.append("-- M2NDP PHYSICAL EXECUTION --")
+    nodes = flatten_recursive_node(result.plan.root) if result.plan is not None else []
+    for i, k in enumerate(physical):
+        role = _transpose_role_from_kernel_name(nodes[i].kernel_name) if isinstance(nodes[i], PhysicalTransposePlan) else None
+        lines += [f"NODE {i}" + (f" ({role} transpose)" if role else " (FFT)"),
+                  f"  strategy:                      {k.strategy}",
+                  f"  logical_workers_per_fft:       {k.logical_workers_per_fft}",
+                  f"  physical_workers_per_group:    {k.physical_workers_per_group}",
+                  f"  fft_slots_per_group:           {k.fft_slots_per_group}",
+                  f"  logical_worker_groups:         {k.logical_worker_groups}",
+                  f"  stage_launches:                {k.stage_launches}",
+                  f"  persistent_rounds:             {k.persistent_rounds}",
+                  f"  lowering_mode:                 {k.lowering_mode}",
+                  f"  scratchpad_bytes:              {k.scratchpad_bytes}",
+                  f"  storage_mode:                  {k.storage_mode}",
+                  f"  workspace_bytes:               {k.workspace_bytes}",
+                  f"  needs_round_split:             {k.needs_round_split}"]
+        lines.extend("    " + x for x in k.stage_physical_work)
+    lines += ["", "OVERALL", f"  gpu_kernel_count:              {len(gpu) if capture_error is None else 'unavailable'}",
+              f"  physical_plan_nodes:           {len(physical)}",
+              "  None launch/LDS fields and empty FFT radices mean unextracted GPU metadata; never physical substitutes."]
+    if result.status is BaselineStatus.OK and capture_error is None:
+        from dataclasses import asdict
+        lines.append("-- LOWERING OVERHEAD (full-array byte estimate; not measured traffic/cycles) --")
+        lines.extend(f"  {key}: {value}" for key, value in asdict(compute_lowering_overhead(result)).items())
+        lines.append("  Physical plan nodes are not host/stage launch counts; persistent launches are reported above.")
+    lines += [f"  spill_free:                    {result.spill_free}", f"  ndp_cycles:                    {result.ndp_cycles}"]
     return "\n".join(lines)

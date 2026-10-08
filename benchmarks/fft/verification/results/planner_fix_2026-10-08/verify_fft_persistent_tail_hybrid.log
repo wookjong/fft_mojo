@@ -1,0 +1,11 @@
+  Persistent tail-round hybrid (P2.4):
+    OK   full_blocks + tail_blocks == num_logical_blocks at every boundary count in (1, 31, 32, 33, 40, 63, 64, 65), for all 3 tail_strategy values
+    OK   each of the 8 boundary batch counts' own FFT replicas is covered exactly once, split correctly between persistent_plan and tail_plan
+    OK   persistent_plan's own full_blocks replicas compute a numpy-correct FFT (num_blocks=33 and 65)
+    OK   tail_plan (noncoop_tail strategy) computes a numpy-correct FFT for its own tail_blocks replicas (num_blocks=33, 65, 1)
+    OK   tail_plan (cooperative_tail strategy) computes a numpy-correct FFT for its own tail_blocks replicas (num_blocks=33, 65)
+    OK   tail_strategy='all_persistent' produces a persistent_plan byte-identical to make_persistent_leaf_plan called directly -- true no-op default
+    OK   generated source contains both kernel structs/launches and exactly one shared main() for a real hybrid case; all_persistent byte-matches the plain single-kernel generator (UNMEASURED: real compilation/execution requires the Mojo/M2NDP-Detour toolchain, not available in this environment)
+    OK   the real toolchain 'invalid redefinition of pi/sign/tol' compile failure (N33/noncoop_tail, N65/cooperative_tail) does not reproduce after the var_prefix fix; single-kernel paths remain byte-identical (unprefixed)
+[verify] persistent tail-round hybrid: all checks passed
+

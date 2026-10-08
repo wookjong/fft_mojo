@@ -1,0 +1,778 @@
+  OK   radix sequence (2,) inverse=False: max error 0.000e+00
+  OK   radix sequence (2,) inverse=True: max error 0.000e+00
+  OK   radix sequence (3,) inverse=False: max error 3.509e-10
+  OK   radix sequence (3,) inverse=True: max error 7.374e-10
+  OK   radix sequence (4,) inverse=False: max error 0.000e+00
+  OK   radix sequence (4,) inverse=True: max error 0.000e+00
+  OK   radix sequence (5,) inverse=False: max error 1.148e-09
+  OK   radix sequence (5,) inverse=True: max error 2.296e-10
+  OK   radix sequence (6,) inverse=False: max error 8.024e-10
+  OK   radix sequence (6,) inverse=True: max error 1.187e-09
+  OK   radix sequence (7,) inverse=False: max error 7.948e-10
+  OK   radix sequence (7,) inverse=True: max error 5.425e-10
+  OK   radix sequence (8,) inverse=False: max error 7.582e-10
+  OK   radix sequence (8,) inverse=True: max error 9.478e-11
+  OK   radix sequence (9,) inverse=False: max error 1.784e-09
+  OK   radix sequence (9,) inverse=True: max error 3.559e-10
+  OK   radix sequence (10,) inverse=False: max error 2.489e-09
+  OK   radix sequence (10,) inverse=True: max error 2.489e-10
+  OK   radix sequence (11,) inverse=False: max error 1.626e-09
+  OK   radix sequence (11,) inverse=True: max error 1.431e-10
+  OK   radix sequence (13,) inverse=False: max error 1.878e-09
+  OK   radix sequence (13,) inverse=True: max error 1.519e-10
+  OK   radix sequence (16,) inverse=False: max error 2.736e-09
+  OK   radix sequence (16,) inverse=True: max error 1.710e-10
+  OK   radix sequence (17,) inverse=False: max error 2.090e-09
+  OK   radix sequence (17,) inverse=True: max error 1.657e-10
+  OK   radix sequence (2, 2) inverse=False: max error 0.000e+00
+  OK   radix sequence (2, 2) inverse=True: max error 0.000e+00
+  OK   radix sequence (3, 3) inverse=False: max error 1.784e-09
+  OK   radix sequence (3, 3) inverse=True: max error 3.559e-10
+  OK   radix sequence (4, 4) inverse=False: max error 2.736e-09
+  OK   radix sequence (4, 4) inverse=True: max error 1.710e-10
+  OK   radix sequence (4, 4, 4) inverse=False: max error 8.108e-09
+  OK   radix sequence (4, 4, 4) inverse=True: max error 1.291e-10
+  OK   radix sequence (2, 2, 2, 2, 2) inverse=False: max error 4.094e-09
+  OK   radix sequence (2, 2, 2, 2, 2) inverse=True: max error 1.378e-10
+  OK   radix sequence (2, 2, 2, 2, 2, 2, 2, 2) inverse=False: max error 2.386e-08
+  OK   radix sequence (2, 2, 2, 2, 2, 2, 2, 2) inverse=True: max error 8.996e-11
+  OK   radix sequence (3, 3, 3, 3, 3) inverse=False: max error 3.132e-08
+  OK   radix sequence (3, 3, 3, 3, 3) inverse=True: max error 1.523e-10
+  OK   radix sequence (2, 3, 4) inverse=False: max error 1.631e-09
+  OK   radix sequence (2, 3, 4) inverse=True: max error 3.072e-10
+  OK   radix sequence (4, 3, 2) inverse=False: max error 2.551e-09
+  OK   radix sequence (4, 3, 2) inverse=True: max error 3.006e-10
+  OK   radix sequence (7, 3) inverse=False: max error 2.363e-09
+  OK   radix sequence (7, 3) inverse=True: max error 1.690e-10
+  OK   radix sequence (9, 2) inverse=False: max error 2.252e-09
+  OK   radix sequence (9, 2) inverse=True: max error 3.506e-10
+  OK   radix sequence (13, 2) inverse=False: max error 2.284e-09
+  OK   radix sequence (13, 2) inverse=True: max error 3.741e-10
+  OK   radix sequence (11, 3) inverse=False: max error 4.457e-09
+  OK   radix sequence (11, 3) inverse=True: max error 1.326e-10
+  OK   radix sequence (4, 4, 4, 4) inverse=False: max error 2.013e-08
+  OK   radix sequence (4, 4, 4, 4) inverse=True: max error 8.185e-11
+  OK   radix sequence (3, 4, 2) inverse=False: max error 3.059e-09
+  OK   radix sequence (3, 4, 2) inverse=True: max error 3.388e-10
+  OK   radix sequence (5, 2, 3) inverse=False: max error 4.838e-09
+  OK   radix sequence (5, 2, 3) inverse=True: max error 6.114e-10
+  OK   decomposed N=256 (16x16, large twiddle + transpose) inverse=False: max error 1.823e-08
+  OK   decomposed N=256 (16x16, large twiddle + transpose) inverse=True: max error 6.430e-11
+  OK   layout bijection N=64 chunks=((4, 4, 4),)
+  OK   boundary consistency N=64 chunks=((4, 4, 4),)
+  OK   layout bijection N=192 chunks=((4, 4, 4), (3,))
+  OK   boundary consistency N=192 chunks=((4, 4, 4), (3,))
+  OK   layout bijection N=40 chunks=((2, 2, 2), (5,))
+  OK   boundary consistency N=40 chunks=((2, 2, 2), (5,))
+  OK   layout bijection N=48 chunks=((4, 4), (3,))
+  OK   boundary consistency N=48 chunks=((4, 4), (3,))
+  OK   layout bijection N=24 chunks=((2,), (3,), (4,))
+  OK   boundary consistency N=24 chunks=((2,), (3,), (4,))
+  OK   layout bijection N=105 chunks=((7,), (3,), (5,))
+  OK   boundary consistency N=105 chunks=((7,), (3,), (5,))
+  OK   layout bijection N=960 chunks=((4, 4, 4), (3,), (5,))
+  OK   boundary consistency N=960 chunks=((4, 4, 4), (3,), (5,))
+  OK   layout bijection N=768 chunks=((2, 2, 2, 2, 2), (3,), (2, 2, 2))
+  OK   boundary consistency N=768 chunks=((2, 2, 2, 2, 2), (3,), (2, 2, 2))
+  OK   layout bijection N=32 chunks=((2,), (2,), (2,), (2,), (2,))
+  OK   boundary consistency N=32 chunks=((2,), (2,), (2,), (2,), (2,))
+  OK   layout bijection N=1155 chunks=((11,), (7,), (3,), (5,))
+  OK   boundary consistency N=1155 chunks=((11,), (7,), (3,), (5,))
+  OK   multi-kernel N=64 chunks=((4, 4, 4),) inverse=False: max error 8.108e-09
+  OK   multi-kernel N=64 chunks=((4, 4, 4),) inverse=True: max error 1.291e-10
+  OK   multi-kernel N=192 chunks=((4, 4, 4), (3,)) inverse=False: max error 1.433e-08
+  OK   multi-kernel N=192 chunks=((4, 4, 4), (3,)) inverse=True: max error 9.500e-11
+  OK   multi-kernel N=40 chunks=((2, 2, 2), (5,)) inverse=False: max error 5.492e-09
+  OK   multi-kernel N=40 chunks=((2, 2, 2), (5,)) inverse=True: max error 1.233e-10
+  OK   multi-kernel N=48 chunks=((4, 4), (3,)) inverse=False: max error 5.467e-09
+  OK   multi-kernel N=48 chunks=((4, 4), (3,)) inverse=True: max error 3.513e-10
+  OK   multi-kernel N=24 chunks=((2,), (3,), (4,)) inverse=False: max error 1.363e-09
+  OK   multi-kernel N=24 chunks=((2,), (3,), (4,)) inverse=True: max error 2.909e-10
+  OK   multi-kernel N=105 chunks=((7,), (3,), (5,)) inverse=False: max error 1.143e-08
+  OK   multi-kernel N=105 chunks=((7,), (3,), (5,)) inverse=True: max error 1.467e-10
+  OK   multi-kernel N=960 chunks=((4, 4, 4), (3,), (5,)) inverse=False: max error 4.212e-08
+  OK   multi-kernel N=960 chunks=((4, 4, 4), (3,), (5,)) inverse=True: max error 2.214e-10
+  OK   multi-kernel N=768 chunks=((2, 2, 2, 2, 2), (3,), (2, 2, 2)) inverse=False: max error 2.885e-08
+  OK   multi-kernel N=768 chunks=((2, 2, 2, 2, 2), (3,), (2, 2, 2)) inverse=True: max error 2.089e-10
+  OK   multi-kernel N=32 chunks=((2,), (2,), (2,), (2,), (2,)) inverse=False: max error 1.831e-15
+  OK   multi-kernel N=32 chunks=((2,), (2,), (2,), (2,), (2,)) inverse=True: max error 5.551e-17
+  OK   multi-kernel N=1155 chunks=((11,), (7,), (3,), (5,)) inverse=False: max error 5.572e-08
+  OK   multi-kernel N=1155 chunks=((11,), (7,), (3,), (5,)) inverse=True: max error 3.983e-11
+  OK   multi-kernel N=192 spad_capacity_bytes=1024 inverse=False: max error 1.433e-08
+  OK   multi-kernel N=192 spad_capacity_bytes=1024 inverse=True: max error 9.500e-11
+  OK   multi-kernel N=192 spad_capacity_bytes=2048 inverse=False: max error 1.433e-08
+  OK   multi-kernel N=192 spad_capacity_bytes=2048 inverse=True: max error 9.500e-11
+  OK   multi-kernel N=960 spad_capacity_bytes=4096 (4 uthreads/group, 4 groups) inverse=False: max error 4.900e-08
+  OK   multi-kernel N=960 spad_capacity_bytes=4096 (4 uthreads/group, 4 groups) inverse=True: max error 2.290e-10
+  ---  N=960 budget=256: new chunks=((2, 2, 2), (2, 2, 2), (3, 5)) max_effective_stride=120  |  old (write-only) chunks=((2, 2), (2, 2, 2, 2), (3, 5)) max_effective_stride=240
+  OK   factor_into_kernel_chunks N=960 budget=256 chunks=((2, 2, 2), (2, 2, 2), (3, 5)) (max_effective_stride=120) inverse=False: max error 6.956e-08
+  OK   factor_into_kernel_chunks N=960 budget=256 chunks=((2, 2, 2), (2, 2, 2), (3, 5)) (max_effective_stride=120) inverse=True: max error 2.326e-10
+  ---  N=960 budget=512: new chunks=((2, 2, 2, 2, 2), (2, 3, 5)) max_effective_stride=32  |  old (write-only) chunks=((2, 2, 2, 2, 2), (2, 3, 5)) max_effective_stride=32
+  OK   factor_into_kernel_chunks N=960 budget=512 chunks=((2, 2, 2, 2, 2), (2, 3, 5)) (max_effective_stride=32) inverse=False: max error 6.862e-08
+  OK   factor_into_kernel_chunks N=960 budget=512 chunks=((2, 2, 2, 2, 2), (2, 3, 5)) (max_effective_stride=32) inverse=True: max error 2.296e-10
+  ---  N=960 budget=1024: new chunks=((2, 2, 2, 2, 2), (2, 3, 5)) max_effective_stride=32  |  old (write-only) chunks=((2, 2, 2, 2), (2, 2, 3, 5)) max_effective_stride=60
+  OK   factor_into_kernel_chunks N=960 budget=1024 chunks=((2, 2, 2, 2, 2), (2, 3, 5)) (max_effective_stride=32) inverse=False: max error 6.862e-08
+  OK   factor_into_kernel_chunks N=960 budget=1024 chunks=((2, 2, 2, 2, 2), (2, 3, 5)) (max_effective_stride=32) inverse=True: max error 2.296e-10
+  ---  N=960 budget=16384: new chunks=((2, 2, 2, 2, 2, 2, 3, 5),) max_effective_stride=1  |  old (write-only) chunks=((2, 2, 2, 2, 2, 2, 3, 5),) max_effective_stride=1
+  OK   factor_into_kernel_chunks N=960 budget=16384 chunks=((2, 2, 2, 2, 2, 2, 3, 5),) (max_effective_stride=1) inverse=False: max error 6.804e-08
+  OK   factor_into_kernel_chunks N=960 budget=16384 chunks=((2, 2, 2, 2, 2, 2, 3, 5),) (max_effective_stride=1) inverse=True: max error 2.361e-10
+  ---  N=960 budget=65536: new chunks=((2, 2, 2, 2, 2, 2, 3, 5),) max_effective_stride=1  |  old (write-only) chunks=((2, 2, 2, 2, 2, 2, 3, 5),) max_effective_stride=1
+  OK   factor_into_kernel_chunks N=960 budget=65536 chunks=((2, 2, 2, 2, 2, 2, 3, 5),) (max_effective_stride=1) inverse=False: max error 6.804e-08
+  OK   factor_into_kernel_chunks N=960 budget=65536 chunks=((2, 2, 2, 2, 2, 2, 3, 5),) (max_effective_stride=1) inverse=True: max error 2.361e-10
+
+  Scalar vs. vector DRAM read/write per kernel (N=960, chunks=((4,4,4),(3,),(5,))):
+    FFTFP32Kernel0: read=scalar write=scalar
+    FFTFP32Kernel1: read=vector write=scalar
+    FFTFP32Kernel2: read=vector write=scalar
+  OK   scalar-to-vector read conversion (N=960, 3-kernel chain): 2/3 kernels now read via vector load (was 0/3 under the old SPLIT-based scheme)
+  OK   balanced plan N_A=16(((16,),)) N_B=16(((16,),)) inverse=False: max error 1.699e-08
+  OK   balanced plan N_A=16(((16,),)) N_B=16(((16,),)) inverse=True: max error 8.095e-11
+  OK   balanced plan N_A=17(((17,),)) N_B=13(((13,),)) inverse=False: max error 2.015e-08
+  OK   balanced plan N_A=17(((17,),)) N_B=13(((13,),)) inverse=True: max error 6.997e-11
+  OK   balanced plan N_A=64(((4, 4, 4),)) N_B=15(((3,), (5,))) inverse=False: max error 4.047e-08
+  OK   balanced plan N_A=64(((4, 4, 4),)) N_B=15(((3,), (5,))) inverse=True: max error 2.107e-10
+  OK   balanced plan N_A=8(((2,), (2,), (2,))) N_B=15(((3,), (5,))) inverse=False: max error 7.508e-09
+  OK   balanced plan N_A=8(((2,), (2,), (2,))) N_B=15(((3,), (5,))) inverse=True: max error 1.154e-10
+  OK   make_balanced_plan((16,),(16,)) computes the same addresses as make_decomposed_plan(16,16)
+  ---  side length 960, batch_count 960: batch-aware chunks=((2, 2, 2, 2), (2, 2, 3), (5,)) kernel0 batched read=57600  |  batch-unaware chunks=((2, 2, 2), (2, 2, 2), (3, 5)) kernel0 batched read=115200
+  OK   batch-aware chunk selection beats batch-unaware at the same budget
+  OK   balanced-transpose plan n=289 N_A=17 N_B=17 inverse=False: max error 1.854e-08
+  OK   balanced-transpose plan n=289 N_A=17 N_B=17 inverse=True: max error 1.184e-10
+  OK   balanced-transpose plan n=64 N_A=8 N_B=8 inverse=False: max error 2.563e-09
+  OK   balanced-transpose plan n=64 N_A=8 N_B=8 inverse=True: max error 6.539e-11
+  OK   balanced-transpose plan n=32 N_A=4 N_B=8 inverse=False: max error 1.062e-09
+  OK   balanced-transpose plan n=32 N_A=4 N_B=8 inverse=True: max error 4.920e-11
+  OK   balanced-transpose plan n=256 N_A=16 N_B=16 inverse=False: max error 1.854e-08
+  OK   balanced-transpose plan n=256 N_A=16 N_B=16 inverse=True: max error 7.232e-11
+  OK   balanced-transpose plan n=221 N_A=13 N_B=17 inverse=False: max error 1.563e-08
+  OK   balanced-transpose plan n=221 N_A=13 N_B=17 inverse=True: max error 7.833e-11
+  OK   balanced-transpose plan n=960 N_A=32 N_B=30 inverse=False: max error 3.855e-08
+  OK   balanced-transpose plan n=960 N_A=32 N_B=30 inverse=True: max error 2.300e-10
+  OK   balanced-transpose plan n=120 N_A=8 N_B=15 inverse=False: max error 1.254e-08
+  OK   balanced-transpose plan n=120 N_A=8 N_B=15 inverse=True: max error 1.364e-10
+  OK   balanced-transpose plan n=960 N_A=32 N_B=30 inverse=False: max error 3.855e-08
+  OK   balanced-transpose plan n=960 N_A=32 N_B=30 inverse=True: max error 2.300e-10
+  OK   transpose bijection n=289 N_A=17 N_B=17
+  OK   transpose bijection n=64 N_A=8 N_B=8
+  OK   transpose bijection n=32 N_A=4 N_B=8
+  OK   transpose bijection n=256 N_A=16 N_B=16
+  OK   transpose bijection n=221 N_A=13 N_B=17
+  OK   transpose bijection n=960 N_A=64 N_B=15
+  OK   transpose bijection n=120 N_A=8 N_B=15
+  OK   transpose bijection n=960 N_A=32 N_B=30
+  OK   near side's own kernels byte-identical when far's non-boundary kernel count/structure changes
+  OK   far side's own boundary-touching kernel unaffected (while far itself genuinely differs elsewhere)
+
+  Old flat chain vs. new balanced-transpose plan (N=960, budget=256):
+    flat:      3 FFT kernels, 0 transpose kernels, max effective stride=120
+    balanced:  4 FFT kernels, 1 transpose kernel, max FFT-side effective stride=192 (near max=60, far max=192), transpose load/store elem_stride=1
+
+  Near side FFT (N_A=32, batched N_B=30 times):
+    FFTFP32Near0: read elem_stride=60 write elem_stride=60
+    FFTFP32Near1: read elem_stride=1 write elem_stride=1
+  Transpose (ki_near=2, ki_far=6, tiles=80):
+    load elem_stride=1 store elem_stride=1
+    max near-side row jump=10 max far-side row jump=96
+  Far side FFT (N_B=30, batched N_A=32 times):
+    FFTFP32Far0: read elem_stride=1 write elem_stride=160
+    FFTFP32Far1: read elem_stride=1 write elem_stride=192
+
+  Physical tile index tests (square/rectangular, tails, multiple replicas):
+    OK   square full tile (8x8 reps=1 tile=4x4): {'load_elem_stride': 1, 'store_elem_stride': 1, 'max_src_row_jump': 8, 'max_dst_row_jump': 8}
+    OK   rectangular full tile (12x20 reps=1 tile=3x5): {'load_elem_stride': 1, 'store_elem_stride': 1, 'max_src_row_jump': 20, 'max_dst_row_jump': 12}
+    OK   row tail (10x8 reps=1 tile=4x4): {'load_elem_stride': 1, 'store_elem_stride': 1, 'max_src_row_jump': 8, 'max_dst_row_jump': 10}
+    OK   column tail (8x10 reps=1 tile=4x4): {'load_elem_stride': 1, 'store_elem_stride': 1, 'max_src_row_jump': 10, 'max_dst_row_jump': 8}
+    OK   both tails (11x13 reps=1 tile=4x5): {'load_elem_stride': 1, 'store_elem_stride': 1, 'max_src_row_jump': 13, 'max_dst_row_jump': 11}
+    OK   multiple replicas (6x6 reps=5 tile=4x4): {'load_elem_stride': 1, 'store_elem_stride': 1, 'max_src_row_jump': 6, 'max_dst_row_jump': 6}
+    OK   degenerate 1xN (1x17 reps=3 tile=4x4): {'load_elem_stride': 1, 'store_elem_stride': 1, 'max_src_row_jump': 0, 'max_dst_row_jump': 1}
+
+  Recursive numeric tests (real emitted code vs. numpy.fft/ifft):
+    OK   recursive plan n=30 budget=480 inverse=False: max error 7.209e-09
+    OK   recursive plan n=30 budget=480 inverse=True: max error 4.115e-10
+    OK   recursive plan n=30 budget=96 inverse=False: max error 2.713e-09
+    OK   recursive plan n=30 budget=96 inverse=True: max error 2.696e-10
+    OK   recursive plan n=60 budget=192 inverse=False: max error 7.766e-09
+    OK   recursive plan n=60 budget=192 inverse=True: max error 4.186e-10
+    OK   recursive plan n=64 budget=256 inverse=False: max error 5.732e-09
+    OK   recursive plan n=64 budget=256 inverse=True: max error 8.956e-11
+    OK   recursive plan n=120 budget=384 inverse=False: max error 2.119e-08
+    OK   recursive plan n=120 budget=384 inverse=True: max error 1.626e-10
+    OK   recursive plan n=960 budget=512 inverse=False: max error 7.701e-08
+    OK   recursive plan n=960 budget=512 inverse=True: max error 1.792e-10
+    OK   recursive plan n=210 budget=336 inverse=False: max error 1.646e-08
+    OK   recursive plan n=210 budget=336 inverse=True: max error 1.003e-10
+    OK   recursive plan n=256 budget=4096 inverse=False: max error 1.081e-14
+    OK   recursive plan n=256 budget=4096 inverse=True: max error 4.389e-17
+
+  loop_stages runtime-loop rendering (real emitted code vs. numpy.fft/ifft):
+    OK   N=1024 below _LOOP_MIN_FULL_BATCHES (full batches=2, falls back to unroll) (n=1024 budget=512 loop_stages=True inverse=False): max error 4.811e-08
+    OK   N=1024 below _LOOP_MIN_FULL_BATCHES (full batches=2, falls back to unroll) (n=1024 budget=512 loop_stages=True inverse=True): max error 4.465e-11
+    OK   N=1024 above _LOOP_MIN_FULL_BATCHES (full batches=4, loops) (n=1024 budget=1024 loop_stages=True inverse=False): max error 4.430e-08
+    OK   N=1024 above _LOOP_MIN_FULL_BATCHES (full batches=4, loops) (n=1024 budget=1024 loop_stages=True inverse=True): max error 5.386e-11
+    OK   N=1024 period-doubling (FFTRecNear0 stages 4/5/6, periods 2/4/8) (n=1024 budget=4096 loop_stages=True inverse=False): max error 2.930e-14
+    OK   N=1024 period-doubling (FFTRecNear0 stages 4/5/6, periods 2/4/8) (n=1024 budget=4096 loop_stages=True inverse=True): max error 3.469e-17
+    OK   N=960 loop_stages explicitly disabled (n=960 budget=512 loop_stages=False inverse=False): max error 6.805e-08
+    OK   N=960 loop_stages explicitly disabled (n=960 budget=512 loop_stages=False inverse=True): max error 1.945e-10
+
+  round-split launches and non-power-of-2 tile-count lookup tables (real emitted code vs. numpy.fft/ifft):
+    OK   N=960 max_concurrent_scratchpad_bytes forces every kernel to round-split (n=960 budget=512 inverse=False): max error 6.806e-08
+    OK   N=960 max_concurrent_scratchpad_bytes forces every kernel to round-split (n=960 budget=512 inverse=True): max error 1.814e-10
+    OK   N=98 tile=3x2 exercises needs_q_table (replica_count=7, grid=3x1) (n=98 budget=196 inverse=False): max error 7.690e-09
+    OK   N=98 tile=3x2 exercises needs_q_table (replica_count=7, grid=3x1) (n=98 budget=196 inverse=True): max error 6.301e-10
+
+  forced_worker_sequence (per-leaf cooperative workers, real emitted code vs. numpy.fft/ifft):
+    OK   N=960 only the near leaf cooperative (n=960 budget=512 worker_sequence=(2, None) inverse=False): max error 6.155e-08
+    OK   N=960 only the near leaf cooperative (n=960 budget=512 worker_sequence=(2, None) inverse=True): max error 2.608e-10
+    OK   N=960 only the far leaf cooperative (n=960 budget=512 worker_sequence=(None, 2) inverse=False): max error 6.155e-08
+    OK   N=960 only the far leaf cooperative (n=960 budget=512 worker_sequence=(None, 2) inverse=True): max error 2.608e-10
+    OK   N=960 both leaves cooperative (different worker counts) (n=960 budget=512 worker_sequence=(2, 4) inverse=False): max error 6.155e-08
+    OK   N=960 both leaves cooperative (different worker counts) (n=960 budget=512 worker_sequence=(2, 4) inverse=True): max error 2.608e-10
+    OK   N=960 near leaf auto, far leaf plain (n=960 budget=512 worker_sequence=('auto', None) inverse=False): max error 6.155e-08
+    OK   N=960 near leaf auto, far leaf plain (n=960 budget=512 worker_sequence=('auto', None) inverse=True): max error 2.608e-10
+
+  cooperative loop_stages (per-worker runtime loop, real emitted code vs. numpy.fft/ifft):
+    OK   N=1024 single cooperative leaf, workers=auto (the real regression case) (n=1024 budget=16384 workers=auto inverse=False): max error 6.508e-08
+    OK   N=1024 single cooperative leaf, workers=auto (the real regression case) (n=1024 budget=16384 workers=auto inverse=True): max error 5.869e-11
+    OK   N=1024 single cooperative leaf, workers=4 (n=1024 budget=16384 workers=4 inverse=False): max error 6.508e-08
+    OK   N=1024 single cooperative leaf, workers=4 (n=1024 budget=16384 workers=4 inverse=True): max error 5.869e-11
+    OK   N=1024 single cooperative leaf, workers=2 (n=1024 budget=16384 workers=2 inverse=False): max error 6.508e-08
+    OK   N=1024 single cooperative leaf, workers=2 (n=1024 budget=16384 workers=2 inverse=True): max error 5.869e-11
+
+  standalone cooperative leaves (verify_fft_cooperative.verify_cooperative_leaf, real emitted code vs. numpy.fft/ifft):
+    OK   N=1024 radix (4,4,4,4,4), workers=8, single FFT (the real regression case) (length=1024 radices=(4, 4, 4, 4, 4) workers_per_fft=8 total_ffts=1 inverse=False): max error 3.499e-14
+    OK   N=1024 radix (4,4,4,4,4), workers=8, single FFT (the real regression case) (length=1024 radices=(4, 4, 4, 4, 4) workers_per_fft=8 total_ffts=1 inverse=True): max error 2.797e-17
+    OK   N=1024 radix (4,4,4,4,4), workers=8, total_ffts=3 (length=1024 radices=(4, 4, 4, 4, 4) workers_per_fft=8 total_ffts=3 inverse=False): max error 2.930e-14
+    OK   N=1024 radix (4,4,4,4,4), workers=8, total_ffts=3 (length=1024 radices=(4, 4, 4, 4, 4) workers_per_fft=8 total_ffts=3 inverse=True): max error 2.985e-17
+    OK   N=105 radix (3,5,7), workers=2, total_ffts=6 (length=105 radices=(3, 5, 7) workers_per_fft=2 total_ffts=6 inverse=False): max error 1.619e-08
+    OK   N=105 radix (3,5,7), workers=2, total_ffts=6 (length=105 radices=(3, 5, 7) workers_per_fft=2 total_ffts=6 inverse=True): max error 1.978e-10
+    OK   N=32 radix (4,4,2), workers=4, total_ffts=5 (length=32 radices=(4, 4, 2) workers_per_fft=4 total_ffts=5 inverse=False): max error 4.990e-09
+    OK   N=32 radix (4,4,2), workers=4, total_ffts=5 (length=32 radices=(4, 4, 2) workers_per_fft=4 total_ffts=5 inverse=True): max error 1.388e-10
+
+  compute_lanes-narrowed rendering (real emitted code vs. numpy.fft/ifft):
+    OK   N=630 default split, compute_lanes=4 (target's documented default) (n=630 budget=4096 compute_lanes=4 inverse=False): max error 3.212e-08
+    OK   N=630 default split, compute_lanes=4 (target's documented default) (n=630 budget=4096 compute_lanes=4 inverse=True): max error 1.716e-10
+    OK   N=630 default split, compute_lanes=2 (n=630 budget=4096 compute_lanes=2 inverse=False): max error 3.212e-08
+    OK   N=630 default split, compute_lanes=2 (n=630 budget=4096 compute_lanes=2 inverse=True): max error 1.716e-10
+    OK   N=630 default split, compute_lanes=1 (n=630 budget=4096 compute_lanes=1 inverse=False): max error 3.212e-08
+    OK   N=630 default split, compute_lanes=1 (n=630 budget=4096 compute_lanes=1 inverse=True): max error 1.716e-10
+    OK   N=960 tail-batch leaf (FFTRecNear0.stage_0), compute_lanes=4 (n=960 budget=512 compute_lanes=4 inverse=False): max error 6.740e-08
+    OK   N=960 tail-batch leaf (FFTRecNear0.stage_0), compute_lanes=4 (n=960 budget=512 compute_lanes=4 inverse=True): max error 2.102e-10
+    OK   N=960 tail-batch leaf, compute_lanes=2 (n=960 budget=512 compute_lanes=2 inverse=False): max error 6.740e-08
+    OK   N=960 tail-batch leaf, compute_lanes=2 (n=960 budget=512 compute_lanes=2 inverse=True): max error 2.102e-10
+    OK   N=960 tail-batch leaf, compute_lanes=1 (n=960 budget=512 compute_lanes=1 inverse=False): max error 6.740e-08
+    OK   N=960 tail-batch leaf, compute_lanes=1 (n=960 budget=512 compute_lanes=1 inverse=True): max error 2.102e-10
+
+  narrow_middle_stages rendering (real emitted code vs. numpy.fft/ifft):
+    OK   N=630 default split, compute_lanes=4 (make_fft_kernel.py's own default) (n=630 budget=4096 compute_lanes=4 narrow_middle_stages=True inverse=False): max error 3.162e-08
+    OK   N=630 default split, compute_lanes=4 (make_fft_kernel.py's own default) (n=630 budget=4096 compute_lanes=4 narrow_middle_stages=True inverse=True): max error 1.619e-10
+    OK   N=630 default split, compute_lanes=2 (n=630 budget=4096 compute_lanes=2 narrow_middle_stages=True inverse=False): max error 3.162e-08
+    OK   N=630 default split, compute_lanes=2 (n=630 budget=4096 compute_lanes=2 narrow_middle_stages=True inverse=True): max error 1.619e-10
+    OK   N=630 default split, compute_lanes=1 (n=630 budget=4096 compute_lanes=1 narrow_middle_stages=True inverse=False): max error 3.162e-08
+    OK   N=630 default split, compute_lanes=1 (n=630 budget=4096 compute_lanes=1 narrow_middle_stages=True inverse=True): max error 1.619e-10
+    OK   N=960 tail-batch leaf, compute_lanes=4 (n=960 budget=512 compute_lanes=4 narrow_middle_stages=True inverse=False): max error 5.837e-08
+    OK   N=960 tail-batch leaf, compute_lanes=4 (n=960 budget=512 compute_lanes=4 narrow_middle_stages=True inverse=True): max error 1.753e-10
+    OK   N=960 tail-batch leaf, compute_lanes=2 (n=960 budget=512 compute_lanes=2 narrow_middle_stages=True inverse=False): max error 5.837e-08
+    OK   N=960 tail-batch leaf, compute_lanes=2 (n=960 budget=512 compute_lanes=2 narrow_middle_stages=True inverse=True): max error 1.753e-10
+    OK   N=210 2-level recursion, compute_lanes=4 (n=210 budget=336 compute_lanes=4 narrow_middle_stages=True inverse=False): max error 1.635e-08
+    OK   N=210 2-level recursion, compute_lanes=4 (n=210 budget=336 compute_lanes=4 narrow_middle_stages=True inverse=True): max error 1.223e-10
+    OK   N=105 single leaf radices (3,5,7), compute_lanes=4 (n=105 budget=9999999 compute_lanes=4 narrow_middle_stages=True inverse=False): max error 9.283e-09
+    OK   N=105 single leaf radices (3,5,7), compute_lanes=4 (n=105 budget=9999999 compute_lanes=4 narrow_middle_stages=True inverse=True): max error 1.092e-10
+
+  Store vectorization (_make_store, direct unit checks):
+    OK   _make_store: full-width, p_s >= simd_lanes: contiguous -> vector: mode=vector
+    OK   _make_store: full-width, p_s < simd_lanes: not contiguous -> scalar_lanes: mode=scalar_lanes
+    OK   _make_store: tail batch, p_s >= simd_lanes (would-be-contiguous): still scalar_lanes: mode=scalar_lanes
+
+  Store vectorization (_chunk_store, compute_lanes sub-slice promotion, direct unit checks):
+    OK   _chunk_store: contiguous first chunk of a non-contiguous full batch -> vector: mode=vector base_offset=0
+    OK   _chunk_store: contiguous second chunk of a non-contiguous full batch -> vector: mode=vector base_offset=16
+    OK   _chunk_store: non-contiguous chunk -> stays scalar_lanes: mode=scalar_lanes base_offset=None
+    OK   _chunk_store: chunk reaching past a tail batch's valid_lanes -> stays scalar_lanes (never promoted): mode=scalar_lanes base_offset=None
+    OK   _chunk_store: already-vector store just carries its offset forward: mode=vector base_offset=12
+
+  Radix coalescing (coalesce_radices, direct):
+    OK   coalesce_radices(_prime_factors_supported(2)) == (2,): got (2,)
+    OK   coalesce_radices(_prime_factors_supported(4)) == (4,): got (4,)
+    OK   coalesce_radices(_prime_factors_supported(8)) == (4, 2): got (4, 2)
+    OK   coalesce_radices(_prime_factors_supported(16)) == (4, 4): got (4, 4)
+    OK   coalesce_radices(_prime_factors_supported(64)) == (4, 4, 4): got (4, 4, 4)
+    OK   coalesce_radices(_prime_factors_supported(256)) == (4, 4, 4, 4): got (4, 4, 4, 4)
+    OK   coalesce_radices(_prime_factors_supported(6)) == (2, 3): got (2, 3)
+    OK   coalesce_radices(_prime_factors_supported(9)) == (3, 3): got (3, 3)
+    OK   coalesce_radices(_prime_factors_supported(10)) == (2, 5): got (2, 5)
+    OK   coalesce_radices(_prime_factors_supported(54)) == (2, 3, 3, 3): got (2, 3, 3, 3)
+    OK   coalesce_radices(_prime_factors_supported(160)) == (4, 4, 2, 5): got (4, 4, 2, 5)
+    OK   coalesce_radices(_prime_factors_supported(320)) == (4, 4, 4, 5): got (4, 4, 4, 5)
+    OK   coalesce_radices(..., allowed=SUPPORTED_RADICES) for n=6 == (6,): got (6,)
+    OK   coalesce_radices(..., allowed=SUPPORTED_RADICES) for n=9 == (9,): got (9,)
+    OK   coalesce_radices(..., allowed=SUPPORTED_RADICES) for n=10 == (10,): got (10,)
+    OK   coalesce_radices invariants (product/support/order) for n=2..300
+
+  Store vectorization + radix coalescing together (N=256, radix-4 chain, real emitted code -- per-stage store mode):
+    OK   N=256 stage_0: 0 vector / 64 scalar store lines: got 0 vector / 64 scalar
+    OK   N=256 stage_1: 16 vector / 0 scalar store lines: got 16 vector / 0 scalar
+    OK   N=256 stage_2: 32 vector / 0 scalar store lines: got 32 vector / 0 scalar
+    OK   N=256 stage_3: 16 vector / 0 scalar store lines: got 16 vector / 0 scalar
+    OK   deep recursive plan n=2310 tile=3x4 inverse=False: max error 8.646e-08
+    OK   deep recursive plan n=2310 tile=3x4 inverse=True: max error 3.959e-11
+
+  Index-only checks for a large N (numeric path too slow to be worth running):
+    OK   index-only bijection + access-shape n=65536
+
+  Debug/summary output (N=960, one split level):
+N = 960
+Node M=960 R=1  split: A=32 B=30
+  PRE    matrix=30x32 tile=2x2 tiles=240 elem_stride=1
+  Leaf M=30 R=32: FFTRecNear0 radices=(2, 3, 5)
+  MIDDLE matrix=32x30 twiddle_modulus=960 tile=2x2 tiles=240 elem_stride=1
+  Leaf M=32 R=30: FFTRecLeaf1 radices=(4, 4, 2)
+  POST   matrix=30x32 tile=2x2 tiles=240 elem_stride=1 apply_1/N=False
+
+  leaf FFT kernel count:     2
+  transpose kernel count:    3
+  total transpose tiles:     720
+  max tile scratchpad bytes: 32
+  DRAM full-array passes:    5 (one input read + one output write per stage)
+  max DRAM elem_stride:      1 (every stage here is either an FFT leaf's own contiguous mapping or a tiled transpose)
+
+  Debug/summary output (N=210, 2-level recursion):
+N = 210
+Node M=210 R=1  split: A=6 B=35
+  PRE    matrix=35x6 tile=1x1 tiles=210 elem_stride=1
+  Leaf M=35 R=6: FFTRecNear0 radices=(5, 7)
+  MIDDLE matrix=6x35 twiddle_modulus=210 tile=1x1 tiles=210 elem_stride=1
+  Leaf M=6 R=35: FFTRecLeaf1 radices=(2, 3)
+  POST   matrix=35x6 tile=1x1 tiles=210 elem_stride=1 apply_1/N=False
+
+  leaf FFT kernel count:     2
+  transpose kernel count:    3
+  total transpose tiles:     630
+  max tile scratchpad bytes: 8
+  DRAM full-array passes:    5 (one input read + one output write per stage)
+  max DRAM elem_stride:      1 (every stage here is either an FFT leaf's own contiguous mapping or a tiled transpose)
+
+[verify] all FFT plans matched numpy's FFT
+
+  fft_plan_search.py: radix x execution joint search (step 9):
+    OK   N=960 near=30: 'default' radix tier x 8 distinct worker sequences: [('persistent', 'persistent'), ('persistent', 2), ('persistent', None), (2, 'persistent'), (2, 2), (2, None), (None, 'persistent'), (None, 2)]
+    OK   N=960 near=30: worker_sequence=(None, 2) x 2 distinct radix tiers: ['default', 'wide']
+    OK   N=960 near=30: distinct (radix, worker) pairs coexist: ('wide', ('persistent', None)) and ('default', ('persistent', 2))
+    OK   N=960 near=30: per-leaf sequences (2, None) and (None, 2) both generated and distinct (w=2)
+    OK   N=960 near=30: illegal worker-sequence-length combination rejected without crashing the search (8 legal candidates survived)
+    OK   N=105: identically-coalescing 'wide' tier deduped against 'default' (only ['default'] survived)
+    OK   N=960: 109 candidates, all distinct plan signatures (21 cooperative/persistent, surviving via whichever step built them first)
+    OK   N=144: generate_candidates includes 7 candidate(s) only step 9 could produce (non-default tier x worker sequence) among 148 total
+    OK   N=144: probe_and_rerank_candidates' own signature/field expectations hold for 7 step-9 candidate(s) (real-hardware rank_by_cycles run separately, not part of this fast check)
+[verify] fft_plan_search step-9 joint search: all checks passed
+
+  fft_plan_search.py: compute_lanes variant sweep (step 11):
+    OK   N=960: generate_candidates includes both compute_lanes variants ('unnarrowed', 'all_scalar'), every leaf stage's own compute_lanes set
+    OK   N=960: 2 lane-variant candidate(s) each have a _plan_signature distinct from the plain baseline's
+    OK   N=960: probe_and_rerank_candidates' own signature/field expectations hold for 2 step-11 candidate(s) (real-hardware run separately)
+[verify] fft_plan_search step-11 compute_lanes sweep: all checks passed
+
+  fft_cost_model.py: execution-cost model rework (stage-level metrics):
+    OK   N=216: 5 stage metrics == total_leaf_stage_count=5, all butterfly_count > 0 (sum=378)
+    OK   N=216: worst-stage effective_parallelism strictly increases workers=2 -> 4: 1.750 -> 3.000
+    OK   N=512: total_worker_stage_batches differs across the big leaf's own worker count despite the tiny far-leaf being stuck at 1 regardless: 17 (w=2) > 9 (w=4)
+    OK   N=960: estimate_cost is deterministic across 3 repeated calls (cost=76693.800)
+    OK   N=960: non-cooperative baseline's total_worker_stage_batches (33) == sum(simd_iteration_count), worst_worker_utilization unchanged at 1.0
+    OK   N=960: all_scalar's total_worker_stage_batches (264) == 8x baseline's (33), estimated_cost 76693.8 -> 76716.9 (previously identical)
+    OK   existing numerical correctness suite: see verify_fft_plan.py's own top-level run (this module is imported from it, not vice versa)
+    OK   N=144: generate_candidates count (40) unchanged under an adversarially different cost function (count is a structural property of generation + max_candidates, not of ranking)
+    OK   N=105: _resource_cost/spill policy unaffected by the execution-cost rework (radix_risk_penalty=5000.0, spill_penalty=2000.0, idle_worker_penalty removed)
+[verify] execution-cost model rework: all checks passed
+
+  fft_plan_search.py: persistent-execution joint search (step 10):
+    OK   N=216: persistent candidate generated, radices=[4, 2, 3, 3, 3]
+    OK   N=100000: persistent infeasibility handled as an empty list, not a crash
+    OK   N=960/1024: unsplit single-leaf persistent path stays gated off (confirmed ~50x slower on real hardware) -- split+persistent is a separate, ungated path, see check_split_persistent_reachable_where_unsplit_is_gated
+    OK   N=960/1024: split+persistent candidates reachable via the per-leaf joint search, every one genuinely split (never the gated-off unsplit shape)
+    OK   N=216: persistent candidate's _plan_signature is distinct from the non-cooperative baseline's (both radices=[4, 2, 3, 3, 3])
+    OK   N=216: persistent total_worker_stage_batches=30 < non-cooperative baseline's 160, estimated_cost ranks it cheaper
+    OK   N=216: persistent candidate satisfies _probe_plan's own dispatch condition (root.kernel.persistent is not None) -- real-hardware dispatch verified separately
+[verify] fft_plan_search step-10 persistent search: all checks passed
+
+  Persistent-workgroup leaf: target-invariant rejection checks:
+    OK   rejected: mapping_stride_bytes not a multiple of uthread_bytes
+    OK   rejected: interleave_chunk_uthreads inconsistent with mapping_stride/uthread_bytes
+  Persistent-workgroup leaf: registered-kernel-count stability across rounds:
+    OK   blocks=64 (2 rounds): 5 distinct kernel functions (['preload', 'stage_0', 'stage_1', 'stage_2', 'writeback']), 10 launch_parallel calls
+    OK   blocks=256 (8 rounds): 5 distinct kernel functions (['preload', 'stage_0', 'stage_1', 'stage_2', 'writeback']), 40 launch_parallel calls
+    OK   blocks=1024 (32 rounds): 5 distinct kernel functions (['preload', 'stage_0', 'stage_1', 'stage_2', 'writeback']), 160 launch_parallel calls
+  Persistent-workgroup leaf: single stage invocation regardless of workers_per_fft (worker-wave fusion):
+    OK   mode=wave      workers_per_fft=8 (waves=1) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=fused     workers_per_fft=8 (waves=1) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=physical  workers_per_fft=8 (waves=1) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=10 (waves=2) blocks=40 (2 rounds): 16 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=10 (waves=2) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=10 (waves=2) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=16 (waves=2) blocks=40 (2 rounds): 16 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=16 (waves=2) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=16 (waves=2) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=18 (waves=3) blocks=40 (2 rounds): 22 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=18 (waves=3) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=18 (waves=3) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=32 (waves=4) blocks=40 (2 rounds): 28 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=32 (waves=4) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=32 (waves=4) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=36 (waves=5) blocks=96 (3 rounds): 51 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=36 (waves=5) blocks=96 (3 rounds): 15 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=36 (waves=5) blocks=96 (3 rounds): 15 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=64 (waves=8) blocks=96 (3 rounds): 78 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=64 (waves=8) blocks=96 (3 rounds): 15 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=64 (waves=8) blocks=96 (3 rounds): 15 launch_parallel calls, wave_tracker=False, loop=False
+  Persistent-workgroup leaf: plan-equivalence + numeric checks:
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=32 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 1.843e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=32 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 2.247e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=30 radices=(2, 3, 5) blocks=40 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 9.537e-09
+    OK   persistent N=30 radices=(2, 3, 5) blocks=40 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 5.998e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=None exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=None exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=reserved workers_per_fft=None exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=reserved workers_per_fft=None exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=33 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 1.660e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=33 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 2.066e-10
+  Persistent-workgroup leaf: worker-wave (workers_per_fft > workers_per_group) numeric checks:
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=reserved workers_per_fft=32 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=reserved workers_per_fft=32 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=96 mode=adaptive workers_per_fft=64 exec_mode=physical inverse=False: max error 1.162e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=96 mode=adaptive workers_per_fft=64 exec_mode=physical inverse=True: max error 1.721e-10
+  Persistent-workgroup leaf: ragged worker-wave (workers_per_fft not a divisor or multiple of workers_per_group) logical-worker coverage checks:
+    OK   workers_per_fft=3: exact 0..2 coverage, no gap/duplicate
+    OK   workers_per_fft=5: exact 0..4 coverage, no gap/duplicate
+    OK   workers_per_fft=6: exact 0..5 coverage, no gap/duplicate
+    OK   workers_per_fft=7: exact 0..6 coverage, no gap/duplicate
+    OK   workers_per_fft=10: exact 0..9 coverage, no gap/duplicate
+    OK   workers_per_fft=12: exact 0..11 coverage, no gap/duplicate
+    OK   workers_per_fft=18: exact 0..17 coverage, no gap/duplicate
+    OK   workers_per_fft=20: exact 0..19 coverage, no gap/duplicate
+    OK   workers_per_fft=36: exact 0..35 coverage, no gap/duplicate
+  Persistent-workgroup leaf: ragged dispatch source-level checks:
+    OK   workers_per_fft=3: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=5: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=6: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=7: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=10: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=12: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=18: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=20: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=36: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=8: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=16: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+  Persistent-workgroup leaf: ragged worker-wave numeric checks (GPU-baseline-observed W values: 3/5/6/7/10/12/18/20/36):
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=6 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=6 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=96 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 1.162e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=96 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.721e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 2.106e-10
+  Persistent-workgroup leaf: worker-wave FUSION matrix -- W = 3,5,6,7,8,10,12,16,18,20,24,32,36 across single/multi replica, tail/no-tail, mixed-radix/power-of-two, single/multi round (docs/worker_wave_fusion.md's own required coverage):
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=3 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=3 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=5 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=5 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=6 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=6 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=7 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=7 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=8 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=8 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=10 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=10 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=12 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=12 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=16 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=16 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=18 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=18 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=20 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=20 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=24 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=24 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=32 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=32 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=36 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=36 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=216 radices=(6, 6, 6) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 3.105e-08
+    OK   persistent N=216 radices=(6, 6, 6) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.349e-10
+    OK   persistent N=216 radices=(6, 6, 6) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 3.321e-08
+    OK   persistent N=216 radices=(6, 6, 6) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.806e-10
+    OK   persistent N=216 radices=(6, 6, 6) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 3.105e-08
+    OK   persistent N=216 radices=(6, 6, 6) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.349e-10
+    OK   persistent N=216 radices=(6, 6, 6) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 3.321e-08
+    OK   persistent N=216 radices=(6, 6, 6) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.806e-10
+  Persistent-workgroup leaf: explicit exec_mode='wave'/'fused' regression (mode-parameter routing, not the default 'physical' path the matrix above already exercised exhaustively):
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=fused inverse=True: max error 1.778e-10
+  Persistent-workgroup leaf: physical-lane strip-mining (Mode C) bit-for-bit cross-mode equivalence -- wave vs fused vs physical on the SAME plan/input, not just each vs numpy:
+    OK   N=64 radices=(4, 4, 4) W=3 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=3 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=5 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=5 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=6 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=6 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=7 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=7 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=8 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=8 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=10 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=10 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=12 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=12 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=16 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=16 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=18 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=18 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=20 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=20 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=24 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=24 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=32 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=32 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=36 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=36 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=10 blocks=1 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=10 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=10 blocks=40 inverse=True: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=18 blocks=1 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=18 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=18 blocks=40 inverse=True: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=36 blocks=1 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=36 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=36 blocks=40 inverse=True: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+[verify] persistent leaf: all cases matched numpy's FFT
+
+  Structural invariants: non-cooperative/cooperative/persistent plan shape:
+    OK   length=64 radices=(4, 4, 4) workers=2: non-cooperative + cooperative invariants hold
+    OK   length=64 radices=(4, 4, 4) workers=4: non-cooperative + cooperative invariants hold
+    OK   length=105 radices=(3, 5, 7) workers=2: non-cooperative + cooperative invariants hold
+    OK   length=128 radices=(4, 4, 4, 2) workers=8: non-cooperative + cooperative invariants hold
+    OK   persistent length=64 radices=(4, 4, 4): persistent invariants hold
+    OK   persistent length=105 radices=(3, 5, 7): persistent invariants hold
+
+  Regression guard: workers_per_fft=8 offered by default (Phase 1 fix):
+    OK   worker_candidates_per_fft(128, (4,4,4,2)) includes 8 by default: [1, 2, 4, 8]
+    OK   choose_workers_per_fft(128, (4,4,4,2)) picks 8 by default: 8
+
+  Regression guard: cooperative-leaf host main() emits the 256B pool-alignment guard:
+    OK   generate_cooperative_fft_kernel emits pool alignment guard
+
+  Cross-strategy numeric equivalence (same input, non-coop vs. cooperative vs. persistent):
+    OK   length=64 radices=(4, 4, 4) cooperative_workers=2 total_ffts=3 inverse=False: worst pairwise/numpy error 9.237e-09
+    OK   length=64 radices=(4, 4, 4) cooperative_workers=2 total_ffts=3 inverse=True: worst pairwise/numpy error 1.222e-10
+    OK   length=105 radices=(3, 5, 7) cooperative_workers=2 total_ffts=4 inverse=False: worst pairwise/numpy error 1.511e-08
+    OK   length=105 radices=(3, 5, 7) cooperative_workers=2 total_ffts=4 inverse=True: worst pairwise/numpy error 1.803e-10
+
+  Persistent recursive-split support (Phase 3): same split/radix as non-persistent, numpy-correct:
+    OK   N=960 budget=512 inverse=False: {'same_split_shape': True, 'max_error': 6.23116411304653e-08}
+    OK   N=960 budget=512 inverse=True: {'same_split_shape': True, 'max_error': 1.972741373766934e-10}
+    OK   N=1024 budget=512 inverse=False: {'same_split_shape': True, 'max_error': 5.388447884898487e-08}
+    OK   N=1024 budget=512 inverse=True: {'same_split_shape': True, 'max_error': 4.28520195834255e-11}
+
+  Persistent immune to spread_across_units (Phase 3 gap found 2026-08-31): probe_spill_free/make_fft_kernel.py's own real default (True), not just False:
+    OK   N=960 forced_worker_sequence=('persistent', None): {'persistent_stage_indices': [1], 'persistent_unaffected_by_spread': True, 'some_other_stage_did_widen': True}
+    OK   N=960 forced_worker_sequence=(2, 'persistent'): {'persistent_stage_indices': [3], 'persistent_unaffected_by_spread': True, 'some_other_stage_did_widen': True}
+
+  Per-leaf mixed execution strategy (Phase 4): forced_worker_sequence mixing noncoop/cooperative/persistent:
+    OK   forced_worker_sequence=('persistent', None) N=960 inverse=False: max error 7.701e-08
+    OK   forced_worker_sequence=('persistent', None) N=960 inverse=True: max error 1.792e-10
+    OK   forced_worker_sequence=(None, 'persistent') N=960 inverse=False: max error 7.701e-08
+    OK   forced_worker_sequence=(None, 'persistent') N=960 inverse=True: max error 1.792e-10
+    OK   forced_worker_sequence=('persistent', 'persistent') N=960 inverse=False: max error 7.701e-08
+    OK   forced_worker_sequence=('persistent', 'persistent') N=960 inverse=True: max error 1.792e-10
+    OK   forced_worker_sequence=(2, 'persistent') N=960 inverse=False: max error 7.701e-08
+    OK   forced_worker_sequence=(2, 'persistent') N=960 inverse=True: max error 1.792e-10
+    OK   forced_worker_sequence=('persistent', 'auto') N=960 inverse=False: max error 7.701e-08
+    OK   forced_worker_sequence=('persistent', 'auto') N=960 inverse=True: max error 1.792e-10
+
+  compute_lanes planner promotion (Phase 5): planner-resolved path == old live-resolution path:
+    OK   length=105 radices=(3, 5, 7): {'all_stages_set': True, 'planned_matches_live': True, 'text_identical': True, 'candidates_distinct': True, 'candidate_count': 3}
+    OK   length=128 radices=(4, 4, 4, 2): {'all_stages_set': True, 'planned_matches_live': True, 'text_identical': True, 'candidates_distinct': True, 'candidate_count': 3}
+    OK   length=110 radices=(2, 5, 11): {'all_stages_set': True, 'planned_matches_live': True, 'text_identical': True, 'candidates_distinct': True, 'candidate_count': 3}
+[verify] execution-strategy invariants: all checks passed
+

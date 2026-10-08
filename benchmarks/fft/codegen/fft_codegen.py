@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from planning.execution.launch_plan import resolve_fft_launch
+from codegen.common import emit_aligned_pool, emit_fft_identity, emit_fft_launches, emit_execution_record
+
 """Pure code emission from a fully lowered FFTCodegenPlan / MultiKernelFFTPlan.
 
 No FFT planning is performed here.  In particular this module does not:
@@ -33,6 +37,8 @@ FFT planning (no address, radix, or twiddle-value decision), but not pure
 text emission either, so they get their own module rather than blurring
 this one's own "no planning" contract.
 """
+
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
 from codegen.common import (
     Emitter,
@@ -120,6 +126,15 @@ def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
     return expr
 
 
+def _buffer_ref(plan: FFTCodegenPlan, name: str, storage: str) -> str:
+    return f"p.{name}" if storage == "workspace" else _spad(plan.kernel_name, name)
+
+
+def _buffer_load(plan: FFTCodegenPlan, name: str, storage: str, width: int) -> str:
+    ref = _buffer_ref(plan, name, storage)
+    return f"{ref}.load[width={width}]" if storage == "workspace" else f"{ref}.load[DType.float32, {width}]"
+
+
 def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan, width: int) -> None:
     """`width` is this (possibly chunked -- see `_chunk_batch`) load's own
     SIMD width, not necessarily `plan.simd_lanes`: the plan's `simd_lanes`
@@ -142,13 +157,13 @@ def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan, width: int) 
             )
         else:
             assert load.buffer_name is not None
-            buf = _spad(plan.kernel_name, load.buffer_name)
+            buf_load = _buffer_load(plan, load.buffer_name, load.source, width)
             e.add(
-                f"        var rr{j} = {buf}.load[DType.float32, {width}]("
+                f"        var rr{j} = {buf_load}("
                 f"spad_base + {load.base_offset})"
             )
             e.add(
-                f"        var ii{j} = {buf}.load[DType.float32, {width}]("
+                f"        var ii{j} = {buf_load}("
                 f"spad_base + {plan.length} + {load.base_offset})"
             )
         return
@@ -174,13 +189,13 @@ def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan, width: int) 
             )
         else:
             assert load.buffer_name is not None
-            buf = _spad(plan.kernel_name, load.buffer_name)
+            buf_load = _buffer_load(plan, load.buffer_name, load.source, 1)
             e.add(
-                f"        var {rr_scalar} = {buf}.load[DType.float32, 1]("
+                f"        var {rr_scalar} = {buf_load}("
                 f"spad_base + {offset})"
             )
             e.add(
-                f"        var {ii_scalar} = {buf}.load[DType.float32, 1]("
+                f"        var {ii_scalar} = {buf_load}("
                 f"spad_base + {plan.length} + {offset})"
             )
         rr_lanes.append(f"{rr_scalar}[0]")
@@ -335,7 +350,7 @@ def _emit_store(
             )
         else:
             assert store.buffer_name is not None
-            buf = _spad(plan.kernel_name, store.buffer_name)
+            buf = _buffer_ref(plan, store.buffer_name, store.destination)
             e.add(
                 f"        {buf}.store(spad_base + {store.base_offset}, or{output})"
             )
@@ -356,7 +371,7 @@ def _emit_store(
             )
         else:
             assert store.buffer_name is not None
-            buf = _spad(plan.kernel_name, store.buffer_name)
+            buf = _buffer_ref(plan, store.buffer_name, store.destination)
             e.add(
                 f"        {buf}.store(spad_base + {offset}, or{output}[{lane}])"
             )
@@ -399,13 +414,13 @@ def _emit_load_loop(
         )
     else:
         assert load.buffer_name is not None
-        buf = _spad(plan.kernel_name, load.buffer_name)
+        buf_load = _buffer_load(plan, load.buffer_name, load.source, width)
         e.add(
-            f"        var rr{j} = {buf}.load[DType.float32, {width}]("
+            f"        var rr{j} = {buf_load}("
             f"spad_base + {offset_expr})"
         )
         e.add(
-            f"        var ii{j} = {buf}.load[DType.float32, {width}]("
+            f"        var ii{j} = {buf_load}("
             f"spad_base + {plan.length} + {offset_expr})"
         )
 
@@ -428,21 +443,43 @@ def _emit_twiddle_loop(
     e.add(f"        oi{k} = ti{k}")
 
 
+def _residue_pattern(values: tuple[int, ...]) -> tuple[int,int,int] | None:
+    """Prove a base + (r%d)*inner + (r//d)*outer representation."""
+    for divisor in range(1,len(values)+1):
+        inner = values[1]-values[0] if divisor > 1 else 0
+        outer = values[divisor]-values[0] if divisor < len(values) else 0
+        if all(v == values[0] + (r % divisor)*inner + (r // divisor)*outer
+               for r,v in enumerate(values)):
+            return divisor,inner,outer
+    return None
+
+
+def _residue_base(values: tuple[int, ...], residue: int | str, offset: int = 0) -> int | str:
+    if isinstance(residue,int):
+        return values[residue] + offset
+    pattern = _residue_pattern(values)
+    assert pattern is not None, "residue compression must be proved before rendering"
+    divisor,inner,outer = pattern
+    if divisor == 1:
+        return f"({values[0] + offset} + {residue} * {outer})"
+    return f"({values[0] + offset} + ({residue} % {divisor}) * {inner} + ({residue} // {divisor}) * {outer})"
+
+
 def _emit_store_loop(
     e: Emitter, *, plan: FFTCodegenPlan, output: int, store: _LoopStoreInfo,
-    residue: int, chunk_offset: int, width: int,
+    residue: int | str, chunk_offset: int, width: int,
 ) -> None:
     k = output
     if store.mode == "vector":
         assert store.bases is not None and store.stride is not None
-        base = store.bases[residue] + chunk_offset
+        base = _residue_base(store.bases,residue,chunk_offset)
         offset_expr = f"({base} + outer_it * {store.stride})"
         if store.destination == "output":
             e.add(f"        p.output_real_base.store(out_batch_base + {offset_expr}, or{k})")
             e.add(f"        p.output_imag_base.store(out_batch_base + {offset_expr}, oi{k})")
         else:
             assert store.buffer_name is not None
-            buf = _spad(plan.kernel_name, store.buffer_name)
+            buf = _buffer_ref(plan, store.buffer_name, store.destination)
             e.add(f"        {buf}.store(spad_base + {offset_expr}, or{k})")
             e.add(f"        {buf}.store(spad_base + {plan.length} + {offset_expr}, oi{k})")
         return
@@ -462,46 +499,48 @@ def _emit_store_loop(
     # vector store would cover at once. Not a new layout decision: every
     # value compared below was already fixed by the planner.
     lane_range = range(chunk_offset, chunk_offset + width)
-    bases = [store.lane_bases[lane][residue] for lane in lane_range]
+    bases = [_residue_base(store.lane_bases[lane],residue) for lane in lane_range]
     strides = [store.lane_stride[lane] for lane in lane_range]
-    if width > 0 and all(s == strides[0] for s in strides) and all(
-        bases[i] == bases[0] + i for i in range(1, width)
-    ):
+    contiguous = (all(bases[i] == bases[0] + i for i in range(1,width))
+                  if isinstance(residue,int) else
+                  all(store.lane_bases[chunk_offset+i][r] == store.lane_bases[chunk_offset][r] + i
+                      for r in range(len(store.lane_bases[0])) for i in range(1,width)))
+    if width > 0 and all(s == strides[0] for s in strides) and contiguous:
         offset_expr = f"({bases[0]} + outer_it * {strides[0]})"
         if store.destination == "output":
             e.add(f"        p.output_real_base.store(out_batch_base + {offset_expr}, or{k})")
             e.add(f"        p.output_imag_base.store(out_batch_base + {offset_expr}, oi{k})")
         else:
             assert store.buffer_name is not None
-            buf = _spad(plan.kernel_name, store.buffer_name)
+            buf = _buffer_ref(plan, store.buffer_name, store.destination)
             e.add(f"        {buf}.store(spad_base + {offset_expr}, or{k})")
             e.add(f"        {buf}.store(spad_base + {plan.length} + {offset_expr}, oi{k})")
         return
 
     for lane in range(width):
         abs_lane = chunk_offset + lane
-        base = store.lane_bases[abs_lane][residue]
+        base = _residue_base(store.lane_bases[abs_lane],residue)
         offset_expr = f"({base} + outer_it * {store.lane_stride[abs_lane]})"
         if store.destination == "output":
             e.add(f"        p.output_real_base.store(out_batch_base + {offset_expr}, or{k}[{lane}])")
             e.add(f"        p.output_imag_base.store(out_batch_base + {offset_expr}, oi{k}[{lane}])")
         else:
             assert store.buffer_name is not None
-            buf = _spad(plan.kernel_name, store.buffer_name)
+            buf = _buffer_ref(plan, store.buffer_name, store.destination)
             e.add(f"        {buf}.store(spad_base + {offset_expr}, or{k}[{lane}])")
             e.add(f"        {buf}.store(spad_base + {plan.length} + {offset_expr}, oi{k}[{lane}])")
 
 
 def _emit_loop_chunk(
     e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, loop_plan: _LoopStagePlan,
-    residue: int, chunk_offset: int, width: int,
+    residue: int | str, chunk_offset: int, width: int,
 ) -> None:
     e.add(
         f"        # ===== stage {stage.stage_id}, loop residue {residue} chunk offset "
         f"{chunk_offset} (width {width}) ====="
     )
     for load in loop_plan.loads:
-        base = load.bases[residue] + chunk_offset
+        base = _residue_base(load.bases,residue,chunk_offset)
         offset_expr = f"({base} + outer_it * {load.stride})"
         _emit_load_loop(e, plan=plan, load=load, offset_expr=offset_expr, width=width)
     e.add()
@@ -512,7 +551,8 @@ def _emit_loop_chunk(
     def on_output(k: int) -> None:
         tw = loop_plan.twiddles.get(k)
         if tw is not None:
-            row_offset = tw.table_offset + residue * simd_lanes + chunk_offset
+            row_offset = (tw.table_offset + residue * simd_lanes + chunk_offset if isinstance(residue,int)
+                          else f"({tw.table_offset + chunk_offset} + {residue} * {simd_lanes})")
             table_offset_expr = f"({row_offset} + outer_it * {loop_plan.period * simd_lanes})"
             _emit_twiddle_loop(e, output=k, table_offset_expr=table_offset_expr, width=width)
 
@@ -534,11 +574,41 @@ def _emit_loop_chunk(
 def _emit_loop_stage(
     e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, loop_plan: _LoopStagePlan,
     compute_lanes: int | None,
+    compact_residues: bool = False,
 ) -> None:
     simd_lanes = plan.simd_lanes
     cl = compute_lanes if compute_lanes is not None else simd_lanes
     n_chunks = (simd_lanes + cl - 1) // cl
     period = loop_plan.period
+
+    # A runtime residue loop is legal only when every already-proven load
+    # and store base has a proved quotient/remainder form. Validate concrete IR
+    # offsets rather than reconstructing Stockham address formulas.
+    arrays = [load.bases for load in loop_plan.loads]
+    for store in loop_plan.stores:
+        arrays.extend((store.bases,) if store.mode == "vector" else store.lane_bases)
+    use_residue_loop = compact_residues and period > 1 and all(
+        _residue_pattern(values) is not None for values in arrays)
+    if use_residue_loop:
+        body = Emitter()
+        body.add("        var residue_it = 0")
+        body.add(f"        while residue_it < {period}:")
+        for c in range(n_chunks):
+            sub = Emitter()
+            _emit_loop_chunk(sub,plan=plan,stage=stage,loop_plan=loop_plan,residue="residue_it",
+                             chunk_offset=c*cl,width=min(cl,simd_lanes-c*cl))
+            if n_chunks > 1:
+                body.add(f"            if True:  # chunk {c}")
+            for line in sub.lines:
+                body.add(("        " if n_chunks > 1 else "    ") + line if line else "")
+        body.add("            residue_it += 1")
+        e.add("        var outer_it = 0")
+        e.add(f"        while outer_it < {loop_plan.outer_iters}:")
+        for line in body.lines:
+            e.add("    " + line if line else "")
+        e.add("            outer_it += 1")
+        e.add()
+        return
 
     body = Emitter()
     for r in range(period):
@@ -692,6 +762,7 @@ def _emit_stage(
         e.add("        var local_id = local_uthread_id()")
         e.add(f"        if local_id >= MAX_UTHREAD_{plan.kernel_name}:")
         e.add("            return")
+        resolved_identity = emit_fft_identity(e, plan=plan)
         # A single-stage kernel (this kernel's own length == its one radix,
         # as every decomposed sub-FFT kernel is) never reads or writes its
         # own scratchpad -- first_stage and last_stage are the same stage,
@@ -705,14 +776,20 @@ def _emit_stage(
         # costs one % and one // (see _mapping_base_expr). Declared only on
         # the stage that actually reads/writes DRAM through it.
         if is_first:
+            expr = _mapping_base_expr(plan.input_mapping, plan.length)
+            if resolved_identity:
+                expr = expr.replace("global_uthread_id()", "logical_fft_id")
             e.add(
                 f"        var in_batch_base = "
-                f"{_mapping_base_expr(plan.input_mapping, plan.length)}"
+                f"{expr}"
             )
         if is_last:
+            expr = _mapping_base_expr(plan.output_mapping, plan.length)
+            if resolved_identity:
+                expr = expr.replace("global_uthread_id()", "logical_fft_id")
             e.add(
                 f"        var out_batch_base = "
-                f"{_mapping_base_expr(plan.output_mapping, plan.length)}"
+                f"{expr}"
             )
         e.add()
 
@@ -814,6 +891,9 @@ def _emit_params_struct(
         # depend on that per-stage outcome (see emit_kernel).
         e.add("    var loop_twiddle_real_base: UnsafePointer[Float32, MutAnyOrigin]")
         e.add("    var loop_twiddle_imag_base: UnsafePointer[Float32, MutAnyOrigin]")
+    if plan.launch_mapping is not None and plan.launch_mapping.uses_bounds_params:
+        e.add("    var launch_fft_base: Int")
+        e.add("    var launch_fft_count: Int")
     e.add()
     e.add()
 
@@ -826,6 +906,7 @@ def _emit_task_struct(
     narrow_middle_stages: bool = False,
     loop_stages: bool = False,
     min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
+    max_kernel_register: int = DEFAULT_TARGET_PROFILE.max_kernel_register,
 ) -> list[tuple[float, float]]:
     """The NDPTask struct: its scratchpad buffers (each uthread's own
     region, sized by scratchpad_uthread_stride -- see module docstring),
@@ -854,6 +935,9 @@ def _emit_task_struct(
     Params, since that's a host/main()-level decision this module doesn't
     make on its own.
     """
+    from planning.execution.kernel_registration import validate_kernel_registration
+    validate_kernel_registration(plan, max_kernel_register=max_kernel_register,
+                                 loop_stages=loop_stages, min_loop_batches=min_loop_batches)
     e.add(f"struct {plan.kernel_name}(NDPTask):")
     e.add(f"    comptime Params = {plan.kernel_name}Params")
     e.add()
@@ -897,6 +981,7 @@ def emit_kernel(
     narrow_middle_stages: bool = False,
     loop_stages: bool = False,
     min_loop_batches: int = _LOOP_MIN_FULL_BATCHES,
+    max_kernel_register: int = DEFAULT_TARGET_PROFILE.max_kernel_register,
 ) -> list[tuple[float, float]]:
     e.add(f"comptime MAX_UTHREAD_{plan.kernel_name} = {plan.max_uthread}")
     e.add()
@@ -904,23 +989,31 @@ def emit_kernel(
     return _emit_task_struct(
         e, plan=plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         loop_stages=loop_stages, min_loop_batches=min_loop_batches,
+        max_kernel_register=max_kernel_register,
     )
 
 
 def generate_fft_kernel(
-    plan: FFTCodegenPlan, *, compute_lanes: int | None = None, narrow_middle_stages: bool = False
+    plan: FFTCodegenPlan, *, compute_lanes: int | None = None, narrow_middle_stages: bool = False,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    spread_across_units: bool = True,
 ) -> str:
-    """Render a single-kernel plan: the whole FFT in one NDPTask, one
-    launch. This function performs no FFT planning. `compute_lanes`: see
-    `_chunk_batch`; `None` (the default) keeps today's output unchanged.
+    """Render one NDPTask with safe host rounds covering every batch FFT.
+    `spread_across_units` controls placement, using the target mapping stride.
+    This function performs no FFT planning. `compute_lanes`: see `_chunk_batch`.
     """
+    plan = replace(plan, launch_mapping=resolve_fft_launch(plan, target=target,
+                                                         spread_across_units=spread_across_units))
     e = Emitter()
     _emit_prelude(e)
+    emit_execution_record(e, plan=plan, compute_lanes=compute_lanes,
+                          narrow_middle_stages=narrow_middle_stages, loop_stages=False)
     e.add(f"comptime N = {plan.length}")
     e.add(f"comptime MAX_UTHREAD_{plan.kernel_name} = {plan.max_uthread}")
     e.add()
     _emit_params_struct(e, plan=plan)
-    _emit_task_struct(e, plan=plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages)
+    _emit_task_struct(e, plan=plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+                      max_kernel_register=target.max_kernel_register)
 
     host = plan.host
     e.add("def main() raises:")
@@ -935,8 +1028,9 @@ def generate_fft_kernel(
     e.add("    var ref_real = cxl_alloc[Float32](total_elems)")
     e.add("    var ref_imag = cxl_alloc[Float32](total_elems)")
     e.add()
-    e.add(f"    var pool_elems = {host.pool_elems}")
-    e.add("    var uthread_pool = cxl_alloc[Float32](pool_elems)")
+    e.add(f"    var pool_elems = {max(r.pool_elems for r in plan.launch_mapping.rounds())}")
+    emit_aligned_pool(e, name="uthread_pool", elems="pool_elems",
+                      alignment_bytes=plan.launch_mapping.alignment_bytes)
     e.add()
 
     # Fresh random input every run (std.random, seeded like every other
@@ -951,17 +1045,8 @@ def generate_fft_kernel(
     e.add("        ref_imag[i] = Float32(0)")
     e.add()
 
-    e.add(f"    var rc = {plan.kernel_name}.launch(")
-    e.add("        PooledRange.over(uthread_pool, pool_elems),")
-    e.add(
-        f"        {plan.kernel_name}Params(input_real, input_imag, output_real, output_imag),"
-    )
-    e.add("    )")
-    e.add()
-    e.add("    if rc != 0:")
-    e.add('        print("[host] FFT failed, exit", rc)')
-    e.add("        return")
-    e.add()
+    emit_fft_launches(e, plan=plan, pool="uthread_pool",
+                     args=["input_real", "input_imag", "output_real", "output_imag"])
 
     _emit_reference_check(
         e,

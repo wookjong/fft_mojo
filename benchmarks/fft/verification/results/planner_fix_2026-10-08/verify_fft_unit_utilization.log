@@ -1,0 +1,9 @@
+  fft_unit_utilization.py: diagnostic active-NDP-unit-count estimate:
+    OK   distinct_active_units matches a brute-force reimplementation of M2NDPConfig::get_uthread_size's own per-packet loop across 200000 random (base, size, chunk, num_units) combinations, including wraparound
+    OK   distinct_active_units: zero/one-chunk/one-period/sub-chunk-span edge cases
+    OK   N=960: cooperative leaf(s) report alignment_exact=True (best==worst), all 3 transpose stage(s) report alignment_exact=False (genuine best/worst range)
+    OK   N=960: unsplit persistent leaf (num_logical_blocks=1) activates exactly 1/32 units (real ~2.26x-slower, corrected from the originally-reported ~50x, pathology from docs/persistent_representative_sweep.md reproduced in active-unit terms -- SANITY CHECK ONLY, not used for any formula/weight); split baseline's own transpose stages reach up to 8 units
+    OK   N=960: far_child active units -- persistent=32, non_cooperative=30 of 32 (both near-saturated -- consistent with the corrected real gap being a modest ~18-19%, not the 32x-apart unsplit-pathology shape; NOT parity, see docs/persistent_recursive_split.md's own correction)
+    OK   N=1024: far_child active units -- persistent=32, non_cooperative=32 of 32 (both near-saturated -- consistent with the corrected real gap being a modest ~18-19%, not the 32x-apart unsplit-pathology shape; NOT parity, see docs/persistent_recursive_split.md's own correction)
+[verify] active-NDP-unit-count diagnostic: all checks passed
+

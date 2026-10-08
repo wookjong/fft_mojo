@@ -1,0 +1,8 @@
+{
+  "upstream_commit": "066a17c17068c0f11c9298d848c2976c71fad1c1",
+  "scheduler_sha256": "9b37b786a70cd416be468e637d21bf463ad307e98b6217b2c0149878460e5809",
+  "base_cases": 777,
+  "direct_cases": 585,
+  "axis_cases": 128,
+  "mismatches": []
+}

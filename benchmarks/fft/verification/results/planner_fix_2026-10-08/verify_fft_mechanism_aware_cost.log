@@ -1,0 +1,9 @@
+  fft_cost_model.py: mechanism-aware execution-cost correction (2026-09-01):
+    OK   N=960: non-persistent plans (non-coop, coop=2/4/8) compute byte-identical estimated_cost to the pre-correction formula (persistent terms are exactly 0)
+    OK   N=216: cooperative_workers=4 now correctly ranks cheapest (cost=3458.00 < persistent=3458.07 < noncoop=3461.30) -- matches real hardware (22316 < 23941 < 43771 cycles)
+    OK   N=960: mixed-leaf candidate (near=persistent/far=non-coop) stays ranked well ahead of uniform persistent (76691.47 < 76699.25) and non-cooperative (76691.47 < 76693.80) -- not broken by this correction
+    OK   N=960: persistent_extra_rounds is 0 for a non-cooperative leaf regardless of replica count, and exactly 7 for persistent's own far_child (240 replicas / 32 units)
+    OK   persistent_stage_batch_multiplier=1.746 and persistent_extra_round_multiplier=11.0 unchanged (frozen pending holdout validation)
+    OK   N=960: persistent plan's own estimated_cost is deterministic across 3 repeated calls (cost=76699.248)
+[verify] mechanism-aware cost correction: all checks passed
+

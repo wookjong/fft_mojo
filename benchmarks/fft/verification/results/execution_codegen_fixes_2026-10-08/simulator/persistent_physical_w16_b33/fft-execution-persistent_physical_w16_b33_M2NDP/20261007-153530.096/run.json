@@ -1,0 +1,137 @@
+{
+  "config": "M2NDP",
+  "config_md5": "33d240c5",
+  "config_path": "/work/third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config",
+  "core_mhz": 2000,
+  "cycles": 12320,
+  "detour": "",
+  "dir": "/fft-work/verification/results/execution_codegen_fixes_2026-10-08/simulator/persistent_physical_w16_b33/fft-execution-persistent_physical_w16_b33_M2NDP/20261007-153530.096",
+  "dram": {
+    "channels": 28,
+    "max_pct": 1.06,
+    "mean_pct": 0.75,
+    "min_pct": 0.65
+  },
+  "exit": 0,
+  "finished": "2026-10-07T15:36:10+00:00",
+  "host_log": "host.log",
+  "kernels": [
+    {
+      "finished": 1731,
+      "launch_id": "0",
+      "name": "persistent_physical_w16_b33::PersistentFFT::preload()",
+      "started": 847
+    },
+    {
+      "finished": 4721,
+      "launch_id": "1",
+      "name": "persistent_physical_w16_b33::PersistentFFT::stage_0()",
+      "started": 1841
+    },
+    {
+      "finished": 6618,
+      "launch_id": "2",
+      "name": "persistent_physical_w16_b33::PersistentFFT::stage_1()",
+      "started": 4912
+    },
+    {
+      "finished": 7554,
+      "launch_id": "3",
+      "name": "persistent_physical_w16_b33::PersistentFFT::stage_2()",
+      "started": 6738
+    },
+    {
+      "finished": 8715,
+      "launch_id": "4",
+      "name": "persistent_physical_w16_b33::PersistentFFT::writeback()",
+      "started": 7668
+    },
+    {
+      "finished": 9221,
+      "launch_id": "5",
+      "name": "persistent_physical_w16_b33::PersistentFFT::preload()",
+      "started": 8815
+    },
+    {
+      "finished": 10494,
+      "launch_id": "6",
+      "name": "persistent_physical_w16_b33::PersistentFFT::stage_0()",
+      "started": 9322
+    },
+    {
+      "finished": 11247,
+      "launch_id": "7",
+      "name": "persistent_physical_w16_b33::PersistentFFT::stage_1()",
+      "started": 10597
+    },
+    {
+      "finished": 11848,
+      "launch_id": "8",
+      "name": "persistent_physical_w16_b33::PersistentFFT::stage_2()",
+      "started": 11481
+    },
+    {
+      "finished": 12218,
+      "launch_id": "9",
+      "name": "persistent_physical_w16_b33::PersistentFFT::writeback()",
+      "started": 11963
+    }
+  ],
+  "launch_spans": [
+    12320
+  ],
+  "launches": 10,
+  "log": "simulator.log",
+  "repo": "",
+  "stats": {
+    "ctrl.addr_issue": 809,
+    "ctrl.cycle": 0,
+    "ctrl.exit_issue": 0,
+    "ctrl.f_issue": 0,
+    "ctrl.i_issue": 823,
+    "ctrl.inst_issue": 1632,
+    "ctrl.ldst_issue": 102,
+    "ctrl.sf_issue": 0,
+    "ctrl.spad_issue": 707,
+    "ctrl.spad_read": 0,
+    "ctrl.spad_write": 0,
+    "ctrl.v_addr_issue": 0,
+    "ctrl.v_issue": 0,
+    "ctrl.v_ldst_issue": 0,
+    "ctrl.v_sf_issue": 0,
+    "ctrl.v_spad_issue": 0,
+    "launches": 10,
+    "ndp.addr_issue": 7840,
+    "ndp.cycle": 0,
+    "ndp.exit_issue": 2560,
+    "ndp.f_issue": 3616,
+    "ndp.i_issue": 97691,
+    "ndp.inst_issue": 143519,
+    "ndp.ldst_issue": 2904,
+    "ndp.sf_issue": 0,
+    "ndp.spad_issue": 4936,
+    "ndp.spad_read": 0,
+    "ndp.spad_write": 0,
+    "ndp.v_addr_issue": 16104,
+    "ndp.v_issue": 15708,
+    "ndp.v_ldst_issue": 2904,
+    "ndp.v_sf_issue": 0,
+    "ndp.v_spad_issue": 13200
+  },
+  "stats_file": "stats.txt",
+  "tasks": [
+    {
+      "arrived": 70,
+      "called": 0,
+      "finished": 12248,
+      "issued": 0,
+      "launch": 0,
+      "notified": 12320,
+      "started": 70,
+      "task": 0
+    }
+  ],
+  "time_us": 6.16,
+  "wall_s": 40.0,
+  "workload": "fft-execution-persistent_physical_w16_b33"
+}

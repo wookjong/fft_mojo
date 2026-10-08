@@ -275,6 +275,10 @@ def _emit_small_named(
         return _emit_radix5_named(
             e, indent=indent, ins=ins, prefix=prefix, inverse=inverse
         )
+    if radix == 7:
+        return _emit_symmetric_named(
+            e, indent=indent, ins=ins, prefix=prefix, radix=radix, inverse=inverse
+        )
     raise ValueError(f"no small fixed butterfly for radix {radix}")
 
 
@@ -349,14 +353,16 @@ def _emit_factorized(
                 on_output(k)
 
 
-def _emit_symmetric_odd_radix(
+def _emit_symmetric_named(
     e: LineEmitter,
     *,
     indent: str,
+    ins: list[tuple[str, str]],
+    prefix: str,
     radix: int,
     inverse: bool,
     on_output: OutputCallback | None = None,
-) -> None:
+) -> list[tuple[str, str]]:
     """Symmetry-reduced fixed DFT for odd prime/small odd radices.
 
     It forms x[j]+x[N-j] and x[j]-x[N-j] once, then reuses those values for
@@ -366,46 +372,51 @@ def _emit_symmetric_odd_radix(
     """
     half = (radix - 1) // 2
     sign = 1.0 if inverse else -1.0
+    outs = [(f"{prefix}r{k}", f"{prefix}i{k}") for k in range(radix)]
+    r0, i0 = ins[0]
 
     for j in range(1, half + 1):
         q = radix - j
-        e.add(f"{indent}var p{j}r = rr{j} + rr{q}")
-        e.add(f"{indent}var p{j}i = ii{j} + ii{q}")
-        e.add(f"{indent}var m{j}r = rr{j} - rr{q}")
-        e.add(f"{indent}var m{j}i = ii{j} - ii{q}")
+        rj, ij = ins[j]
+        rq, iq = ins[q]
+        e.add(f"{indent}var {prefix}p{j}r = {rj} + {rq}")
+        e.add(f"{indent}var {prefix}p{j}i = {ij} + {iq}")
+        e.add(f"{indent}var {prefix}m{j}r = {rj} - {rq}")
+        e.add(f"{indent}var {prefix}m{j}i = {ij} - {iq}")
 
-    e.add(f"{indent}var or0 = rr0")
-    e.add(f"{indent}var oi0 = ii0")
+    e.add(f"{indent}var {outs[0][0]} = {r0}")
+    e.add(f"{indent}var {outs[0][1]} = {i0}")
     for j in range(1, half + 1):
-        e.add(f"{indent}or0 += p{j}r")
-        e.add(f"{indent}oi0 += p{j}i")
+        e.add(f"{indent}{outs[0][0]} += {prefix}p{j}r")
+        e.add(f"{indent}{outs[0][1]} += {prefix}p{j}i")
     if on_output is not None:
         on_output(0)
 
     for k in range(1, half + 1):
         nk = radix - k
-        e.add(f"{indent}var or{k} = rr0")
-        e.add(f"{indent}var oi{k} = ii0")
-        e.add(f"{indent}var or{nk} = rr0")
-        e.add(f"{indent}var oi{nk} = ii0")
+        e.add(f"{indent}var {outs[k][0]} = {r0}")
+        e.add(f"{indent}var {outs[k][1]} = {i0}")
+        e.add(f"{indent}var {outs[nk][0]} = {r0}")
+        e.add(f"{indent}var {outs[nk][1]} = {i0}")
         for j in range(1, half + 1):
             theta = 2.0 * pi * k * j / radix
             c = _f32(cos(theta))
             s = _f32(sin(theta))
-            # Forward uses exp(-j theta): +sin*m_i in real, -sin*m_r in imag.
-            if sign < 0:
-                e.add(f"{indent}or{k} += p{j}r * {c} + m{j}i * {s}")
-                e.add(f"{indent}oi{k} += p{j}i * {c} - m{j}r * {s}")
-                e.add(f"{indent}or{nk} += p{j}r * {c} - m{j}i * {s}")
-                e.add(f"{indent}oi{nk} += p{j}i * {c} + m{j}r * {s}")
-            else:
-                e.add(f"{indent}or{k} += p{j}r * {c} - m{j}i * {s}")
-                e.add(f"{indent}oi{k} += p{j}i * {c} + m{j}r * {s}")
-                e.add(f"{indent}or{nk} += p{j}r * {c} + m{j}i * {s}")
-                e.add(f"{indent}oi{nk} += p{j}i * {c} - m{j}r * {s}")
+            real_op, imag_op = ("+", "-") if sign < 0 else ("-", "+")
+            e.add(f"{indent}{outs[k][0]} += {prefix}p{j}r * {c} {real_op} {prefix}m{j}i * {s}")
+            e.add(f"{indent}{outs[k][1]} += {prefix}p{j}i * {c} {imag_op} {prefix}m{j}r * {s}")
+            e.add(f"{indent}{outs[nk][0]} += {prefix}p{j}r * {c} {imag_op} {prefix}m{j}i * {s}")
+            e.add(f"{indent}{outs[nk][1]} += {prefix}p{j}i * {c} {real_op} {prefix}m{j}r * {s}")
         if on_output is not None:
             on_output(k)
             on_output(nk)
+    return outs
+
+
+def _emit_symmetric_odd_radix(e: LineEmitter, *, indent: str, radix: int,
+                            inverse: bool, on_output: OutputCallback | None = None) -> None:
+    _emit_symmetric_named(e, indent=indent, ins=[(f"rr{k}", f"ii{k}") for k in range(radix)],
+                          prefix="o", radix=radix, inverse=inverse, on_output=on_output)
 
 
 def emit_butterfly(
@@ -471,6 +482,12 @@ def emit_butterfly(
         _emit_factorized(
             e, indent=indent, radix=16, a=4, b=4, inverse=inverse, on_output=on_output
         )
+        return
+
+    if radix in (12, 14, 15):
+        a, b = {12: (3, 4), 14: (2, 7), 15: (3, 5)}[radix]
+        _emit_factorized(e, indent=indent, radix=radix, a=a, b=b,
+                         inverse=inverse, on_output=on_output)
         return
 
     if radix in (7, 11, 13, 17):

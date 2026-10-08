@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Explicit, enumerable candidate search over the recursive planner's own
 decision axes: split (A*B), radix tier, cooperative worker count, and
-transpose tile size. Every candidate resolves to an ordinary
+transpose tile size, plus bounded partition/copy/root-tail alternatives. Every candidate resolves to an ordinary
 RecursiveFFTPlan -- exactly what generate_recursive_fft_kernels already
 renders -- built via make_recursive_transpose_plan's own additive,
 default-off parameters (forced_split_near_length, allowed_radix_composites,
@@ -54,7 +54,7 @@ import math
 from dataclasses import dataclass, replace
 
 from planning.search.fft_cost_model import PlanMetrics, estimate_cost, estimate_metrics
-from planning.execution.fft_plan_cooperative import worker_candidates_per_fft
+from planning.execution.fft_plan_cooperative import worker_candidates_per_fft, partition_batches
 from planning.core.fft_plan_core import (
     _DEFAULT,
     FFTCodegenPlan,
@@ -63,8 +63,12 @@ from planning.core.fft_plan_core import (
     _prime_factors_supported,
     coalesce_radices,
 )
-from planning.execution.fft_plan_lanes import apply_all_scalar_lanes_to_plan, apply_compute_lanes_to_plan
-from planning.execution.fft_plan_persistent import make_persistent_leaf_plan, physical_lane_workload
+from planning.execution.fft_plan_lanes import (apply_all_scalar_lanes_to_plan,
+    apply_compute_lanes_to_plan, resolve_compute_lanes_to_plan)
+from planning.execution.fft_plan_persistent import (
+    make_persistent_leaf_plan, physical_lane_workload, make_persistent_tail_hybrid_plan,
+    persistent_tracker_scratchpad_bytes,
+)
 from planning.strategies.fft_plan_recursive import (
     FFTLeafPlan,
     FFTNode,
@@ -78,6 +82,7 @@ from planning.strategies.fft_plan_recursive import (
     make_recursive_transpose_plan,
 )
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from planning.execution.launch_support import validate_fft_launch_granule
 
 # Composite radices confirmed clean *as a leaf's own first stage only* (see
 # fft_cost_model._RISKY_RADIX_PAIRS's own comment for the N=54=(6,9)
@@ -128,12 +133,14 @@ class PlanChoices:
     # Only set for generate_candidates' own lane-variant sweep
     # (generate_lane_variant_candidates): "unnarrowed" or "all_scalar" --
     # see that function's own docstring. `None` (every other step,
-    # including the plain baseline): every stage's own `compute_lanes`
-    # stays unset (`None`) on the plan itself, and codegen resolves it
-    # live from whatever flat compute_lanes/narrow_middle_stages the
-    # eventual renderer passes -- see planning.execution.fft_plan_lanes' own module
-    # docstring for why that is still today's exact default behavior.
+    # including the plain baseline): widths use the normal narrowing rule.
+    # All candidates resolve unset stage widths before deduplication and
+    # costing, including both physical tasks of a persistent tail hybrid.
     lane_variant: str | None = None
+    # (leaf index, setting), near-first traversal; concrete plans are authoritative.
+    cooperative_partitions: tuple[tuple[int, str], ...] = ()
+    persistent_copies: tuple[tuple[int, str], ...] = ()
+    tail_strategy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -398,6 +405,7 @@ def generate_radix_execution_joint_candidates(
             try:
                 plan = make_recursive_transpose_plan(
                     n,
+                    target=target,
                     scratchpad_byte_budget=scratchpad_byte_budget,
                     simd_lanes=simd_lanes,
                     inverse=inverse,
@@ -606,13 +614,8 @@ def generate_lane_variant_candidates(
     third, "baseline narrow_middle_stages=True" shape
     `generate_compute_lane_candidates` (fft_plan_lanes.py) would also
     offer is deliberately *not* added again here: every existing
-    candidate this module already builds has `stage.compute_lanes` unset
-    (`None`) on every stage, and codegen's own live-fallback default
-    (`make_fft_kernel.py`'s shipped `compute_lanes=4, narrow_middle_
-    stages=True`) already renders that exact same code at emit time -- a
-    plan-level "baseline" candidate here would be cost-scored twice under
-    two different `_plan_signature`s for what a real toolchain build
-    renders identically, not a genuinely new candidate.
+    candidate is normalized with that baseline rule before deduplication
+    and costing. Adding it again here would produce the same signature.
 
     Deliberately not crossed with every other axis (radix tier, worker
     sequence, split) -- this module's own "one axis at a time, star
@@ -715,7 +718,7 @@ def _plan_signature(plan: RecursiveFFTPlan) -> tuple:
     see `generate_radix_execution_joint_candidates`'s own dedup, which
     already made the same "realized structure, not the label" choice for
     its own narrower, single-step case)."""
-    sig: list[tuple] = []
+    sig: list[tuple] = [("batch", plan.batch)]
     for stage in flatten_recursive_node(plan.root):
         if isinstance(stage, PhysicalTransposePlan):
             sig.append(("T", stage.rows, stage.cols, stage.tile_rows, stage.tile_cols))
@@ -736,7 +739,12 @@ def _plan_signature(plan: RecursiveFFTPlan) -> tuple:
                 (stage.persistent, stage.total_uthreads, stage.max_uthread)
                 if stage.persistent is not None else None
             )
-            sig.append(("L", stage.length, radices, workers, persistent, lanes))
+            partitions = (tuple(tuple(tuple(b.batch_id for b in bucket)
+                                      for bucket in fft_stage.worker_batches)
+                                for fft_stage in stage.stages)
+                          if stage.cooperation is not None else None)
+            sig.append(("L", stage.length, radices, workers, persistent, lanes,
+                        partitions, stage.host.total_elems, stage.max_uthread))
     return tuple(sig)
 
 
@@ -793,8 +801,11 @@ def generate_candidates(
     inverse: bool = False,
     scratchpad_byte_budget: int = 4096,
     simd_lanes: int = 8,
+    spread_across_units: bool = False,
     batch: int = 1,
     max_candidates: int = 40,
+    max_execution_option_seeds: int = 4,
+    max_execution_option_candidates: int = 48,
     max_joint_split_candidates: int = 16,
     max_joint_combined_candidates: int = 128,
     max_joint_worker_sequences: int = 32,
@@ -807,6 +818,14 @@ def generate_candidates(
     RecursiveFFTPlan (byte-for-byte what `generate_recursive_fft_kernels`
     already knows how to render), so nothing downstream needs to change to
     consume one.
+
+    `spread_across_units`: validates the intended launch policy before search.
+    False retains legacy non-spreading experiments; True requires simd_lanes=8.
+    Pass the same policy to codegen when executing the resulting candidates.
+
+    `max_execution_option_seeds`/`max_execution_option_candidates`: step 12's
+    seed cap per family (default 4) and total additional variant cap (default 48).
+    Zero disables the added axes; these limits never multiply the older axes.
 
     `batch`: passed straight through to every candidate's own
     make_recursive_transpose_plan call, unchanged across the whole sweep --
@@ -837,14 +856,20 @@ def generate_candidates(
     `min(simd_lanes, target.lmul1_float32_lanes)`, the exact value
     `make_fft_kernel.py` ships as its own default -- so step 11's lane-
     variant sweep (below) narrows/floors around the same width a real
-    build would actually use unless a caller overrides it. Feeds only
-    step 11; every other step's own candidates are unaffected (their own
-    `stage.compute_lanes` stays unset, as it always has -- see
-    `generate_lane_variant_candidates`'s own docstring for why the
-    baseline shape isn't duplicated as a plan-level candidate here).
+    build would actually use unless a caller overrides it. Every candidate
+    resolves its unset stage widths using this value before costing.
+    Step 11 also adds explicit unnarrowed and all-scalar variants, whose
+    widths are retained during that normalization.
     """
+    if max_candidates < 1:
+        raise ValueError("max_candidates must be >= 1 to retain the baseline")
+    if max_execution_option_seeds < 0 or max_execution_option_candidates < 0:
+        raise ValueError("execution option search limits must be >= 0")
+    validate_fft_launch_granule(simd_lanes, spread_across_units=spread_across_units)
     if compute_lanes is _DEFAULT:
         compute_lanes = min(simd_lanes, target.lmul1_float32_lanes)
+    scratchpad_byte_budget = min(scratchpad_byte_budget, target.spad_capacity_bytes,
+                                 target.max_concurrent_scratchpad_bytes)
 
     def build(
         *, forced_split_near_length: int | None, allowed_radix_composites,
@@ -852,6 +877,7 @@ def generate_candidates(
     ) -> RecursiveFFTPlan:
         return make_recursive_transpose_plan(
             n,
+            target=target,
             scratchpad_byte_budget=scratchpad_byte_budget,
             simd_lanes=simd_lanes,
             inverse=inverse,
@@ -869,6 +895,23 @@ def generate_candidates(
     candidates: list[FFTPlanCandidate] = []
 
     def add(plan: RecursiveFFTPlan, choices: PlanChoices) -> None:
+        from planning.execution.kernel_registration import (
+            KernelRegistrationError, validate_recursive_kernel_registration,
+        )
+        plan = resolve_compute_lanes_to_plan(plan, compute_lanes=compute_lanes)
+        try:
+            validate_recursive_kernel_registration(plan, target=target, loop_stages=True)
+        except KernelRegistrationError:
+            return  # infeasible task is excluded before metrics/ranking
+        kernels = [k for k in flatten_recursive_node(plan.root) if isinstance(k, FFTCodegenPlan)]
+        hybrid = getattr(plan.root, "tail_hybrid", None)
+        choices = replace(choices,
+            cooperative_partitions=tuple((i, k.cooperation.partition_mode)
+                for i, k in enumerate(kernels) if k.cooperation is not None),
+            persistent_copies=tuple((i, k.persistent.copy_mode)
+                for i, k in enumerate(kernels) if k.persistent is not None),
+            tail_strategy=(hybrid.tail_strategy if hybrid is not None else "all_persistent"
+                if isinstance(plan.root, FFTLeafPlan) and plan.root.kernel.persistent is not None else None))
         metrics = estimate_metrics(plan, target)
         metrics = replace(metrics, estimated_cost=estimate_cost(metrics))
         candidates.append(FFTPlanCandidate(n=n, inverse=inverse, plan=plan, choices=choices, metrics=metrics))
@@ -942,6 +985,7 @@ def generate_candidates(
             continue  # byte-for-byte the baseline (single-level split, same b)
         plan = make_recursive_transpose_plan(
             n,
+            target=target,
             scratchpad_byte_budget=scratchpad_byte_budget,
             simd_lanes=simd_lanes,
             inverse=inverse,
@@ -1017,6 +1061,7 @@ def generate_candidates(
     for seq, tier_name, allowed, tile in joint_triples[:max_joint_combined_candidates]:
         plan = make_recursive_transpose_plan(
             n,
+            target=target,
             scratchpad_byte_budget=scratchpad_byte_budget,
             simd_lanes=simd_lanes,
             inverse=inverse,
@@ -1048,18 +1093,22 @@ def generate_candidates(
     # remains the future work the module docstring calls out; this stays
     # a fifth *independent* star-search arm off the baseline instead.
     for leaf_index, seq in generate_per_leaf_worker_candidates(baseline_plan, target=target, simd_lanes=simd_lanes):
-        plan = make_recursive_transpose_plan(
-            n,
-            scratchpad_byte_budget=scratchpad_byte_budget,
-            simd_lanes=simd_lanes,
-            inverse=inverse,
-            batch=batch,
-            spad_capacity_bytes=target.spad_capacity_bytes,
-            max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
-            interleave_chunk_uthreads=target.interleave_chunk_uthreads,
-            forced_split_near_length=baseline_split,
-            forced_worker_sequence=seq,
-        )
+        try:
+            plan = make_recursive_transpose_plan(
+                n,
+                target=target,
+                scratchpad_byte_budget=scratchpad_byte_budget,
+                simd_lanes=simd_lanes,
+                inverse=inverse,
+                batch=batch,
+                spad_capacity_bytes=target.spad_capacity_bytes,
+                max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
+                interleave_chunk_uthreads=target.interleave_chunk_uthreads,
+                forced_split_near_length=baseline_split,
+                forced_worker_sequence=seq,
+            )
+        except (ValueError, AssertionError, NotImplementedError):
+            continue
         add(plan, PlanChoices(
             split_near_length=baseline_split, radix_tier_name="default", workers_per_fft=None,
             tile=None, worker_sequence=seq,
@@ -1131,9 +1180,127 @@ def generate_candidates(
     ):
         add(plan, choices)
 
+    # 12. Bounded execution options around existing feasible seeds.
+    for plan, choices in generate_execution_option_candidates(
+        candidates, target=target, max_seeds_per_family=max_execution_option_seeds,
+        max_variants=max_execution_option_candidates,
+    ):
+        add(plan, choices)
+
     candidates = _dedup_candidates(candidates)
     return _select_top_candidates(candidates, max_candidates)
 
+
+
+def _replace_leaf_kernel(node: FFTNode, index: int, kernel: FFTCodegenPlan) -> FFTNode:
+    """Immutable near-first leaf update, preserving all other plan decisions."""
+    if isinstance(node, FFTLeafPlan):
+        if index != 0:
+            raise IndexError(index)
+        return replace(node, kernel=kernel)
+    near_count = len(_ordered_leaf_plans(node.near_fft))
+    if index < near_count:
+        return replace(node, near_fft=_replace_leaf_kernel(node.near_fft, index, kernel))
+    return replace(node, far_child=_replace_leaf_kernel(node.far_child, index - near_count, kernel))
+
+
+def _ordered_leaf_plans(node: FFTNode) -> list[FFTLeafPlan]:
+    if isinstance(node, FFTLeafPlan):
+        return [node]
+    return _ordered_leaf_plans(node.near_fft) + _ordered_leaf_plans(node.far_child)
+
+
+def generate_execution_option_candidates(
+    seeds: list[FFTPlanCandidate], *, target: TargetProfile,
+    max_seeds_per_family: int = 4, max_variants: int = 48,
+) -> list[tuple[RecursiveFFTPlan, PlanChoices]]:
+    """Bounded independent partition/copy/tail arms around existing candidates.
+
+    No Cartesian product with splits/radices or among the new options. Seeds
+    are the cheapest distinct plans in each execution family, before top-K.
+    Hybrid tails are root-only and need at least one full persistent round.
+    """
+    if max_seeds_per_family < 0 or max_variants < 0:
+        raise ValueError("execution option search limits must be >= 0")
+    if max_seeds_per_family == 0 or max_variants == 0:
+        return []
+    families = ("partition", "copy", "tail")
+    selected = {family: [] for family in families}
+    for candidate in rank_candidates(_dedup_candidates(seeds)):
+        kernels = [leaf.kernel for leaf in _ordered_leaf_plans(candidate.plan.root)]
+        eligibility = {
+            "partition": any(k.cooperation is not None and len({
+                tuple(tuple(tuple(b.batch_id for b in bucket) for bucket in partition_batches(
+                    stage.batches, k.cooperation.workers_per_fft, mode=mode)) for stage in k.stages)
+                for mode in ("round_robin", "contiguous", "balanced_contiguous")
+            }) > 1 for k in kernels),
+            "copy": any(k.persistent is not None for k in kernels),
+            "tail": isinstance(candidate.plan.root, FFTLeafPlan)
+                    and candidate.plan.root.kernel.persistent is not None
+                    and candidate.plan.batch > target.num_ndp_units
+                    and candidate.plan.batch % target.num_ndp_units != 0,
+        }
+        for family in families:
+            if eligibility[family] and len(selected[family]) < max_seeds_per_family:
+                selected[family].append(candidate)
+    variants = {family: [] for family in families}
+    for family in families:
+        for candidate in selected[family]:
+            plan, choices = candidate.plan, candidate.choices
+            for index, leaf in enumerate(_ordered_leaf_plans(plan.root)):
+                kernel = leaf.kernel
+                if family == "partition" and kernel.cooperation is not None:
+                    for mode in ("round_robin", "contiguous", "balanced_contiguous"):
+                        changed = replace(kernel,
+                            cooperation=replace(kernel.cooperation, partition_mode=mode),
+                            stages=tuple(replace(stage, worker_batches=partition_batches(
+                                stage.batches, kernel.cooperation.workers_per_fft, mode=mode))
+                                for stage in kernel.stages))
+                        variant = replace(plan, root=_replace_leaf_kernel(plan.root, index, changed))
+                        variants[family].append((variant, replace(choices,
+                                                    cooperative_partitions=((index, mode),))))
+                elif family == "copy" and kernel.persistent is not None:
+                    for mode in ("scalar", "vectorized_contiguous"):
+                        changed = replace(kernel, persistent=replace(kernel.persistent, copy_mode=mode))
+                        variant = replace(plan, root=_replace_leaf_kernel(plan.root, index, changed))
+                        variants[family].append((variant, replace(choices, persistent_copies=((index, mode),))))
+                elif family == "tail":
+                    for strategy in ("noncoop_tail", "cooperative_tail"):
+                        pw = kernel.persistent
+                        try:
+                            hybrid = make_persistent_tail_hybrid_plan(
+                                plan.n, tuple(s.radix for s in kernel.stages),
+                                num_logical_blocks=plan.batch, inverse=plan.inverse, target=target,
+                                tail_strategy=strategy, workers_per_fft=pw.workers_per_fft,
+                                lowering_mode=pw.lowering_mode, copy_mode=pw.copy_mode,
+                                kernel_name=kernel.kernel_name, tail_kernel_name=kernel.kernel_name + "Tail")
+                        except (ValueError, AssertionError, NotImplementedError):
+                            continue
+                        def inherit_widths(task):
+                            if task is None:
+                                return None
+                            return replace(task, stages=tuple(replace(s, compute_lanes=old.compute_lanes)
+                                for s, old in zip(task.stages, kernel.stages)))
+                        hybrid = replace(hybrid, persistent_plan=inherit_widths(hybrid.persistent_plan),
+                                         tail_plan=inherit_widths(hybrid.tail_plan))
+                        variants[family].append((replace(plan, root=replace(leaf, tail_hybrid=hybrid)),
+                                                replace(choices, tail_strategy=strategy)))
+    # Prune physically identical assignments before consuming the bounded budget.
+    seen = {_plan_signature(c.plan) for c in seeds}
+    unique = {family: [] for family in families}
+    for family in families:
+        for plan, choices in variants[family]:
+            signature = _plan_signature(plan)
+            if signature not in seen:
+                seen.add(signature)
+                unique[family].append((plan, choices))
+    result = []
+    # Interleave families so a small cap cannot consume only the first axis.
+    for group in itertools.zip_longest(*(unique[family] for family in families)):
+        for variant in group:
+            if variant is not None and len(result) < max_variants:
+                result.append(variant)
+    return result
 
 def rank_candidates(candidates: list[FFTPlanCandidate]) -> list[FFTPlanCandidate]:
     return sorted(candidates, key=lambda c: c.metrics.estimated_cost)
@@ -1150,12 +1317,15 @@ def _describe_persistent_leaf(node: FFTLeafPlan, target: TargetProfile, pad: str
     pw = node.kernel.persistent
     assert pw is not None
     scratchpad_bytes = sum(buf.elements for buf in node.kernel.scratchpad_buffers) * 4
+    scratchpad_bytes += persistent_tracker_scratchpad_bytes(pw.workers_per_group,
+        mode=pw.lowering_mode, workers_per_fft=pw.workers_per_fft)
     feasible = "feasible" if scratchpad_bytes <= target.spad_capacity_bytes else "INFEASIBLE"
     lines.append(
         f"{pad}  logical_workers_per_fft={pw.logical_workers_per_fft} "
         f"physical_workers_per_group={pw.physical_workers_per_group} "
         f"logical_worker_groups={pw.logical_worker_groups} "
-        f"persistent_lowering_mode={pw.lowering_mode} stage_launches={pw.stage_launches}"
+        f"persistent_lowering_mode={pw.lowering_mode} stage_launches={pw.stage_launches} "
+        f"copy_mode={pw.copy_mode}"
     )
     lines.append(
         f"{pad}  scratchpad: estimated_bytes={scratchpad_bytes} "
@@ -1190,6 +1360,15 @@ def _describe_node(
 ) -> None:
     pad = "  " * depth
     if isinstance(node, FFTLeafPlan):
+        if node.tail_hybrid is not None:
+            h = node.tail_hybrid
+            lines.append(f"{pad}tail hybrid: full_blocks={h.full_blocks} tail_blocks={h.tail_blocks} strategy={h.tail_strategy}")
+            for label, task, count in (("full", h.persistent_plan, h.full_blocks),
+                                       ("tail", h.tail_plan, h.tail_blocks)):
+                if task is not None:
+                    lines.append(f"{pad}  {label} blocks={count} kernel={task.kernel_name}")
+                    _describe_node(FFTLeafPlan(m=node.m, r=count, kernel=task), depth + 1, lines, target)
+            return
         radices = tuple(s.radix for s in node.kernel.stages)
         coop = node.kernel.cooperation
         workers = f" workers={coop.workers_per_fft}" if coop is not None else ""
@@ -1247,6 +1426,9 @@ def format_plan_summary(
         + (f" worker_sequence={c.worker_sequence}" if c.worker_sequence is not None else "")
         + (f" execution_strategy={c.execution_strategy}" if c.execution_strategy is not None else "")
         + (f" lane_variant={c.lane_variant}" if c.lane_variant is not None else "")
+        + (f" partitions={c.cooperative_partitions}" if c.cooperative_partitions else "")
+        + (f" copies={c.persistent_copies}" if c.persistent_copies else "")
+        + (f" tail_strategy={c.tail_strategy}" if c.tail_strategy else "")
     )
     lines.append("")
     _describe_node(candidate.plan.root, 1, lines, target)
@@ -1264,5 +1446,6 @@ def format_plan_summary(
     lines.append(f"    total_worker_stage_batches = {m.total_worker_stage_batches}")
     lines.append(f"    physical_total_worker_stage_batches = {m.physical_total_worker_stage_batches}")
     lines.append(f"    radix_risk_score         = {m.radix_risk_score}")
+    lines.append(f"    persistent_copy_instructions = {m.persistent_copy_instructions}")
     lines.append(f"    estimated_cost           = {m.estimated_cost:.1f}")
     return "\n".join(lines)

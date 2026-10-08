@@ -1,0 +1,10 @@
+{
+  "name": "rocfft_global_n8192_b33",
+  "config": "M2NDP",
+  "build_returncode": 0,
+  "host_api_bridge": "PooledRange bytes -> MappedDomain microthread count; device code unchanged",
+  "host_link_addition": "libm for the independent DFT reference",
+  "verified": false,
+  "simulation_timeout_seconds": 300,
+  "scope": "Full batch functional simulation exceeded the harness wall-clock limit while making cycle progress; replaced by the same radix/worker strategy with two replicas for bounded functional QA"
+}

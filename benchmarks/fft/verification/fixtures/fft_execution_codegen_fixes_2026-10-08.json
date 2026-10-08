@@ -1,0 +1,117 @@
+{
+  "scope": "Post-fix execution/codegen audit; translated code, not a simulator measurement",
+  "source_sha256": {
+    "codegen/common.py": "b28f0f9d04d4a5dcf96990387e77705aa435711924ecc97649f335f179b434d6",
+    "codegen/fft_codegen.py": "9397723a856ecf5b39ebc78010af7fc570a27aafeb5b72fdd0096989f5e47ed0",
+    "codegen/fft_cooperative_codegen.py": "371132e4575982b574be3adbb31e4f9537b32027213f9d2c612bc375b46db951",
+    "codegen/fft_persistent_codegen.py": "94603b49f3670747f0d892ed732bd3bd3faa81d5d2e6110301ea2f45178e4c7e",
+    "codegen/fft_transpose_codegen.py": "194b89c3ecc77f9a2fd738a86965b026966450685b65ac048b7ecd6f15b5ceb3",
+    "planning/execution/launch_plan.py": "78bf2fe203321e29abd2ec442894782a0f9eb7efae6401e00ad5758e473c2963",
+    "planning/execution/fft_plan_persistent.py": "cf5ca965e481c9efdbda8c9031554d8f38c7689d5c6868eed3d24eff6dafce36",
+    "planning/strategies/fft_plan_recursive.py": "fc3bfdbb149679f29934e8df40b3ef4a089bd85c89495afe010994037e85f887",
+    "planning/core/fft_plan_core.py": "a749280e553b9521123832faa983f606786cf13898dbf63e2d083588299fffca",
+    "verification/verify_fft_persistent.py": "9163b00521b28692ce70ba47e5f0669044aa842733fd87ed3226f136f25736e5"
+  },
+  "tracker_ordering": [
+    {
+      "mode": "physical",
+      "batch": 1,
+      "workers": 16,
+      "max_error": 1.263518994188461e-08,
+      "tracker_reads": "ordinary memory",
+      "worker_order": "random per phase"
+    },
+    {
+      "mode": "physical",
+      "batch": 33,
+      "workers": 16,
+      "max_error": 1.8285691411217327e-08,
+      "tracker_reads": "ordinary memory",
+      "worker_order": "random per phase"
+    },
+    {
+      "mode": "fused",
+      "batch": 1,
+      "workers": 16,
+      "max_error": 1.1026219822663895e-08,
+      "tracker_reads": "ordinary memory",
+      "worker_order": "random per phase"
+    },
+    {
+      "mode": "fused",
+      "batch": 33,
+      "workers": 16,
+      "max_error": 2.0183498036231582e-08,
+      "tracker_reads": "ordinary memory",
+      "worker_order": "random per phase"
+    },
+    {
+      "mode": "wave",
+      "batch": 1,
+      "workers": 16,
+      "max_error": 1.067529597473529e-08,
+      "tracker_reads": "ordinary memory",
+      "worker_order": "random per phase"
+    },
+    {
+      "mode": "wave",
+      "batch": 33,
+      "workers": 16,
+      "max_error": 1.884743816081633e-08,
+      "tracker_reads": "ordinary memory",
+      "worker_order": "random per phase"
+    }
+  ],
+  "standalone_coverage": [
+    {
+      "workers": 1,
+      "batch": 64,
+      "max_uthread": 1,
+      "host_launches": 2,
+      "omitted_fft_ids": [],
+      "max_error": 1.7938061337017444e-08,
+      "padded": true
+    },
+    {
+      "workers": 8,
+      "batch": 64,
+      "max_uthread": 8,
+      "host_launches": 2,
+      "omitted_fft_ids": [],
+      "max_error": 2.113638508585783e-08,
+      "padded": false
+    }
+  ],
+  "cooperative_rounds": [
+    {
+      "workers": 2,
+      "host_launches": 1,
+      "ffts_per_launch": 128,
+      "physical_uthreads": 256,
+      "active_units": 32
+    },
+    {
+      "workers": 8,
+      "host_launches": 1,
+      "ffts_per_launch": 128,
+      "physical_uthreads": 1024,
+      "active_units": 32
+    }
+  ],
+  "custom_persistent_alignment": {
+    "planned_bytes": 512,
+    "emits_512_alignment": true
+  },
+  "invalid_copy_widths": [
+    {
+      "vector_width": 0,
+      "accepted": false,
+      "reason": "vector_width must be a positive integer for vectorized_contiguous copy"
+    },
+    {
+      "vector_width": -1,
+      "accepted": false,
+      "reason": "vector_width must be a positive integer for vectorized_contiguous copy"
+    }
+  ]
+}

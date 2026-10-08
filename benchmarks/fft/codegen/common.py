@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-"""Emission-only helpers with no FFT-specific logic of their own -- shared
-verbatim by every codegen/*.py module that renders Mojo source (fft_butterflies.py,
-fft_codegen.py, fft_transpose_codegen.py) instead of each keeping (or, before
-this module existed, in `_f32`'s case, silently duplicating) its own copy.
-Nothing here decides an address, a radix, or a twiddle value -- see each
-module's own docstring for what those modules *do* decide.
+"""Shared source-emission helpers, including resolved FFT launch rendering.
+Radices, layouts, twiddle values and launch ranges are supplied by plans.
 """
 
 from planning.core.fft_plan_core import LargeTwiddlePlan
@@ -35,6 +31,136 @@ def f32(value: float) -> str:
 
 def spad(kernel_name: str, name: str) -> str:
     return f"{kernel_name}.{name}"
+
+
+def emit_aligned_pool(e: Emitter, *, name: str, elems: str, alignment_bytes: int) -> None:
+    """Allocate a launch pool aligned to the target's address-mapping chunk."""
+    if not isinstance(alignment_bytes, int) or alignment_bytes < 4 or alignment_bytes % 4:
+        raise ValueError("pool alignment must be a positive multiple of four bytes")
+    e.add(f"    var {name}_raw = cxl_alloc[Float32]({elems} + {alignment_bytes // 4})")
+    e.add(f"    var {name}_raw_addr = Int({name}_raw)")
+    e.add(f"    var {name}_addr = ({name}_raw_addr + {alignment_bytes - 1}) // {alignment_bytes} * {alignment_bytes}")
+    e.add(f"    if {name}_addr % {alignment_bytes} != 0:")
+    e.add('        print("[host] pool alignment assertion failed")')
+    e.add("        return")
+    e.add(f"    var {name} = UnsafePointer[Float32, MutAnyOrigin](unsafe_from_address={name}_addr)")
+
+
+def emit_fft_identity(e: Emitter, *, plan) -> bool:
+    """Resolve padded physical IDs and host rounds into one logical FFT ID."""
+    launch = plan.launch_mapping
+    if launch is None or not launch.uses_bounds_params:
+        return False
+    e.add(f"        var launch_fft_id = {launch.local_fft_expr()}")
+    e.add("        if launch_fft_id >= p.launch_fft_count:")
+    e.add("            return")
+    e.add("        var logical_fft_id = p.launch_fft_base + launch_fft_id")
+    return True
+
+
+def emit_fft_launches(e: Emitter, *, plan, pool: str, args: list[str], rc_prefix: str = "rc",
+                      label: str = "FFT") -> None:
+    """Host rounds use the same descriptor as device identity and pool sizing."""
+    args = [*args, *emit_workspace_buffers(e, plan=plan, prefix=f"{rc_prefix}_")]
+    launch = plan.launch_mapping
+    if launch is None:
+        if plan.persistent is None:
+            raise ValueError("FFT launch descriptor has not been resolved")
+        from planning.execution.launch_plan import FFTLaunchRound
+        rounds = (FFTLaunchRound(0, plan.host.total_elems // plan.length,
+                                plan.total_uthreads, plan.host.pool_elems),)
+        bounds, multiple = False, False
+    else:
+        rounds = launch.rounds()
+        bounds = launch.uses_bounds_params
+        multiple = launch.total_ffts > launch.round_fft_capacity
+    for index, round_ in enumerate(rounds):
+        params = list(args)
+        if bounds:
+            params.extend((str(round_.fft_base), str(round_.fft_count)))
+        rc = f"{rc_prefix}_{index}" if multiple else rc_prefix
+        e.add(f"    var {rc} = {plan.kernel_name}.launch(")
+        e.add(f"        PooledRange.over({pool}, {round_.pool_elems}),")
+        e.add(f"        {plan.kernel_name}Params({', '.join(params)}),")
+        e.add("    )")
+        e.add(f"    if {rc} != 0:")
+        e.add(f'        print("[host] {label} failed, exit", {rc})')
+        e.add("        return")
+        e.add()
+
+
+def emit_workspace_buffers(e: Emitter, *, plan, prefix: str = "") -> list[str]:
+    """Allocate the plan's CXL staging buffers once before launching its task."""
+    names = []
+    for buffer in plan.workspace_buffers:
+        name = f"{prefix}{buffer.name}"
+        e.add(f"    var {name} = cxl_alloc[Float32]({buffer.elements})")
+        names.append(name)
+    return names
+
+
+def emit_loop_twiddle_table(e: Emitter, *, table: list[tuple[float,float]],
+                           real_name: str, imag_name: str) -> list[str]:
+    """Emit exact planned constants, compressing repeated adjacent entries."""
+    e.add(f"    var {real_name} = cxl_alloc[Float32]({max(1,len(table))})")
+    e.add(f"    var {imag_name} = cxl_alloc[Float32]({max(1,len(table))})")
+    if len(table) >= 1024:
+        # Encode exact FP32 bits so a large table is one literal and a host
+        # decode loop, instead of tens of thousands of LLVM store nodes.
+        # No trigonometry or FFT decisions are reconstructed here.
+        import struct
+        encoded = ''.join(f'{struct.unpack("<I",struct.pack("<f",v))[0]:08x}' for pair in table for v in pair)
+        literal = f"{real_name}_hex"
+        e.add(f'    var {literal} = String("{encoded}")')
+        e.add(f"    for tw_idx in range({len(table)}):")
+        for component,name in enumerate((real_name,imag_name)):
+            e.add("        if True:")
+            e.add("            var tw_bits = UInt32(0)")
+            e.add("            for tw_nibble in range(8):")
+            e.add(f"                var tw_code = Int({literal}.unsafe_ptr()[tw_idx * 16 + {component*8} + tw_nibble])")
+            e.add("                var tw_digit = tw_code & 15")
+            e.add("                if tw_code >= 97:")
+            e.add("                    tw_digit += 9")
+            e.add("                tw_bits = (tw_bits << 4) | UInt32(tw_digit)")
+            e.add(f"            {name}.bitcast[UInt32]()[tw_idx] = tw_bits")
+        return [real_name,imag_name]
+    first = 0
+    while first < len(table):
+        end = first + 1
+        while end < len(table) and table[end] == table[first]:
+            end += 1
+        r,i = table[first]
+        if end - first >= 3:
+            e.add(f"    for tw_idx in range({first}, {end}):")
+            e.add(f"        {real_name}[tw_idx] = {f32(r)}")
+            e.add(f"        {imag_name}[tw_idx] = {f32(i)}")
+        else:
+            for index in range(first,end):
+                e.add(f"    {real_name}[{index}] = {f32(r)}")
+                e.add(f"    {imag_name}[{index}] = {f32(i)}")
+        first = end
+    return [real_name,imag_name]
+
+
+def emit_execution_record(e: Emitter, *, plan, **options) -> None:
+    """Machine-readable resolved options, without changing the planned settings."""
+    from dataclasses import asdict
+    import json
+    from planning.execution.fft_plan_lanes import resolve_stage_compute_lanes
+    launch = plan.launch_mapping
+    lanes = []
+    for index, stage in enumerate(plan.stages):
+        width = stage.compute_lanes
+        if width is None:
+            width = resolve_stage_compute_lanes(
+                compute_lanes=options.get("compute_lanes"), is_first=index == 0,
+                is_last=index == len(plan.stages) - 1, radix=stage.radix,
+                prev_radix=plan.stages[index - 1].radix if index else None,
+                narrow_middle_stages=options.get("narrow_middle_stages", False))
+        lanes.append(width if width is not None else plan.simd_lanes)
+    record = dict(kernel=plan.kernel_name, launch=asdict(launch) if launch else None,
+                  arithmetic_lanes=lanes, **options)
+    e.add("# FFT_EXECUTION " + json.dumps(record, sort_keys=True))
 
 
 def emit_prelude(e: Emitter) -> None:

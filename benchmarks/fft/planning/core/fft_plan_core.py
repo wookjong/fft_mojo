@@ -40,14 +40,17 @@ itself lives in its own sibling module.
 from dataclasses import dataclass
 from enum import Enum
 from math import cos, pi, sin
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from planning.execution.launch_plan import FFTLaunchPlan
 
 from radix_spec import SUPPORTED_RADICES
 
 
-LoadSource = Literal["input", "scratchpad", "large_twiddle"]
+LoadSource = Literal["input", "scratchpad", "workspace", "large_twiddle"]
 LoadMode = Literal["vector", "scalar_pack"]
-StoreDestination = Literal["output", "scratchpad"]
+StoreDestination = Literal["output", "scratchpad", "workspace"]
 StoreMode = Literal["vector", "scalar_lanes"]
 
 
@@ -227,6 +230,14 @@ class AddressMapping:
 
 @dataclass(frozen=True)
 class ScratchpadBufferPlan:
+    name: str
+    elements: int
+
+
+@dataclass(frozen=True)
+class WorkspaceBufferPlan:
+    """A host-allocated CXL buffer, shared by phases of one task."""
+
     name: str
     elements: int
 
@@ -539,22 +550,12 @@ class PersistentWorkgroupPlan:
     last LOGICAL worker (`workers_per_fft - 1`), which lands on the last
     physical worker of the last wave.
 
-    `lowering_mode`: ADDED 2026-09-22 (logical/physical cost-model
-    correction, docs/logical_vs_physical_cost_model.md) -- which of
-    `codegen.fft_persistent_codegen.ExecutionMode`'s three strategies
-    (`"wave"`/`"fused"`/`"physical"`) this plan is INTENDED to be
-    rendered with. Metadata only: codegen's own `mode=`/`persistent_mode=`
-    argument (`emit_persistent_kernel_struct`, `generate_recursive_fft_
-    kernels`) remains the actual, authoritative control -- a caller doing
-    an explicit A/B mode comparison can still render the SAME plan under a
-    different mode than this field says, exactly as before this field
-    existed. What this field is FOR: `planning.search.fft_cost_model`
-    cannot otherwise know which execution shape a persistent leaf will
-    actually render as (that used to be a pure codegen-time argument, with
-    no representation in the plan the cost model reads at all) -- see
-    `PlanMetrics`'s own `persistent_lowering_mode`-derived fields. Default
-    `"physical"` matches `codegen.fft_persistent_codegen`'s own default,
-    so every plan built before this field existed reads identically.
+    `lowering_mode`: the default execution strategy used by persistent codegen
+    (`"wave"`/`"fused"`/`"physical"`). Standalone and recursive emitters follow
+    each leaf's plan unless an explicit mode override is supplied. Cost/report
+    fields describe the planned configuration; comparisons with explicit overrides
+    must account for that override separately. Default `"physical"` preserves
+    the execution shape of existing default plans.
     """
 
     stripes_per_group: int
@@ -565,24 +566,15 @@ class PersistentWorkgroupPlan:
     logical_block_stride: int
     scalar_worker_mode: Literal["adaptive", "reserved"]
     lowering_mode: Literal["wave", "fused", "physical"] = "physical"
-    # ADDED for P2.3 (persistent preload/writeback copy strategy -- see
-    # docs/priority2_execution_strategies.md). Metadata only, mirroring
-    # `lowering_mode`'s own contract exactly: `codegen.fft_persistent_
-    # codegen.emit_bulk_copy_phase`'s own `copy_mode=` argument remains
-    # the actual, authoritative control (a caller doing an explicit A/B
-    # comparison can still render the SAME plan under a different copy
-    # mode than this field says). `"scalar"` (the default) matches every
-    # plan built before this field existed -- the pre-existing per-lane
-    # strided one-element-at-a-time DRAM<->scratchpad copy (`emit_bulk_
-    # copy_phase`'s own original implementation). `"vectorized_
-    # contiguous"`: each physical lane instead copies its own CONTIGUOUS
-    # block of `ceil(length / workers_per_group)` elements, `target.
-    # lmul1_float32_lanes`-wide vector loads/stores at a time (scalar
-    # tail for the remainder) -- see `emit_bulk_copy_phase`'s own
-    # docstring for why changing WHICH lane copies WHICH index is
-    # provably correctness-preserving (every stage reads scratchpad by
-    # absolute index, never by which lane wrote it).
+    # Default preload/writeback strategy. Emitters follow this field unless
+    # copy_mode is explicitly overridden, independently of lowering_mode.
+    # Vectorized contiguous copies keep scalar tails for ragged chunks.
     copy_mode: Literal["scalar", "vectorized_contiguous"] = "scalar"
+    # Global staging preserves the logical FFT when its two local banks
+    # cannot fit. Only the intermediate stages use workspace; stage 0 and
+    # the final stage access the input/output directly.
+    storage_mode: Literal["scratchpad", "global"] = "scratchpad"
+    loop_stages: bool = False
 
     @property
     def logical_workers_per_fft(self) -> int:
@@ -724,6 +716,16 @@ class FFTCodegenPlan:
     # `PersistentWorkgroupPlan` / fft_plan_persistent.py. Never set
     # together with `cooperation` -- separate execution models.
     persistent: PersistentWorkgroupPlan | None = None
+
+    # Resolved only for rendering. The original planning object stays immutable.
+    launch_mapping: FFTLaunchPlan | None = None
+    workspace_buffers: tuple[WorkspaceBufferPlan, ...] = ()
+
+    @property
+    def estimated_dram_bytes(self) -> int:
+        """Array traffic, excluding twiddle tables, cache effects and spills."""
+        passes = len(self.stages) if self.persistent is not None and self.persistent.storage_mode == "global" else 1
+        return 16 * self.host.total_elems * passes
 
     def replicas_per_round(self) -> int:
         """How many *logical* replicas (independent sub-FFTs) one launch

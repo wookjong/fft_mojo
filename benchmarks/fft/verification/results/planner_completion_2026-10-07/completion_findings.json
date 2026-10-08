@@ -1,0 +1,706 @@
+{
+  "scope": "Current working tree; production planner/codegen files are not modified by this audit.",
+  "vkfft": {
+    "upstream_commit": "066a17c17068c0f11c9298d848c2976c71fad1c1",
+    "scheduler_sha256": "9b37b786a70cd416be468e637d21bf463ad307e98b6217b2c0149878460e5809",
+    "port_sha256": "7664975a482e837f4296367d59cd1f69368d32990a99c1a5f8e670462ec6c0ea",
+    "total_oracle_cases": 192,
+    "fp32_cases": 96,
+    "default_sweep_size": 27,
+    "normalized_default_sweep_summary": {
+      "different_radices": [
+        12,
+        24,
+        40,
+        48,
+        80,
+        96,
+        120,
+        192,
+        216,
+        240,
+        320,
+        384,
+        480,
+        768,
+        960,
+        1536,
+        3072
+      ],
+      "different_registers": [
+        12,
+        20,
+        24,
+        40,
+        48,
+        80,
+        96,
+        120,
+        192,
+        240,
+        320,
+        384,
+        480,
+        768,
+        960,
+        1536,
+        3072
+      ],
+      "different_workers": [
+        12,
+        20,
+        24,
+        40,
+        48,
+        80,
+        96,
+        120,
+        192,
+        240,
+        320,
+        384,
+        480,
+        768,
+        960,
+        1536,
+        3072
+      ]
+    },
+    "older_summary_radix_type_false_positives": [
+      16,
+      20,
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048,
+      4096
+    ],
+    "register_examples": [
+      {
+        "length": 12,
+        "batch": 1,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 12,
+        "upstream_final_min_registers": 12,
+        "upstream_radices": [
+          12
+        ],
+        "upstream_workers": 1,
+        "upstream_slots": 1,
+        "upstream_axis_swapped": false,
+        "port_min_registers": 6,
+        "port_radices": [
+          6,
+          2
+        ],
+        "port_workers": 2,
+        "port_slots": 1,
+        "port_status": "OK"
+      },
+      {
+        "length": 15,
+        "batch": 1,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 15,
+        "upstream_final_min_registers": 15,
+        "upstream_radices": [
+          15
+        ],
+        "upstream_workers": 1,
+        "upstream_slots": 1,
+        "upstream_axis_swapped": false,
+        "port_min_registers": 3,
+        "port_radices": [
+          5,
+          3
+        ],
+        "port_workers": 5,
+        "port_slots": 1,
+        "port_status": "OK"
+      },
+      {
+        "length": 20,
+        "batch": 1,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 10,
+        "upstream_final_min_registers": 10,
+        "upstream_radices": [
+          10,
+          2
+        ],
+        "upstream_workers": 2,
+        "upstream_slots": 1,
+        "upstream_axis_swapped": false,
+        "port_min_registers": 4,
+        "port_radices": [
+          10,
+          2
+        ],
+        "port_workers": 5,
+        "port_slots": 1,
+        "port_status": "OK"
+      },
+      {
+        "length": 60,
+        "batch": 1,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 10,
+        "upstream_final_min_registers": 10,
+        "upstream_radices": [
+          5,
+          12
+        ],
+        "upstream_workers": 6,
+        "upstream_slots": 1,
+        "upstream_axis_swapped": false,
+        "port_min_registers": 5,
+        "port_radices": [
+          10,
+          6
+        ],
+        "port_workers": 12,
+        "port_slots": 1,
+        "port_status": "OK"
+      },
+      {
+        "length": 120,
+        "batch": 1,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 10,
+        "upstream_final_min_registers": 10,
+        "upstream_radices": [
+          10,
+          12
+        ],
+        "upstream_workers": 12,
+        "upstream_slots": 1,
+        "upstream_axis_swapped": false,
+        "port_min_registers": 5,
+        "port_radices": [
+          10,
+          6,
+          2
+        ],
+        "port_workers": 24,
+        "port_slots": 1,
+        "port_status": "OK"
+      }
+    ],
+    "axis_swap_examples": [
+      {
+        "length": 16,
+        "batch": 16,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 4,
+        "upstream_final_min_registers": 4,
+        "upstream_radices": [
+          4,
+          4
+        ],
+        "upstream_workers": 4,
+        "upstream_slots": 16,
+        "upstream_axis_swapped": true,
+        "port_min_registers": 4,
+        "port_radices": [
+          4,
+          4
+        ],
+        "port_workers": 16,
+        "port_slots": 4,
+        "port_status": "OK"
+      },
+      {
+        "length": 64,
+        "batch": 32,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 8,
+        "upstream_final_min_registers": 8,
+        "upstream_radices": [
+          8,
+          8
+        ],
+        "upstream_workers": 8,
+        "upstream_slots": 16,
+        "upstream_axis_swapped": true,
+        "port_min_registers": 8,
+        "port_radices": [
+          8,
+          8
+        ],
+        "port_workers": 16,
+        "port_slots": 8,
+        "port_status": "OK"
+      },
+      {
+        "length": 128,
+        "batch": 32,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 8,
+        "upstream_final_min_registers": 8,
+        "upstream_radices": [
+          8,
+          8,
+          2
+        ],
+        "upstream_workers": 16,
+        "upstream_slots": 8,
+        "upstream_axis_swapped": true,
+        "port_min_registers": 8,
+        "port_radices": [
+          8,
+          8,
+          2
+        ],
+        "port_workers": 8,
+        "port_slots": 16,
+        "port_status": "OK"
+      }
+    ],
+    "radix_examples": [
+      {
+        "length": 12,
+        "batch": 1,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 12,
+        "upstream_final_min_registers": 12,
+        "upstream_radices": [
+          12
+        ],
+        "upstream_workers": 1,
+        "upstream_slots": 1,
+        "upstream_axis_swapped": false,
+        "port_min_registers": 6,
+        "port_radices": [
+          6,
+          2
+        ],
+        "port_workers": 2,
+        "port_slots": 1,
+        "port_status": "OK"
+      },
+      {
+        "length": 30,
+        "batch": 1,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 5,
+        "upstream_final_min_registers": 5,
+        "upstream_radices": [
+          5,
+          6
+        ],
+        "upstream_workers": 6,
+        "upstream_slots": 1,
+        "upstream_axis_swapped": false,
+        "port_min_registers": 5,
+        "port_radices": [
+          10,
+          3
+        ],
+        "port_workers": 6,
+        "port_slots": 1,
+        "port_status": "OK"
+      },
+      {
+        "length": 216,
+        "batch": 1,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 6,
+        "upstream_final_min_registers": 6,
+        "upstream_radices": [
+          6,
+          6,
+          6
+        ],
+        "upstream_workers": 36,
+        "upstream_slots": 1,
+        "upstream_axis_swapped": false,
+        "port_min_registers": 6,
+        "port_radices": [
+          9,
+          8,
+          3
+        ],
+        "port_workers": 36,
+        "port_slots": 1,
+        "port_status": "OK"
+      },
+      {
+        "length": 120,
+        "batch": 1,
+        "precision": "fp32",
+        "upstream_initial_min_registers": 10,
+        "upstream_final_min_registers": 10,
+        "upstream_radices": [
+          10,
+          12
+        ],
+        "upstream_workers": 12,
+        "upstream_slots": 1,
+        "upstream_axis_swapped": false,
+        "port_min_registers": 5,
+        "port_radices": [
+          10,
+          6,
+          2
+        ],
+        "port_workers": 24,
+        "port_slots": 1,
+        "port_status": "OK"
+      }
+    ],
+    "scope": "Compare the current port with compiled, pinned VkFFT host code.\n\nRun from benchmarks/fft: python -m verification.audit_fft_planner_porting\nRequires the sibling VkFFT checkout and a host C++ compiler (no GPU).\nThe oracle compiles original register, radix-optimization, and upload-zero\nAxisBlock blocks. It covers direct single-upload FFTs <=4096 with register\nboost one, NVIDIA defaults, and the portable backend (VKFFT_BACKEND=0).\nQuad-flag rows identify the alternate register table with an otherwise\nfixed FP32 layout; they are not complete quad-precision library plans.\nThis is a review artifact: discrepancies are recorded, not auto-corrected.\n"
+  },
+  "native_compute_width_cost": [
+    {
+      "n": 64,
+      "byte_identical_source": true,
+      "source_sha256": "2b625ea9a92dc0babcafa569c5df4e91adc3e29bcb4df0bfa589a399f724f8e1",
+      "physical_worker_stage_batches_from_model": [
+        6,
+        16
+      ],
+      "estimated_costs": [
+        1024.8999999999999,
+        1025.8999999999999
+      ],
+      "unset_widths": [
+        [
+          null,
+          null,
+          null
+        ]
+      ],
+      "resolved_widths": [
+        [
+          4,
+          2,
+          4
+        ]
+      ]
+    },
+    {
+      "n": 128,
+      "byte_identical_source": true,
+      "source_sha256": "abbb097ac2b9898773a116649ffa28ca5b0e397a3867f5c9cf25a98c72b1f718",
+      "physical_worker_stage_batches_from_model": [
+        20,
+        56
+      ],
+      "estimated_costs": [
+        2050.4,
+        2054.0
+      ],
+      "unset_widths": [
+        [
+          null,
+          null,
+          null,
+          null
+        ]
+      ],
+      "resolved_widths": [
+        [
+          4,
+          2,
+          2,
+          4
+        ]
+      ]
+    },
+    {
+      "n": 960,
+      "byte_identical_source": true,
+      "source_sha256": "91e0a21aa025b57f27fda1b13ffdf953a5470338a7a300c29e82876a34bf3a80",
+      "physical_worker_stage_batches_from_model": [
+        33,
+        102
+      ],
+      "estimated_costs": [
+        76693.8,
+        76700.7
+      ],
+      "unset_widths": [
+        [
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null
+        ]
+      ],
+      "resolved_widths": [
+        [
+          4,
+          2,
+          2,
+          4
+        ],
+        [
+          4
+        ]
+      ]
+    }
+  ],
+  "hybrid_lane_and_diagnostic": {
+    "n": 64,
+    "batch": 33,
+    "rewritten_root_widths": [
+      1,
+      1,
+      1
+    ],
+    "actual_task_widths": [
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ]
+    ],
+    "byte_identical_source": true,
+    "actual_task_count": 2,
+    "diagnostic_task_count": 1,
+    "diagnostic_tasks": [
+      {
+        "family": "persistent",
+        "leaf_index": 0,
+        "logical_work_count": 33,
+        "active_units_best": 32,
+        "active_units_worst": 1,
+        "alignment_exact": true
+      }
+    ]
+  },
+  "target_budget_search": {
+    "n": 64,
+    "target": {
+      "lmul1_float32_lanes": 4,
+      "spad_capacity_bytes": 512,
+      "max_concurrent_scratchpad_bytes": 512,
+      "interleave_chunk_uthreads": 8,
+      "num_ndp_units": 32,
+      "uthread_bytes": 32,
+      "mapping_stride_bytes": 256,
+      "max_kernel_register": 8,
+      "supports_vector_spill": false
+    },
+    "default_scratchpad_byte_budget": 4096,
+    "default_search": {
+      "status": "error",
+      "diagnostic": "spad_capacity_bytes=512 is too small to fit even a single uthread of kernel 'FFTRecLeaf0' (needs 1024 bytes)"
+    },
+    "explicit_budget_search": {
+      "status": "ok",
+      "count": 40,
+      "budget": 512,
+      "source_generated": true,
+      "root_type": "FFTRecursiveNodePlan",
+      "numeric_max_error": 9.606898642431835e-09
+    }
+  },
+  "benchmark": {
+    "batch_correctness": [
+      {
+        "n": 64,
+        "batch": 1,
+        "inverse": false,
+        "correct": true,
+        "numeric_max_error": 8.108172218527735e-09,
+        "diagnostics": "real-toolchain probe skipped (--skip-toolchain)"
+      },
+      {
+        "n": 64,
+        "batch": 1,
+        "inverse": true,
+        "correct": true,
+        "numeric_max_error": 1.291402919920572e-10,
+        "diagnostics": "real-toolchain probe skipped (--skip-toolchain)"
+      },
+      {
+        "n": 64,
+        "batch": 2,
+        "inverse": false,
+        "correct": "not_available",
+        "numeric_max_error": "not_available",
+        "diagnostics": "correctness oracle raised ValueError: could not broadcast input array from shape (64,) into shape (128,); real-toolchain probe skipped (--skip-toolchain)"
+      },
+      {
+        "n": 64,
+        "batch": 2,
+        "inverse": true,
+        "correct": "not_available",
+        "numeric_max_error": "not_available",
+        "diagnostics": "correctness oracle raised ValueError: could not broadcast input array from shape (64,) into shape (128,); real-toolchain probe skipped (--skip-toolchain)"
+      },
+      {
+        "n": 64,
+        "batch": 33,
+        "inverse": false,
+        "correct": "not_available",
+        "numeric_max_error": "not_available",
+        "diagnostics": "correctness oracle raised ValueError: could not broadcast input array from shape (64,) into shape (2112,); real-toolchain probe skipped (--skip-toolchain)"
+      },
+      {
+        "n": 64,
+        "batch": 33,
+        "inverse": true,
+        "correct": "not_available",
+        "numeric_max_error": "not_available",
+        "diagnostics": "correctness oracle raised ValueError: could not broadcast input array from shape (64,) into shape (2112,); real-toolchain probe skipped (--skip-toolchain)"
+      }
+    ],
+    "traffic": [
+      {
+        "n": 64,
+        "batch": 33,
+        "choices": {
+          "split_near_length": null,
+          "radix_tier_name": "default",
+          "workers_per_fft": 2,
+          "tile": null,
+          "split_sequence": null,
+          "worker_sequence": null,
+          "execution_strategy": null,
+          "lane_variant": null,
+          "cooperative_partitions": [
+            [
+              0,
+              "round_robin"
+            ]
+          ],
+          "persistent_copies": [],
+          "tail_strategy": null
+        },
+        "expected_read_plus_write_bytes": 33792,
+        "search_cost_model_bytes": 33792,
+        "benchmark_reported_bytes": 67584,
+        "overcount_factor": 2.0,
+        "tasks": [
+          {
+            "length": 64,
+            "logical_elements": 2112,
+            "physical_uthreads": 66
+          }
+        ]
+      },
+      {
+        "n": 64,
+        "batch": 33,
+        "choices": {
+          "split_near_length": null,
+          "radix_tier_name": "default",
+          "workers_per_fft": null,
+          "tile": null,
+          "split_sequence": null,
+          "worker_sequence": [
+            "persistent"
+          ],
+          "execution_strategy": null,
+          "lane_variant": null,
+          "cooperative_partitions": [],
+          "persistent_copies": [
+            [
+              0,
+              "scalar"
+            ]
+          ],
+          "tail_strategy": "all_persistent"
+        },
+        "expected_read_plus_write_bytes": 33792,
+        "search_cost_model_bytes": 33792,
+        "benchmark_reported_bytes": 262144,
+        "overcount_factor": 7.757575757575758,
+        "tasks": [
+          {
+            "length": 64,
+            "logical_elements": 2112,
+            "physical_uthreads": 256
+          }
+        ]
+      },
+      {
+        "n": 64,
+        "batch": 33,
+        "choices": {
+          "split_near_length": null,
+          "radix_tier_name": "default",
+          "workers_per_fft": null,
+          "tile": null,
+          "split_sequence": null,
+          "worker_sequence": [
+            "persistent"
+          ],
+          "execution_strategy": null,
+          "lane_variant": null,
+          "cooperative_partitions": [],
+          "persistent_copies": [
+            [
+              0,
+              "scalar"
+            ]
+          ],
+          "tail_strategy": "noncoop_tail"
+        },
+        "expected_read_plus_write_bytes": 33792,
+        "search_cost_model_bytes": 33792,
+        "benchmark_reported_bytes": 263168,
+        "overcount_factor": 7.787878787878788,
+        "tasks": [
+          {
+            "length": 64,
+            "logical_elements": 2048,
+            "physical_uthreads": 256
+          },
+          {
+            "length": 64,
+            "logical_elements": 64,
+            "physical_uthreads": 1
+          }
+        ]
+      }
+    ]
+  },
+  "rocfft_default_metadata": [
+    {
+      "n": 64,
+      "expected_half_lds": false,
+      "actual_half_lds": false,
+      "actual_memory_optimization": null,
+      "factors": [
+        4,
+        4,
+        4
+      ]
+    },
+    {
+      "n": 128,
+      "expected_half_lds": true,
+      "actual_half_lds": false,
+      "actual_memory_optimization": null,
+      "factors": [
+        16,
+        8
+      ]
+    },
+    {
+      "n": 4096,
+      "expected_half_lds": true,
+      "actual_half_lds": false,
+      "actual_memory_optimization": null,
+      "factors": [
+        16,
+        16,
+        16
+      ]
+    }
+  ]
+}

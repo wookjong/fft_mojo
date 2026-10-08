@@ -58,6 +58,7 @@ from planning.core.fft_plan_core import (
     OutputPlan,
     PersistentWorkgroupPlan,
     ScratchpadBufferPlan,
+    WorkspaceBufferPlan,
     SIMDBatchPlan,
     _Default,
     _StageLayout,
@@ -69,7 +70,7 @@ from planning.core.fft_plan_core import (
     pingpong_needed,
 )
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
-from planning.execution.fft_plan_cooperative import choose_workers_per_fft, make_cooperative_leaf_plan
+from planning.execution.fft_plan_cooperative import choose_workers_per_fft, make_cooperative_leaf_plan, validate_cooperative_workers
 
 
 def persistent_leaf_scratchpad_bytes(length: int) -> int:
@@ -105,6 +106,13 @@ def _persistent_read_buffer(stage_id: int, buffer_names: tuple[str, str]) -> str
     return buffer_names[stage_id % 2]
 
 
+def persistent_tracker_scratchpad_bytes(workers_per_group: int, *, mode: str = "physical",
+                                        workers_per_fft: int | None = None) -> int:
+    """Private round cells, plus private wave cells when separate waves execute."""
+    wave_cells = workers_per_group if mode == "wave" and (workers_per_fft or workers_per_group) > workers_per_group else 0
+    return 4 * (workers_per_group + wave_cells)
+
+
 def _persistent_write_buffer(stage_id: int, buffer_names: tuple[str, str]) -> str:
     """Stage `stage_id` writes `buffer_names[(stage_id + 1) % 2]` --
     the bank the *next* stage (or writeback, for the last stage) reads.
@@ -120,6 +128,7 @@ def _lower_persistent_stages(
     layouts: tuple[_StageLayout, ...],
     buffer_names: tuple[str, str],
     inverse_scale: float | None,
+    storage_mode: str = "scratchpad",
 ) -> tuple[FFTStagePlan, ...]:
     """Structurally mirrors `fft_plan_core._lower_stages` (same per-batch
     loop, same `_make_load`/`_make_twiddle`/`_make_store` calls, same
@@ -161,7 +170,7 @@ def _lower_persistent_stages(
                     base_offset=input_batch_base + operand * layout.input_stride,
                     valid_lanes=valid_lanes,
                     simd_lanes=simd_lanes,
-                    force_scratchpad=True,
+                    force_scratchpad=storage_mode == "scratchpad" or not first_stage,
                 )
                 for operand in range(layout.radix)
             )
@@ -191,11 +200,16 @@ def _lower_persistent_stages(
                             output=output,
                             valid_lanes=valid_lanes,
                             simd_lanes=simd_lanes,
-                            force_scratchpad=True,
+                            force_scratchpad=storage_mode == "scratchpad" or not last_stage,
                         ),
                     )
                 )
 
+            if storage_mode == "global":
+                loads = tuple(replace(load, source="workspace") if load.source == "scratchpad" else load
+                              for load in loads)
+                outputs = [replace(out, store=replace(out.store, destination="workspace"))
+                           if out.store.destination == "scratchpad" else out for out in outputs]
             batches.append(
                 SIMDBatchPlan(
                     batch_id=simd_it,
@@ -310,6 +324,8 @@ def make_persistent_leaf_plan(
     workers_per_fft: int | None = None,
     lowering_mode: Literal["wave", "fused", "physical"] = "physical",
     copy_mode: Literal["scalar", "vectorized_contiguous"] = "scalar",
+    storage_mode: Literal["scratchpad", "global"] = "scratchpad",
+    loop_stages: bool = False,
 ) -> FFTCodegenPlan:
     """A length-`length` leaf FFT (single fused kernel, `radices` its own
     Cooley-Tukey/Stockham stage sequence -- same contract as `_build_plan`/
@@ -324,12 +340,13 @@ def make_persistent_leaf_plan(
     than silently generating a mapping that doesn't match the target (see
     docs/persistent_leaf_design.md's "Target-mapping invariant checks").
 
-    `spad_capacity_bytes` is not a parameter here (unlike `_build_plan`):
-    the byte-capacity check below is unconditional, since a persistent
-    leaf always needs the full `16 * length` bytes of scratchpad (see
-    `required_scratchpad_bytes` below) regardless of caller-supplied
-    launch width -- there is no "smaller launch, less capacity needed"
-    tradeoff the way there is for the ordinary per-uthread model.
+    `storage_mode="scratchpad"` requires `16 * length` data bytes plus
+    private trackers on each unit. `"global"` keeps only trackers locally:
+    intermediate stages use two CXL banks reused across rounds, and first/
+    last stages read/write the original input/output directly. It preserves
+    the radix and logical worker assignment, with additional DRAM traffic.
+    Native plans retain scratchpad storage by default; GPU baseline mapping
+    explicitly selects global staging when its local banks cannot fit.
 
     `inverse_scale`: the same `_DEFAULT` sentinel `_build_plan`/
     `make_cooperative_leaf_plan` use -- omitted, it's `1/length` when
@@ -366,8 +383,8 @@ def make_persistent_leaf_plan(
     established this).
 
     `lowering_mode`: stored verbatim on the returned plan's own
-    `PersistentWorkgroupPlan.lowering_mode` (metadata only -- see that
-    field's own docstring for what it is and is not authoritative over).
+    `PersistentWorkgroupPlan.lowering_mode`, used by default codegen
+    unless the caller supplies an explicit execution-mode override.
     Default `"physical"` matches every plan built before this parameter
     existed.
     """
@@ -418,12 +435,21 @@ def make_persistent_leaf_plan(
     if stripes_per_group != 1:
         raise NotImplementedError("only stripes_per_group == 1 is implemented")
 
-    required_scratchpad_bytes = persistent_leaf_scratchpad_bytes(length)
+    if lowering_mode not in ("physical", "fused", "wave"):
+        raise ValueError(f"unknown lowering_mode {lowering_mode!r}")
+    if copy_mode not in ("scalar", "vectorized_contiguous"):
+        raise ValueError(f"unknown copy_mode {copy_mode!r}")
+    if storage_mode not in ("scratchpad", "global"):
+        raise ValueError(f"unknown storage_mode {storage_mode!r}")
+    tracker_bytes = persistent_tracker_scratchpad_bytes(workers_per_group, mode=lowering_mode,
+                                                       workers_per_fft=workers_per_fft)
+    required_scratchpad_bytes = tracker_bytes + (persistent_leaf_scratchpad_bytes(length)
+                                                if storage_mode == "scratchpad" else 0)
     if required_scratchpad_bytes > target.spad_capacity_bytes:
-        max_length = target.spad_capacity_bytes // persistent_leaf_scratchpad_bytes(1)
+        max_length = max(0, (target.spad_capacity_bytes - tracker_bytes) // persistent_leaf_scratchpad_bytes(1))
         raise ValueError(
             f"length={length} needs {required_scratchpad_bytes} bytes of scratchpad "
-            f"(16*length, two banks of split-complex FP32), but "
+            f"(16*length plus {tracker_bytes} private tracker bytes), but "
             f"target.spad_capacity_bytes={target.spad_capacity_bytes} allows at most "
             f"{max_length} -- this is only the byte-capacity upper bound, not a "
             f"guarantee length={max_length} itself has a supported radix "
@@ -445,7 +471,7 @@ def make_persistent_leaf_plan(
     # depth), but rejecting here means a caller building candidate plans
     # (e.g. a future search/ranking layer) never even constructs codegen
     # for an infeasible one.
-    registered_kernels = 2 + len(radices)
+    registered_kernels = (2 if storage_mode == "scratchpad" else 1) + len(radices)
     if registered_kernels > target.max_kernel_register:
         raise ValueError(
             f"radices={radices} needs {registered_kernels} distinct kernel "
@@ -467,6 +493,7 @@ def make_persistent_leaf_plan(
         layouts=layouts,
         buffer_names=buffer_names,
         inverse_scale=inverse_scale,
+        storage_mode=storage_mode,
     )
     stages = tuple(
         replace(
@@ -493,7 +520,14 @@ def make_persistent_leaf_plan(
     scratchpad_buffers = tuple(
         ScratchpadBufferPlan(name=name, elements=scratchpad_stride)
         for name in buffer_names
-    )
+    ) if storage_mode == "scratchpad" else ()
+    # Reuse one slot per active physical group across rounds; allocation
+    # does not grow with all logical blocks. Two banks prevent read/write
+    # hazards across logical worker waves within the same stage.
+    workspace_buffers = tuple(
+        WorkspaceBufferPlan(name=name, elements=scratchpad_stride * min(num_logical_blocks, software_group_count))
+        for name in buffer_names
+    ) if storage_mode == "global" and len(radices) > 1 else ()
 
     logical_block_stride = length
 
@@ -509,6 +543,7 @@ def make_persistent_leaf_plan(
         large_twiddle=None,
         scratchpad_uthread_stride=scratchpad_stride,
         scratchpad_buffers=scratchpad_buffers,
+        workspace_buffers=workspace_buffers,
         stages=stages,
         host=_make_persistent_host_plan(
             length=length,
@@ -527,6 +562,8 @@ def make_persistent_leaf_plan(
             scalar_worker_mode=scalar_worker_mode,
             lowering_mode=lowering_mode,
             copy_mode=copy_mode,
+            storage_mode=storage_mode,
+            loop_stages=loop_stages,
         ),
     )
 
@@ -839,6 +876,11 @@ def make_persistent_tail_hybrid_plan(
     `radices` are never altered by this function, only how the tail's own
     physical launch is organized).
     """
+    if tail_strategy == "cooperative_tail" and tail_cooperative_workers is not None:
+        validate_cooperative_workers(
+            tail_cooperative_workers,
+            interleave_chunk_uthreads=target.interleave_chunk_uthreads,
+        )
     num_ndp_units = target.num_ndp_units
     full_blocks = (num_logical_blocks // num_ndp_units) * num_ndp_units
     tail_blocks = num_logical_blocks - full_blocks
@@ -874,15 +916,21 @@ def make_persistent_tail_hybrid_plan(
             use_pingpong=pingpong_needed(len(radices)),
             layouts=layouts_for_radices(length, radices, 8),
             kernel_name=tail_kernel_name, inverse_scale=inverse_scale,
+            spad_capacity_bytes=target.spad_capacity_bytes,
+            max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
         )
     elif tail_strategy == "cooperative_tail":
         workers = (
             tail_cooperative_workers if tail_cooperative_workers is not None
-            else choose_workers_per_fft(length, radices)
+            else choose_workers_per_fft(length, radices,
+                                        interleave_chunk_uthreads=target.interleave_chunk_uthreads)
         )
         tail_plan = make_cooperative_leaf_plan(
             length, radices, workers_per_fft=workers, total_ffts=tail_blocks, inverse=inverse,
             kernel_name=tail_kernel_name, inverse_scale=inverse_scale,
+            spad_capacity_bytes=target.spad_capacity_bytes,
+            max_concurrent_scratchpad_bytes=target.max_concurrent_scratchpad_bytes,
+            interleave_chunk_uthreads=target.interleave_chunk_uthreads,
         )
     else:
         raise ValueError(f"unknown tail_strategy {tail_strategy!r}")

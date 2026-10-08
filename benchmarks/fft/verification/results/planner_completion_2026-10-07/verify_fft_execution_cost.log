@@ -1,0 +1,11 @@
+  fft_cost_model.py: execution-cost model rework (stage-level metrics):
+    OK   N=216: 5 stage metrics == total_leaf_stage_count=5, all butterfly_count > 0 (sum=378)
+    OK   N=216: worst-stage effective_parallelism strictly increases workers=2 -> 4: 1.750 -> 3.000
+    OK   N=512: total_worker_stage_batches differs across the big leaf's own worker count despite the tiny far-leaf being stuck at 1 regardless: 17 (w=2) > 9 (w=4)
+    OK   N=960: estimate_cost is deterministic across 3 repeated calls (cost=76693.800)
+    OK   N=960: non-cooperative baseline's total_worker_stage_batches (33) == sum(simd_iteration_count), worst_worker_utilization unchanged at 1.0
+    OK   N=960: all_scalar's total_worker_stage_batches (264) == 8x baseline's (33), estimated_cost 76693.8 -> 76716.9 (previously identical)
+    OK   existing numerical correctness suite: see verify_fft_plan.py's own top-level run (this module is imported from it, not vice versa)
+    OK   N=144: generate_candidates count (40) unchanged under an adversarially different cost function (count is a structural property of generation + max_candidates, not of ranking)
+    OK   N=105: _resource_cost/spill policy unaffected by the execution-cost rework (radix_risk_penalty=5000.0, spill_penalty=2000.0, idle_worker_penalty removed)
+[verify] execution-cost model rework: all checks passed

@@ -212,7 +212,14 @@ def verify_rocfft_default_m2ndp_decision_fidelity() -> None:
 
 def verify_vkfft_m2ndp_numerical() -> None:
     print("VkFFT-m2ndp: numerical correctness")
-    for n in (12, 20, 216, 512, 768, 1024, 4096, 4704):
+    # Pinned FP32 optimization selects radix 12 for these lengths. Preserve
+    # the original stage and execute its newly supported butterfly.
+    for n, radices in ((12, (12,)), (768, (12, 4, 4, 4))):
+        r = vkfft.plan_m2ndp(n, target=DEFAULT_TARGET_PROFILE)
+        check(r.status is BaselineStatus.OK,
+              f"vkfft-m2ndp N={n}: original butterfly must execute, got {r.status}")
+        check(r.gpu_config.radices == radices, f"N={n}: original radices must survive lowering")
+    for n in (12, 14, 15, 20, 216, 512, 768, 960, 1024, 4096, 4704):
         r = vkfft.plan_m2ndp(n, target=DEFAULT_TARGET_PROFILE)
         check(r.status is BaselineStatus.OK, f"vkfft-m2ndp N={n} should map OK, got {r.status}")
         if r.status is BaselineStatus.OK:

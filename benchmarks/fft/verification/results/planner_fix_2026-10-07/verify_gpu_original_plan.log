@@ -1,0 +1,24 @@
+test_benchmark_exports_independent_accounting (__main__.OriginalGPUPlanTests.test_benchmark_exports_independent_accounting) ... ok
+test_clfft_large_row_keeps_its_separate_post_transpose (__main__.OriginalGPUPlanTests.test_clfft_large_row_keeps_its_separate_post_transpose) ... ok
+test_fused_kernel_count_and_batch_traffic (__main__.OriginalGPUPlanTests.test_fused_kernel_count_and_batch_traffic) ... ok
+test_missing_capture_never_fabricates_zero_gpu_traffic (__main__.OriginalGPUPlanTests.test_missing_capture_never_fabricates_zero_gpu_traffic) ... ok
+test_native_transposes_are_not_counted_as_unfusing_overhead (__main__.OriginalGPUPlanTests.test_native_transposes_are_not_counted_as_unfusing_overhead) ... ok
+test_original_plan_retained_on_mapping_refusal (__main__.OriginalGPUPlanTests.test_original_plan_retained_on_mapping_refusal) ... ok
+test_raw_metadata_survives_slot_clipping_and_persistence (__main__.OriginalGPUPlanTests.test_raw_metadata_survives_slot_clipping_and_persistence) ... ok
+test_report_independent_sequences_and_unknown_fields (__main__.OriginalGPUPlanTests.test_report_independent_sequences_and_unknown_fields) ... FAIL
+test_snapshot_independent_of_physical_tree (__main__.OriginalGPUPlanTests.test_snapshot_independent_of_physical_tree) ... ok
+test_three_uploads_are_not_nine_gpu_kernels (__main__.OriginalGPUPlanTests.test_three_uploads_are_not_nine_gpu_kernels) ... ok
+
+======================================================================
+FAIL: test_report_independent_sequences_and_unknown_fields (__main__.OriginalGPUPlanTests.test_report_independent_sequences_and_unknown_fields)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\james\OneDrive\바탕 화면\26-여름\M2NDP\mojo-m2ndp\benchmarks\fft\verification\verify_gpu_original_plan.py", line 105, in test_report_independent_sequences_and_unknown_fields
+    self.assertIn("gpu_workgroup_size:            None", gpu_section)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'gpu_workgroup_size:            None' not found in "BASELINE RESULT: clfft length=8192\nstatus: ok\n\n-- GPU LOGICAL EXECUTION --\nKERNEL 0\n  scheme:                        BCT_C2C\n  pass_id:                       0\n  fft_length:                    64\n  radices:                       (4, 4, 4)\n  gpu_metadata:                  (('block_width', 16), ('active_transforms', 8), ('block_compute_rounds', 2))\n  gpu_workgroup_size:            128\n  gpu_threads_per_transform:     16\n  gpu_transforms_per_workgroup:  16\n  gpu_shared_memory_bytes:       8192\n  gpu_fused_operations:          ('strided_load', 'transpose', 'large_twiddle')\n  gpu_transpose_role:            None\n  gpu_global_read_bytes:         65536\n  gpu_global_write_bytes:        65536\n  gpu_memory_optimization:       None\n  gpu_logical_shared_memory_bytes: None\n  m2ndp_memory_optimization_status: None\n\nKERNEL 1\n  scheme:                        BCT_R2C\n  pass_id:                       1\n  fft_length:                    128\n  radices:                       (8, 4, 4)\n  gpu_metadata:                  (('block_width', 8), ('active_transforms', 8), ('block_compute_rounds', 1))\n  gpu_workgroup_size:            128\n  gpu_threads_per_transform:     16\n  gpu_transforms_per_workgroup:  8\n  gpu_shared_memory_bytes:       8192\n  gpu_fused_operations:          ('transpose',)\n  gpu_transpose_role:            None\n  gpu_global_read_bytes:         65536\n  gpu_global_write_bytes:        65536\n  gpu_memory_optimization:       None\n  gpu_logical_shared_memory_bytes: None\n  m2ndp_memory_optimization_status: None\n\n"
+
+----------------------------------------------------------------------
+Ran 10 tests in 1.995s
+
+FAILED (failures=1)

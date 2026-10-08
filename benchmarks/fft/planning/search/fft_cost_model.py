@@ -22,7 +22,10 @@ from planning.strategies.fft_plan_recursive import (
     flatten_recursive_node,
 )
 from planning.core.fft_plan_core import FFTCodegenPlan, FFTStagePlan
-from planning.execution.fft_plan_persistent import flatten_logical_workers_to_physical_lanes, num_rounds
+from planning.execution.fft_plan_persistent import (
+    flatten_logical_workers_to_physical_lanes, num_rounds,
+    persistent_tracker_scratchpad_bytes,
+)
 from planning.core.target_profile import TargetProfile
 
 # Composite/prime radices confirmed clean as a leaf's *first* stage
@@ -299,6 +302,7 @@ class PlanMetrics:
     # all, not a claim that its own order matches real hardware speed --
     # see this project's own N=16384 tile=(4,4) vs (2,2) mismatch).
     ndp_cycles: int | None = None
+    persistent_copy_instructions: int = 0  # busiest physical lane, both directions/all rounds
     estimated_cost: float = 0.0      # filled in by estimate_cost, 0.0 until then
 
 
@@ -373,6 +377,9 @@ class CostWeights:
     # active_ndp_units_cost_task.md's own "execution mechanisms that must
     # remain distinct" discussion).
     persistent_extra_round_multiplier: float = 11.0
+    # Copy instruction counts are exposed, but no latency has been calibrated.
+    # Keep default rankings unchanged; explicit weights or cycle probes compare copies.
+    persistent_copy_instruction: float = 0.0
     # A spill on real hardware is a correctness failure (the kernel panics
     # or silently zeroes its output), not a slowdown -- this must dominate
     # every other term whenever radix_risk_score is nonzero.
@@ -659,13 +666,10 @@ def _stage_chunk_count(stage: FFTStagePlan, simd_lanes: int) -> int:
     module is deliberately codegen/toolchain-free (see module docstring) --
     kept in sync by hand, the same discipline `_RISKY_RADIX_PAIRS` above
     already uses for a codegen constant this module needs to know about.
-    `stage.compute_lanes is None` (unset -- the majority of candidates this
-    project's planner builds; see fft_plan_lanes.py's own module docstring)
-    resolves to 1, not a guess at whatever flat compute_lanes codegen might
-    apply at render time -- this plan-level module has no visibility into
-    that caller-supplied value, so an unset stage costs identically to
-    today's un-narrowed baseline, the same "None means not decided here"
-    rule PlanMetrics.spill_free/ndp_cycles already use."""
+    Native search resolves widths before calling the cost model. A manually
+    constructed stage with `compute_lanes=None` retains the legacy
+    one-chunk estimate; callers costing such plans should first call
+    `resolve_compute_lanes_to_plan` with their intended render width."""
     if stage.compute_lanes is None or stage.compute_lanes >= simd_lanes:
         return 1
     return (simd_lanes + stage.compute_lanes - 1) // stage.compute_lanes
@@ -799,7 +803,7 @@ def _tree_depth(node: FFTNode) -> int:
     if isinstance(node, FFTLeafPlan):
         return 0
     assert isinstance(node, FFTRecursiveNodePlan)
-    return 1 + _tree_depth(node.far_child)
+    return 1 + max(_tree_depth(node.near_fft), _tree_depth(node.far_child))
 
 
 def _leaf_kernels_with_replicas(node: FFTNode) -> list[tuple[FFTCodegenPlan, int]]:
@@ -817,9 +821,14 @@ def _leaf_kernels_with_replicas(node: FFTNode) -> list[tuple[FFTCodegenPlan, int
     its own (diagnostic-only, not imported here -- see this module's own
     docstring on staying free of that module) purposes."""
     if isinstance(node, FFTLeafPlan):
+        if node.tail_hybrid is not None:
+            h = node.tail_hybrid
+            return [(k, replicas) for k, replicas in
+                    ((h.persistent_plan, h.full_blocks), (h.tail_plan, h.tail_blocks))
+                    if k is not None]
         return [(node.kernel, node.r)]
     assert isinstance(node, FFTRecursiveNodePlan)
-    return [(node.near_fft.kernel, node.near_fft.r)] + _leaf_kernels_with_replicas(
+    return _leaf_kernels_with_replicas(node.near_fft) + _leaf_kernels_with_replicas(
         node.far_child
     )
 
@@ -907,6 +916,10 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
             total_leaf_stage_count += len(stage.stages)
             radix_risk_score += _leaf_radix_risk(stage)
             leaf_bytes = sum(buf.elements for buf in stage.scratchpad_buffers) * 4
+            if stage.persistent is not None:
+                pw = stage.persistent
+                leaf_bytes += persistent_tracker_scratchpad_bytes(pw.workers_per_group,
+                    mode=pw.lowering_mode, workers_per_fft=pw.workers_per_fft)
             max_scratchpad_bytes = max(max_scratchpad_bytes, leaf_bytes)
             util = _leaf_worker_utilization(stage)
             if util is not None:
@@ -920,7 +933,11 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
     # _plan's own `batch` docstring (every stage's total_uthreads already
     # scales with it, so the DRAM traffic estimate must too or every batch
     # sweep would under-count it identically regardless of batch).
-    estimated_dram_bytes = len(stages) * plan.n * plan.batch * 2 * 2 * 4
+    # Hybrid tasks cover disjoint replicas, unlike serial recursive passes.
+    estimated_dram_bytes = sum(
+        s.rows * s.cols * s.replica_count * 16 if isinstance(s, PhysicalTransposePlan)
+        else s.estimated_dram_bytes for s in stages
+    )
     stage_metrics = compute_stage_metrics(plan)
     total_worker_stage_batches = sum(
         sm.max_batches_per_worker * sm.chunks_per_batch for sm in stage_metrics
@@ -938,7 +955,21 @@ def estimate_metrics(plan: RecursiveFFTPlan, target: TargetProfile) -> PlanMetri
     )
     persistent_extra_rounds = _persistent_extra_rounds(plan, target)
 
+    persistent_copy_instructions = 0
+    for kernel, replicas in _leaf_kernels_with_replicas(plan.root):
+        if kernel.persistent is None or kernel.persistent.storage_mode == "global":
+            continue
+        pw = kernel.persistent
+        chunk = -(-kernel.length // pw.workers_per_group)
+        if pw.copy_mode == "scalar":
+            copies = chunk
+        else:
+            # Emitters use vector_width=4 by default. Ragged chunks retain scalar tails.
+            copies = chunk // 4 + chunk % 4
+        persistent_copy_instructions += 8 * copies * num_rounds(replicas, pw.software_group_count)
+
     return PlanMetrics(
+        persistent_copy_instructions=persistent_copy_instructions,
         recursion_depth=_tree_depth(plan.root),
         leaf_kernel_count=leaf_kernel_count,
         transpose_kernel_count=transpose_kernel_count,
@@ -1091,7 +1122,8 @@ def _execution_cost(metrics: PlanMetrics, weights: CostWeights) -> float:
         * metrics.physical_persistent_worker_stage_batches
         + weights.persistent_extra_round_multiplier * metrics.persistent_extra_rounds
     )
-    return weights.stage_work * weighted_stage_work
+    return (weights.stage_work * weighted_stage_work
+            + weights.persistent_copy_instruction * metrics.persistent_copy_instructions)
 
 
 def estimate_cost(metrics: PlanMetrics, weights: CostWeights = DEFAULT_COST_WEIGHTS) -> float:

@@ -1,0 +1,48 @@
+  Structural invariants: non-cooperative/cooperative/persistent plan shape:
+    OK   length=64 radices=(4, 4, 4) workers=2: non-cooperative + cooperative invariants hold
+    OK   length=64 radices=(4, 4, 4) workers=4: non-cooperative + cooperative invariants hold
+    OK   length=105 radices=(3, 5, 7) workers=2: non-cooperative + cooperative invariants hold
+    OK   length=128 radices=(4, 4, 4, 2) workers=8: non-cooperative + cooperative invariants hold
+    OK   persistent length=64 radices=(4, 4, 4): persistent invariants hold
+    OK   persistent length=105 radices=(3, 5, 7): persistent invariants hold
+
+  Regression guard: workers_per_fft=8 offered by default (Phase 1 fix):
+    OK   worker_candidates_per_fft(128, (4,4,4,2)) includes 8 by default: [1, 2, 4, 8]
+    OK   choose_workers_per_fft(128, (4,4,4,2)) picks 8 by default: 8
+
+  Regression guard: cooperative-leaf host main() emits the 256B pool-alignment guard:
+    OK   generate_cooperative_fft_kernel emits pool alignment guard
+
+  Cross-strategy numeric equivalence (same input, non-coop vs. cooperative vs. persistent):
+    OK   length=64 radices=(4, 4, 4) cooperative_workers=2 total_ffts=3 inverse=False: worst pairwise/numpy error 9.237e-09
+    OK   length=64 radices=(4, 4, 4) cooperative_workers=2 total_ffts=3 inverse=True: worst pairwise/numpy error 1.222e-10
+    OK   length=105 radices=(3, 5, 7) cooperative_workers=2 total_ffts=4 inverse=False: worst pairwise/numpy error 1.511e-08
+    OK   length=105 radices=(3, 5, 7) cooperative_workers=2 total_ffts=4 inverse=True: worst pairwise/numpy error 1.803e-10
+
+  Persistent recursive-split support (Phase 3): same split/radix as non-persistent, numpy-correct:
+    OK   N=960 budget=512 inverse=False: {'same_split_shape': True, 'max_error': 6.23116411304653e-08}
+    OK   N=960 budget=512 inverse=True: {'same_split_shape': True, 'max_error': 1.972741373766934e-10}
+    OK   N=1024 budget=512 inverse=False: {'same_split_shape': True, 'max_error': 5.388447884898487e-08}
+    OK   N=1024 budget=512 inverse=True: {'same_split_shape': True, 'max_error': 4.28520195834255e-11}
+
+  Persistent immune to spread_across_units (Phase 3 gap found 2026-08-31): probe_spill_free/make_fft_kernel.py's own real default (True), not just False:
+    OK   N=960 forced_worker_sequence=('persistent', None): {'persistent_stage_indices': [1], 'persistent_unaffected_by_spread': True, 'some_other_stage_did_widen': True}
+    OK   N=960 forced_worker_sequence=(2, 'persistent'): {'persistent_stage_indices': [3], 'persistent_unaffected_by_spread': True, 'some_other_stage_did_widen': True}
+
+  Per-leaf mixed execution strategy (Phase 4): forced_worker_sequence mixing noncoop/cooperative/persistent:
+    OK   forced_worker_sequence=('persistent', None) N=960 inverse=False: max error 7.701e-08
+    OK   forced_worker_sequence=('persistent', None) N=960 inverse=True: max error 1.792e-10
+    OK   forced_worker_sequence=(None, 'persistent') N=960 inverse=False: max error 7.701e-08
+    OK   forced_worker_sequence=(None, 'persistent') N=960 inverse=True: max error 1.792e-10
+    OK   forced_worker_sequence=('persistent', 'persistent') N=960 inverse=False: max error 7.701e-08
+    OK   forced_worker_sequence=('persistent', 'persistent') N=960 inverse=True: max error 1.792e-10
+    OK   forced_worker_sequence=(2, 'persistent') N=960 inverse=False: max error 7.701e-08
+    OK   forced_worker_sequence=(2, 'persistent') N=960 inverse=True: max error 1.792e-10
+    OK   forced_worker_sequence=('persistent', 'auto') N=960 inverse=False: max error 7.701e-08
+    OK   forced_worker_sequence=('persistent', 'auto') N=960 inverse=True: max error 1.792e-10
+
+  compute_lanes planner promotion (Phase 5): planner-resolved path == old live-resolution path:
+    OK   length=105 radices=(3, 5, 7): {'all_stages_set': True, 'planned_matches_live': True, 'text_identical': True, 'candidates_distinct': True, 'candidate_count': 3}
+    OK   length=128 radices=(4, 4, 4, 2): {'all_stages_set': True, 'planned_matches_live': True, 'text_identical': True, 'candidates_distinct': True, 'candidate_count': 3}
+    OK   length=110 radices=(2, 5, 11): {'all_stages_set': True, 'planned_matches_live': True, 'text_identical': True, 'candidates_distinct': True, 'candidate_count': 3}
+[verify] execution-strategy invariants: all checks passed

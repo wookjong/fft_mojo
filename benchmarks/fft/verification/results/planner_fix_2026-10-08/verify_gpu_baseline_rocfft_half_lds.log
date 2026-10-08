@@ -1,0 +1,8 @@
+  rocFFT half_lds classification (P1.2):
+    OK   gpu_logical_lds_bytes(length, half_lds=True) is exactly half of gpu_logical_lds_bytes(length, half_lds=False), at every length tested
+    OK   derive_max_tpb/conservative_max_tpb byte-identical to the pre-refactor inline formula at every (length, half_lds, tpt) combination tested
+    OK   leaf_scratchpad_bytes (M2NDP's own real resource-feasibility input) has no half_lds parameter at all -- confirmed unaffected by construction
+    OK   report distinctly shows gpu_logical_shared_memory_bytes=96 (GPU, half_lds-adjusted) and scratchpad_bytes=384 (M2NDP, real, half_lds-UNaffected) as two separate numbers, plus NO_EQUIVALENT classification
+    OK   a non-rocFFT kernel (VkFFT) reports gpu_memory_optimization=None, not a stale half_lds value
+[verify] rocFFT half_lds classification: all checks passed
+

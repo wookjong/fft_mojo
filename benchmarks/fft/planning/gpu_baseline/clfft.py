@@ -81,6 +81,7 @@ from planning.strategies.fft_plan_recursive import (
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 from radix_spec import SUPPORTED_RADICES
 
+from .logical_plan import preserve_gpu_plan
 from .common import (
     BaselineProvenance,
     BaselineResult,
@@ -103,7 +104,7 @@ from .common import (
 PROVENANCE = BaselineProvenance(
     library="clFFT",
     upstream_repository="https://github.com/clMathLibraries/clFFT",
-    upstream_commit="master (unpinned; fetched 2026-09-08 -- no commit SHA recorded, see docs/gpu_baseline_clfft_research.md)",
+    upstream_commit="c59712e136fa6207956af22f5c0e4cee7d05340e (BlockSizes and block pass loop verified 2026-10-08; earlier master extraction was unpinned)",
     source_files=(
         "src/library/generator.stockham.cpp",
         "src/library/generator.stockham.h",
@@ -118,6 +119,7 @@ PROVENANCE = BaselineProvenance(
     baseline_version="gpu-baseline-v1",
     source_functions={
         "SPEC_TABLE": "generator.stockham.cpp: KernelCoreSpecs<P_SINGLE>/SpecRecord (RADIX_TABLE_COMMON + P_SINGLE block)",
+        "get_block_config": "generator.stockham.cpp: Kernel<P_SINGLE>::BlockSizes and block-compute pass loop (pinned c59712e)",
         "determine_sizes": "generator.stockham.cpp: FFTGeneratedStockhamAction::DetermineSizes",
         "fallback_radix_decomposition": "generator.stockham.cpp: GetRadices's own fallback loop (cRad[])",
         "get_max_1d_length": "generator.stockham.cpp: FFTPlan::GetMax1DLengthStockham",
@@ -193,6 +195,38 @@ SPEC_TABLE: dict[int, SpecEntry] = {
     4: SpecEntry(64, 32, (2, 2)),
     2: SpecEntry(64, 64, (2,)),
 }
+
+
+@dataclass(frozen=True)
+class ClfftBlockConfig:
+    radices: tuple[int, ...]
+    workgroup_size: int
+    block_width: int
+    threads_per_transform: int
+    active_transforms: int
+    compute_rounds: int
+    lds_bytes: int
+
+
+def get_block_config(length: int) -> ClfftBlockConfig:
+    """Pinned generator.stockham.cpp::Kernel<P_SINGLE>::BlockSizes.
+
+    The block contains block_width FFTs. Only active_transforms run at once;
+    the pass loop reuses those worker groups for compute_rounds iterations.
+    These GPU settings describe the original block kernel, independently of
+    its explicit-transpose M2NDP lowering.
+    """
+    widths = {256: (8, 256), 128: (8, 128), 64: (16, 128),
+              32: (32, 64), 16: (64, 64), 8: (128, 64)}
+    if length not in widths:
+        raise ValueError(f"clFFT block kernel does not support length={length}")
+    spec = SPEC_TABLE[length]
+    width, preferred_wgs = widths[length]
+    wgs = preferred_wgs if width > spec.num_transforms else spec.workgroup_size
+    tpt = spec.workgroup_size // spec.num_transforms
+    active = wgs // tpt
+    return ClfftBlockConfig(spec.radices, wgs, width, tpt, active, width // active,
+                            length * width * CLFFT_ELEM_BYTES)
 
 
 def _floor_po2(x: int) -> int:
@@ -519,6 +553,7 @@ def _map_stockham_kernel(
     )
 
 
+@preserve_gpu_plan
 def plan_single_kernel(
     length: int,
     *,
@@ -925,6 +960,7 @@ def _plan_leaf_or_recurse(
     )
 
 
+@preserve_gpu_plan
 def plan_large1d(
     length: int,
     *,
@@ -997,6 +1033,7 @@ def plan(
     return plan_large1d(length, batch=batch, inverse=inverse, target=target)
 
 
+@preserve_gpu_plan
 def plan_large1d_m2ndp(
     length: int,
     *,

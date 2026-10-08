@@ -1,0 +1,3 @@
+warning: <unknown>:0:0: in function coop_cap2_n64_b65::FFTFP32Coop::stage_0() void (): M2NDP kernel spills to memory (144-byte frame); spills go to DRAM
+
+[host] cooperative FFT verification passed

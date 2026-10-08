@@ -1,0 +1,221 @@
+{
+  "config": "M2NDP",
+  "config_md5": "33d240c5",
+  "config_path": "/work/third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config",
+  "core_mhz": 2000,
+  "cycles": 19512,
+  "detour": "",
+  "dir": "/fft-work/verification/results/execution_codegen_fixes_2026-10-08/simulator/persistent_wave_w10_b65/fft-execution-persistent_wave_w10_b65_M2NDP/20261007-154002.433",
+  "dram": {
+    "channels": 28,
+    "max_pct": 1.08,
+    "mean_pct": 0.89,
+    "min_pct": 0.85
+  },
+  "exit": 0,
+  "finished": "2026-10-07T15:40:41+00:00",
+  "host_log": "host.log",
+  "kernels": [
+    {
+      "finished": 1849,
+      "launch_id": "0",
+      "name": "persistent_wave_w10_b65::PersistentFFT::preload()",
+      "started": 965
+    },
+    {
+      "finished": 5056,
+      "launch_id": "1",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_0()",
+      "started": 1959
+    },
+    {
+      "finished": 5461,
+      "launch_id": "2",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_0()",
+      "started": 5272
+    },
+    {
+      "finished": 7303,
+      "launch_id": "3",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_1()",
+      "started": 5578
+    },
+    {
+      "finished": 7600,
+      "launch_id": "4",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_1()",
+      "started": 7413
+    },
+    {
+      "finished": 9111,
+      "launch_id": "5",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_2()",
+      "started": 7719
+    },
+    {
+      "finished": 9405,
+      "launch_id": "6",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_2()",
+      "started": 9218
+    },
+    {
+      "finished": 10037,
+      "launch_id": "7",
+      "name": "persistent_wave_w10_b65::PersistentFFT::writeback()",
+      "started": 9524
+    },
+    {
+      "finished": 10753,
+      "launch_id": "8",
+      "name": "persistent_wave_w10_b65::PersistentFFT::preload()",
+      "started": 10264
+    },
+    {
+      "finished": 12121,
+      "launch_id": "9",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_0()",
+      "started": 10851
+    },
+    {
+      "finished": 12411,
+      "launch_id": "10",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_0()",
+      "started": 12222
+    },
+    {
+      "finished": 13243,
+      "launch_id": "11",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_1()",
+      "started": 12521
+    },
+    {
+      "finished": 13535,
+      "launch_id": "12",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_1()",
+      "started": 13348
+    },
+    {
+      "finished": 14071,
+      "launch_id": "13",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_2()",
+      "started": 13647
+    },
+    {
+      "finished": 14478,
+      "launch_id": "14",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_2()",
+      "started": 14291
+    },
+    {
+      "finished": 14851,
+      "launch_id": "15",
+      "name": "persistent_wave_w10_b65::PersistentFFT::writeback()",
+      "started": 14590
+    },
+    {
+      "finished": 15359,
+      "launch_id": "16",
+      "name": "persistent_wave_w10_b65::PersistentFFT::preload()",
+      "started": 14953
+    },
+    {
+      "finished": 16726,
+      "launch_id": "17",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_0()",
+      "started": 15460
+    },
+    {
+      "finished": 17016,
+      "launch_id": "18",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_0()",
+      "started": 16831
+    },
+    {
+      "finished": 17832,
+      "launch_id": "19",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_1()",
+      "started": 17114
+    },
+    {
+      "finished": 18242,
+      "launch_id": "20",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_1()",
+      "started": 18059
+    },
+    {
+      "finished": 18762,
+      "launch_id": "21",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_2()",
+      "started": 18342
+    },
+    {
+      "finished": 19048,
+      "launch_id": "22",
+      "name": "persistent_wave_w10_b65::PersistentFFT::stage_2()",
+      "started": 18865
+    },
+    {
+      "finished": 19412,
+      "launch_id": "23",
+      "name": "persistent_wave_w10_b65::PersistentFFT::writeback()",
+      "started": 19155
+    }
+  ],
+  "launch_spans": [
+    19512
+  ],
+  "launches": 24,
+  "log": "simulator.log",
+  "repo": "",
+  "stats": {
+    "ctrl.addr_issue": 1364,
+    "ctrl.cycle": 0,
+    "ctrl.exit_issue": 0,
+    "ctrl.f_issue": 0,
+    "ctrl.i_issue": 1392,
+    "ctrl.inst_issue": 2756,
+    "ctrl.ldst_issue": 228,
+    "ctrl.sf_issue": 0,
+    "ctrl.spad_issue": 1136,
+    "ctrl.spad_read": 0,
+    "ctrl.spad_write": 0,
+    "ctrl.v_addr_issue": 0,
+    "ctrl.v_issue": 0,
+    "ctrl.v_ldst_issue": 0,
+    "ctrl.v_sf_issue": 0,
+    "ctrl.v_spad_issue": 0,
+    "launches": 24,
+    "ndp.addr_issue": 23304,
+    "ndp.cycle": 0,
+    "ndp.exit_issue": 6144,
+    "ndp.f_issue": 14464,
+    "ndp.i_issue": 255707,
+    "ndp.inst_issue": 362279,
+    "ndp.ldst_issue": 6240,
+    "ndp.sf_issue": 0,
+    "ndp.spad_issue": 17064,
+    "ndp.spad_read": 0,
+    "ndp.spad_write": 0,
+    "ndp.v_addr_issue": 31720,
+    "ndp.v_issue": 30940,
+    "ndp.v_ldst_issue": 5720,
+    "ndp.v_sf_issue": 0,
+    "ndp.v_spad_issue": 26000
+  },
+  "stats_file": "stats.txt",
+  "tasks": [
+    {
+      "arrived": 70,
+      "called": 0,
+      "finished": 19440,
+      "issued": 0,
+      "launch": 0,
+      "notified": 19512,
+      "started": 70,
+      "task": 0
+    }
+  ],
+  "time_us": 9.756,
+  "wall_s": 39.0,
+  "workload": "fft-execution-persistent_wave_w10_b65"
+}

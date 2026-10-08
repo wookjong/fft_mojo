@@ -527,10 +527,10 @@ def verify_vkfft_axisblock_swap_and_upload_cases() -> None:
 
     result = vkfft.plan(128, batch=4)
     check(result.status is BaselineStatus.OK, f"vkfft.plan(128) should be OK post-fix, got {result.status}")
-    cooperation = result.plan.root.kernel.cooperation
+    persistent = result.plan.root.kernel.persistent
     check(
-        cooperation is not None and cooperation.workers_per_fft == 4,
-        f"vkfft.plan(128)'s own built kernel should use the swapped workers_per_fft=4, got {cooperation}",
+        persistent is not None and persistent.workers_per_fft == 16,
+        f"vkfft.plan(128) must preserve logical workers_per_fft=16 across the physical X/Y swap, got {persistent}",
     )
 
     # Single upload (num_passes==1): any length handled entirely by
@@ -829,7 +829,7 @@ def _ref_vkfft_register_table(c2: int, c3: int, c5: int, c7: int):
 
 
 def verify_vkfft_register_table_matches_independent_reference() -> None:
-    print("VkFFT: complete base {2,3,5,7} register table vs. independent VkFFTGetRegistersPerThreadQuad re-derivation")
+    print("VkFFT: retained Quad helper vs. independent VkFFTGetRegistersPerThreadQuad re-derivation (unused by FP32)")
     checked = 0
     for c2 in range(5):
         for c3 in range(5):
@@ -842,10 +842,10 @@ def verify_vkfft_register_table_matches_independent_reference() -> None:
                         continue
                     from planning.gpu_baseline import vkfft
 
-                    got = vkfft.registers_per_thread_base_table(c2, c3, c5, c7)
+                    got = vkfft.quad_registers_per_thread_base_table(c2, c3, c5, c7)
                     check(
                         got == ref,
-                        f"registers_per_thread_base_table({c2},{c3},{c5},{c7}) = {got}, expected {ref}",
+                        f"quad_registers_per_thread_base_table({c2},{c3},{c5},{c7}) = {got}, expected {ref}",
                     )
                     checked += 1
     check(checked > 500, f"expected to check >500 combinations, only checked {checked}")

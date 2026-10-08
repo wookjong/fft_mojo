@@ -30,28 +30,13 @@ covering:
   still route even a length WITH a compiled single kernel through the
   multi-kernel path instead, at low batch.
 
-SCOPE LIMIT, faithful not evasive (section 3 of the task this was built
-from: "If an exact GPU configuration cannot be represented by current
-M2NDP codegen: preserve the ... configuration as metadata, return
-UNSUPPORTED_CURRENT_CODEGEN. Do NOT change the ... selection to make it
-representable."): `CS_L1D_CC`'s own SBCC/SBRC kernels are FUSED block-
-tiled-transpose-plus-FFT kernels -- a genuinely different mechanism from
-this project's own PRE-transpose/leaf-FFT/POST-transpose six-step shape
-(clfft.py's and vkfft.py's large-1D paths both reuse that shape because
-their own upstream algorithms really do decompose that way; rocFFT's
-SBCC/SBRC do NOT -- they read/write shared memory in column/row TILES
-directly inside the FFT kernel itself, with no separate transpose stage
-at all). Forcing SBCC/SBRC onto the PRE/near/MIDDLE/far/POST mechanism
-would be silently CHANGING rocFFT's own algorithm to fit what this
-repository's codegen already has, exactly what this whole baseline effort
-is not supposed to do. So: this module DECIDES `CS_L1D_CC`/`CS_L1D_TRTRT`
-correctly and faithfully (the exact scheme, `divLength1`, and each
-sub-kernel's own real config from `config_sbcc.py`/`config_sbrc.py`), and
-reports that decision honestly in `GPUKernelConfig.extra`, but returns
-`UNSUPPORTED_CURRENT_CODEGEN` rather than building an M2NDP plan for it --
-a real, unimplemented mechanism this repository's `AddressMapping`/codegen
-has no equivalent for, not a hardware impossibility and not an algorithm
-this baseline declined to understand.
+Large-1D lowering preserves upstream FFT execution order and leaf settings:
+CC executes SBCC(div1), then SBRC(div0); TRTRT executes a recursively planned
+row1(div1), then a forced plain Stockham row2(div0). The common M2NDP IR
+expands CC's fused memory accesses into three separate transposes. This
+preserves the factorization, but adds launches and memory traffic; it is
+not yet a faithful performance model of rocFFT's two fused CC kernels.
+See docs/gpu_baseline_rocfft_cc_trtrt_lowering.md.
 
 Every length in the REQUIRED test set (2, 4, 8, 16, 32, 64, 128, 256, 512,
 1024, 2048, 4096) is directly covered by the compiled single-kernel table
@@ -109,6 +94,7 @@ ROCFFT_DEFAULT_MULTIPROCESSOR_COUNT = 120
 ============================================================================
 """
 
+from planning.gpu_baseline.rocfft_block_configs import BlockConfig, SBCC_TABLE, SBRC_TABLE
 from dataclasses import dataclass
 
 from planning.core.fft_plan_core import MultiKernelHostPlan
@@ -123,6 +109,7 @@ from planning.strategies.fft_plan_recursive import (
 from radix_spec import SUPPORTED_RADICES
 
 from . import rocfft_upstream_solution_map as upstream_sol_map
+from .logical_plan import preserve_gpu_plan
 from .common import (
     BaselineProvenance,
     BaselineResult,
@@ -154,6 +141,8 @@ PROVENANCE = BaselineProvenance(
         "projects/rocfft/library/src/include/tree_node.h",
         "projects/rocfft/library/src/include/function_pool.h",
         "projects/rocfft/library/src/device/kernel-generator.py",
+        "projects/rocfft/library/src/device/generator/stockham_gen.cpp",
+        "projects/rocfft/library/src/device/generator/stockham_gen_base.h",
         "projects/rocfft/library/src/device/kernels/configs/config_sbrr.py",
         "projects/rocfft/library/src/device/kernels/configs/config_sbcc.py",
         "projects/rocfft/library/src/device/kernels/configs/config_sbrc.py",
@@ -166,7 +155,10 @@ PROVENANCE = BaselineProvenance(
     baseline_version="gpu-baseline-v1",
     source_functions={
         "SBRR_TABLE": "device/kernels/configs/config_sbrr.py: sbrr_kernels (compiled-in single-kernel table, full 2..4096)",
+        "DefaultConfig.half_lds/direct_to_from_reg": "pinned config_sbrr.py plus kernel-generator.py defaults and single-radix half-LDS rule (verified 2026-10-08)",
         "SBCC_TABLE/SBRC_TABLE": "device/kernels/configs/config_sbcc.py, config_sbrc.py (CS_L1D_CC's own two sub-kernel tables)",
+        "_rocfft_leaf_or_recurse": "tree_node_1D.cpp: CC1DNode/TRTRT1DNode::BuildTree_internal (child order and forced-leaf schemes)",
+        "rocfft_block_configs._config": "device/kernel-generator.py: list_large_kernels; device/generator/stockham_gen_base.h: StockhamKernel (launch sizing)",
         "MAP_1D_LENGTH_SINGLE": "node_factory.cpp: NodeFactory::map1DLengthSingle",
         "decide_scheme": "node_factory.cpp: NodeFactory::Decide1DScheme",
         "get_largest_pow2_length": "function_pool.h: function_pool::get_largest_pow2_length",
@@ -175,21 +167,11 @@ PROVENANCE = BaselineProvenance(
         "rocfft_upstream_solution_map.apply_solution": "plan.cpp: ApplySolution/RecursivelyApplySol/GenerateProbKeys/GetNodeToken",
     },
     notes=(
-        "Ports the compiled-in single-kernel (config_sbrr.py) table, the "
-        "CS_L1D_CC/CS_L1D_TRTRT DECISION logic (which scheme, which "
-        "divLength1/sub-kernel configs), AND (2026-09-09) the real "
-        "solution-map override layer (rocfft_upstream_solution_map.py) that "
-        "runs BEFORE this decision chain in real production rocFFT -- see "
-        "that module's own docstring. Only ever BUILDS an M2NDP plan for "
-        "the single-kernel (CS_KERNEL_STOCKHAM) case, whether that came "
-        "from the compiled table, the solution map, or Decide1DScheme's "
-        "own fallback formulas. CS_L1D_CC/TRTRT decisions (from either "
-        "source) are reported faithfully in diagnostics but return "
-        "UNSUPPORTED_CURRENT_CODEGEN, since SBCC/SBRC's fused block-tiled "
-        "transpose+FFT kernels have no equivalent AddressMapping/codegen "
-        "mechanism in this repository (see module docstring's own SCOPE "
-        "LIMIT) -- forcing them onto the unrelated PRE/MIDDLE/POST six-step "
-        "shape would silently change rocFFT's own real algorithm."
+        "Ports compiled SBRR/SBCC/SBRC configs, Decide1DScheme, and the "
+        "solution-map override layer. Large-1D lowering preserves upstream "
+        "FFT order and forced-leaf versus recursive-child behavior. CC is "
+        "expanded to five M2NDP kernels; fused transpose/FFT memory traffic "
+        "and launch behavior remain a separate performance-fidelity gap."
     ),
 )
 
@@ -204,6 +186,14 @@ class DefaultConfig:
     workgroup_size: int
     threads_per_transform: int
     factors: tuple[int, ...]
+    half_lds: bool | None = None
+    direct_to_from_reg: bool = True
+
+    def __post_init__(self):
+        # Pinned kernel-generator.py defaults multi-radix SBRR to half LDS;
+        # single-radix kernels do not use it, even with an explicit True.
+        if self.half_lds is None or len(self.factors) == 1:
+            object.__setattr__(self, "half_lds", len(self.factors) > 1 if self.half_lds is None else False)
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +246,7 @@ SBRR_TABLE: dict[int, DefaultConfig] = {
     32: DefaultConfig(128, 16, (8, 4)),
     33: DefaultConfig(256, 11, (11, 3)),
     34: DefaultConfig(256, 17, (17, 2)),
-    35: DefaultConfig(256, 7, (5, 7)),
+    35: DefaultConfig(256, 7, (5, 7), half_lds=False),
     36: DefaultConfig(64, 6, (6, 6)),
     39: DefaultConfig(256, 13, (13, 3)),
     40: DefaultConfig(128, 10, (10, 4)),
@@ -269,276 +259,276 @@ SBRR_TABLE: dict[int, DefaultConfig] = {
     51: DefaultConfig(256, 17, (17, 3)),
     52: DefaultConfig(64, 4, (13, 4)),
     54: DefaultConfig(256, 18, (6, 3, 3)),
-    55: DefaultConfig(256, 11, (5, 11)),
+    55: DefaultConfig(256, 11, (5, 11), half_lds=False),
     56: DefaultConfig(128, 8, (7, 8)),
     60: DefaultConfig(64, 10, (6, 10)),
-    63: DefaultConfig(256, 21, (3, 3, 7)),
-    64: DefaultConfig(64, 16, (4, 4, 4)),
+    63: DefaultConfig(256, 21, (3, 3, 7), half_lds=False),
+    64: DefaultConfig(64, 16, (4, 4, 4), half_lds=False),
     65: DefaultConfig(256, 13, (13, 5)),
-    66: DefaultConfig(256, 11, (6, 11)),
+    66: DefaultConfig(256, 11, (6, 11), half_lds=False),
     68: DefaultConfig(256, 17, (17, 4)),
     70: DefaultConfig(256, 14, (2, 5, 7)),
     72: DefaultConfig(64, 9, (8, 3, 3)),
     75: DefaultConfig(256, 25, (5, 5, 3)),
     77: DefaultConfig(256, 11, (7, 11)),
-    78: DefaultConfig(256, 13, (6, 13)),
+    78: DefaultConfig(256, 13, (6, 13), half_lds=False),
     80: DefaultConfig(64, 10, (5, 2, 8)),
     81: DefaultConfig(128, 27, (3, 3, 3, 3)),
     84: DefaultConfig(128, 12, (7, 2, 6)),
     85: DefaultConfig(256, 17, (17, 5)),
     88: DefaultConfig(128, 11, (11, 8)),
     90: DefaultConfig(64, 9, (3, 3, 10)),
-    91: DefaultConfig(256, 13, (7, 13)),
-    96: DefaultConfig(128, 16, (6, 16)),
-    98: DefaultConfig(256, 14, (2, 7, 7)),
-    99: DefaultConfig(256, 11, (3, 3, 11)),
+    91: DefaultConfig(256, 13, (7, 13), half_lds=False),
+    96: DefaultConfig(128, 16, (6, 16), half_lds=False, direct_to_from_reg=False),
+    98: DefaultConfig(256, 14, (2, 7, 7), half_lds=False),
+    99: DefaultConfig(256, 11, (3, 3, 11), half_lds=False),
     100: DefaultConfig(64, 10, (10, 10)),
     102: DefaultConfig(128, 17, (17, 6)),
     104: DefaultConfig(64, 8, (13, 8)),
-    105: DefaultConfig(256, 21, (7, 3, 5)),
+    105: DefaultConfig(256, 21, (7, 3, 5), half_lds=False),
     108: DefaultConfig(256, 36, (6, 6, 3)),
-    110: DefaultConfig(256, 11, (2, 5, 11)),
-    112: DefaultConfig(256, 16, (16, 7)),
+    110: DefaultConfig(256, 11, (2, 5, 11), half_lds=False),
+    112: DefaultConfig(256, 16, (16, 7), half_lds=False, direct_to_from_reg=False),
     117: DefaultConfig(64, 13, (13, 9)),
     119: DefaultConfig(256, 17, (17, 7)),
     120: DefaultConfig(64, 12, (6, 10, 2)),
     121: DefaultConfig(128, 11, (11, 11)),
-    125: DefaultConfig(256, 25, (5, 5, 5)),
-    126: DefaultConfig(256, 42, (6, 7, 3)),
+    125: DefaultConfig(256, 25, (5, 5, 5), half_lds=False, direct_to_from_reg=False),
+    126: DefaultConfig(256, 42, (6, 7, 3), half_lds=False),
     128: DefaultConfig(256, 16, (16, 8)),
-    130: DefaultConfig(64, 13, (13, 10)),
-    132: DefaultConfig(128, 22, (11, 6, 2)),
+    130: DefaultConfig(64, 13, (13, 10), half_lds=False, direct_to_from_reg=False),
+    132: DefaultConfig(128, 22, (11, 6, 2), half_lds=False, direct_to_from_reg=False),
     135: DefaultConfig(128, 9, (5, 3, 3, 3)),
     136: DefaultConfig(128, 17, (17, 8)),
-    140: DefaultConfig(64, 28, (7, 5, 4)),
-    143: DefaultConfig(256, 13, (13, 11)),
+    140: DefaultConfig(64, 28, (7, 5, 4), half_lds=False, direct_to_from_reg=False),
+    143: DefaultConfig(256, 13, (13, 11), half_lds=False),
     144: DefaultConfig(128, 12, (6, 6, 4)),
-    147: DefaultConfig(64, 21, (7, 7, 3)),
+    147: DefaultConfig(64, 21, (7, 7, 3), half_lds=False, direct_to_from_reg=False),
     150: DefaultConfig(64, 5, (10, 5, 3)),
     153: DefaultConfig(128, 17, (17, 9)),
-    154: DefaultConfig(128, 22, (11, 7, 2)),
-    156: DefaultConfig(128, 13, (3, 4, 13)),
+    154: DefaultConfig(128, 22, (11, 7, 2), half_lds=False, direct_to_from_reg=False),
+    156: DefaultConfig(128, 13, (3, 4, 13), half_lds=False),
     160: DefaultConfig(256, 16, (16, 10)),
     162: DefaultConfig(256, 27, (6, 3, 3, 3)),
-    165: DefaultConfig(64, 11, (11, 5, 3)),
-    168: DefaultConfig(256, 56, (8, 7, 3)),
+    165: DefaultConfig(64, 11, (11, 5, 3), half_lds=False, direct_to_from_reg=False),
+    168: DefaultConfig(256, 56, (8, 7, 3), half_lds=False, direct_to_from_reg=False),
     169: DefaultConfig(256, 13, (13, 13)),
     170: DefaultConfig(128, 17, (17, 10)),
-    175: DefaultConfig(256, 35, (5, 5, 7)),
+    175: DefaultConfig(256, 35, (5, 5, 7), half_lds=False),
     176: DefaultConfig(64, 16, (11, 16)),
-    180: DefaultConfig(256, 60, (10, 6, 3)),
-    182: DefaultConfig(64, 13, (13, 2, 7)),
+    180: DefaultConfig(256, 60, (10, 6, 3), half_lds=False, direct_to_from_reg=False),
+    182: DefaultConfig(64, 13, (13, 2, 7), half_lds=False),
     187: DefaultConfig(128, 17, (17, 11)),
-    189: DefaultConfig(64, 21, (7, 3, 3, 3)),
+    189: DefaultConfig(64, 21, (7, 3, 3, 3), half_lds=False, direct_to_from_reg=False),
     192: DefaultConfig(128, 16, (6, 4, 4, 2)),
-    195: DefaultConfig(64, 13, (13, 5, 3)),
-    196: DefaultConfig(64, 28, (4, 7, 7)),
-    198: DefaultConfig(128, 22, (11, 2, 9)),
+    195: DefaultConfig(64, 13, (13, 5, 3), half_lds=False, direct_to_from_reg=False),
+    196: DefaultConfig(64, 28, (4, 7, 7), half_lds=False, direct_to_from_reg=False),
+    198: DefaultConfig(128, 22, (11, 2, 9), half_lds=False),
     200: DefaultConfig(64, 20, (10, 10, 2)),
     204: DefaultConfig(128, 17, (17, 4, 3)),
     208: DefaultConfig(64, 16, (13, 16)),
-    210: DefaultConfig(64, 30, (10, 7, 3)),
+    210: DefaultConfig(64, 30, (10, 7, 3), half_lds=False, direct_to_from_reg=False),
     216: DefaultConfig(256, 36, (6, 6, 6)),
-    220: DefaultConfig(128, 22, (10, 2, 11)),
+    220: DefaultConfig(128, 22, (10, 2, 11), half_lds=False),
     221: DefaultConfig(128, 17, (17, 13)),
     224: DefaultConfig(64, 16, (7, 2, 2, 2, 2, 2)),
     225: DefaultConfig(256, 75, (5, 5, 3, 3)),
-    231: DefaultConfig(256, 33, (11, 7, 3)),
-    234: DefaultConfig(64, 26, (13, 9, 2)),
+    231: DefaultConfig(256, 33, (11, 7, 3), half_lds=False, direct_to_from_reg=False),
+    234: DefaultConfig(64, 26, (13, 9, 2), half_lds=False, direct_to_from_reg=False),
     238: DefaultConfig(64, 17, (17, 7, 2)),
     240: DefaultConfig(128, 48, (8, 5, 6)),
-    242: DefaultConfig(128, 22, (11, 2, 11)),
+    242: DefaultConfig(128, 22, (11, 2, 11), half_lds=False),
     243: DefaultConfig(256, 81, (3, 3, 3, 3, 3)),
-    245: DefaultConfig(256, 35, (7, 5, 7)),
+    245: DefaultConfig(256, 35, (7, 5, 7), half_lds=False),
     250: DefaultConfig(128, 25, (10, 5, 5)),
-    252: DefaultConfig(64, 63, (7, 3, 3, 4)),
+    252: DefaultConfig(64, 63, (7, 3, 3, 4), half_lds=False, direct_to_from_reg=False),
     255: DefaultConfig(64, 17, (17, 5, 3)),
     256: DefaultConfig(64, 64, (4, 4, 4, 4)),
-    260: DefaultConfig(64, 26, (13, 10, 2)),
-    264: DefaultConfig(256, 33, (8, 3, 11)),
+    260: DefaultConfig(64, 26, (13, 10, 2), half_lds=False),
+    264: DefaultConfig(256, 33, (8, 3, 11), half_lds=False),
     270: DefaultConfig(128, 27, (10, 3, 3, 3)),
     272: DefaultConfig(128, 17, (16, 17)),
-    273: DefaultConfig(64, 13, (13, 3, 7)),
-    275: DefaultConfig(64, 55, (11, 5, 5)),
-    280: DefaultConfig(64, 56, (8, 7, 5)),
-    286: DefaultConfig(64, 26, (13, 11, 2)),
+    273: DefaultConfig(64, 13, (13, 3, 7), half_lds=False, direct_to_from_reg=False),
+    275: DefaultConfig(64, 55, (11, 5, 5), half_lds=False),
+    280: DefaultConfig(64, 56, (8, 7, 5), half_lds=False, direct_to_from_reg=False),
+    286: DefaultConfig(64, 26, (13, 11, 2), half_lds=False, direct_to_from_reg=False),
     288: DefaultConfig(128, 24, (6, 6, 4, 2)),
     289: DefaultConfig(128, 17, (17, 17)),
-    294: DefaultConfig(128, 42, (6, 7, 7)),
+    294: DefaultConfig(128, 42, (6, 7, 7), half_lds=False, direct_to_from_reg=False),
     297: DefaultConfig(256, 33, (9, 3, 11)),
     300: DefaultConfig(64, 30, (10, 10, 3)),
     306: DefaultConfig(256, 34, (17, 2, 9)),
-    308: DefaultConfig(64, 44, (11, 7, 4)),
-    312: DefaultConfig(64, 26, (13, 4, 3, 2)),
-    315: DefaultConfig(64, 63, (7, 3, 3, 5)),
+    308: DefaultConfig(64, 44, (11, 7, 4), half_lds=False, direct_to_from_reg=False),
+    312: DefaultConfig(64, 26, (13, 4, 3, 2), half_lds=False),
+    315: DefaultConfig(64, 63, (7, 3, 3, 5), half_lds=False, direct_to_from_reg=False),
     320: DefaultConfig(64, 16, (10, 4, 4, 2)),
     324: DefaultConfig(64, 54, (3, 6, 6, 3)),
-    325: DefaultConfig(64, 13, (13, 5, 5)),
-    330: DefaultConfig(128, 33, (11, 10, 3)),
+    325: DefaultConfig(64, 13, (13, 5, 5), half_lds=False, direct_to_from_reg=False),
+    330: DefaultConfig(128, 33, (11, 10, 3), half_lds=False, direct_to_from_reg=False),
     336: DefaultConfig(128, 56, (8, 7, 6)),
     338: DefaultConfig(64, 26, (13, 2, 13)),
     340: DefaultConfig(128, 34, (17, 2, 10)),
     343: DefaultConfig(256, 49, (7, 7, 7)),
-    350: DefaultConfig(64, 50, (5, 7, 10)),
-    351: DefaultConfig(128, 39, (13, 3, 9)),
-    352: DefaultConfig(64, 32, (11, 2, 16)),
+    350: DefaultConfig(64, 50, (5, 7, 10), half_lds=False, direct_to_from_reg=False),
+    351: DefaultConfig(128, 39, (13, 3, 9), half_lds=False),
+    352: DefaultConfig(64, 32, (11, 2, 16), half_lds=False, direct_to_from_reg=False),
     357: DefaultConfig(256, 17, (17, 3, 7)),
     360: DefaultConfig(256, 60, (10, 6, 6)),
     363: DefaultConfig(128, 33, (11, 3, 11)),
-    364: DefaultConfig(64, 52, (13, 7, 4)),
+    364: DefaultConfig(64, 52, (13, 7, 4), half_lds=False, direct_to_from_reg=False),
     374: DefaultConfig(256, 34, (17, 2, 11)),
     375: DefaultConfig(128, 25, (5, 5, 5, 3)),
-    378: DefaultConfig(128, 126, (6, 3, 3, 7)),
+    378: DefaultConfig(128, 126, (6, 3, 3, 7), half_lds=False),
     384: DefaultConfig(128, 32, (6, 4, 4, 4)),
-    385: DefaultConfig(64, 55, (11, 7, 5)),
-    390: DefaultConfig(128, 39, (13, 3, 10)),
-    392: DefaultConfig(64, 56, (8, 7, 7)),
-    396: DefaultConfig(64, 44, (11, 9, 4)),
+    385: DefaultConfig(64, 55, (11, 7, 5), half_lds=False, direct_to_from_reg=False),
+    390: DefaultConfig(128, 39, (13, 3, 10), half_lds=False),
+    392: DefaultConfig(64, 56, (8, 7, 7), half_lds=False, direct_to_from_reg=False),
+    396: DefaultConfig(64, 44, (11, 9, 4), half_lds=False, direct_to_from_reg=False),
     400: DefaultConfig(128, 40, (4, 10, 10)),
     405: DefaultConfig(128, 27, (5, 3, 3, 3, 3)),
     408: DefaultConfig(64, 17, (17, 3, 8)),
-    416: DefaultConfig(64, 32, (13, 2, 16)),
-    420: DefaultConfig(64, 60, (10, 7, 6)),
+    416: DefaultConfig(64, 32, (13, 2, 16), half_lds=False),
+    420: DefaultConfig(64, 60, (10, 7, 6), half_lds=False, direct_to_from_reg=False),
     425: DefaultConfig(64, 17, (17, 5, 5)),
-    429: DefaultConfig(128, 39, (13, 3, 11)),
+    429: DefaultConfig(128, 39, (13, 3, 11), half_lds=False),
     432: DefaultConfig(64, 27, (3, 16, 3, 3)),
-    440: DefaultConfig(64, 55, (11, 8, 5)),
-    441: DefaultConfig(64, 63, (9, 7, 7)),
+    440: DefaultConfig(64, 55, (11, 8, 5), half_lds=False, direct_to_from_reg=False),
+    441: DefaultConfig(64, 63, (9, 7, 7), half_lds=False, direct_to_from_reg=False),
     442: DefaultConfig(256, 34, (17, 2, 13)),
-    448: DefaultConfig(128, 64, (8, 7, 8)),
+    448: DefaultConfig(128, 64, (8, 7, 8), half_lds=False, direct_to_from_reg=False),
     450: DefaultConfig(128, 30, (10, 5, 3, 3)),
-    455: DefaultConfig(256, 65, (13, 5, 7)),
+    455: DefaultConfig(256, 65, (13, 5, 7), half_lds=False),
     459: DefaultConfig(256, 51, (17, 3, 9)),
-    462: DefaultConfig(256, 77, (11, 6, 7)),
-    468: DefaultConfig(64, 52, (13, 9, 4)),
+    462: DefaultConfig(256, 77, (11, 6, 7), half_lds=False, direct_to_from_reg=False),
+    468: DefaultConfig(64, 52, (13, 9, 4), half_lds=False, direct_to_from_reg=False),
     476: DefaultConfig(128, 34, (17, 2, 7, 2)),
     480: DefaultConfig(64, 16, (10, 8, 6)),
-    484: DefaultConfig(64, 44, (4, 11, 11)),
+    484: DefaultConfig(64, 44, (4, 11, 11), half_lds=False, direct_to_from_reg=False),
     486: DefaultConfig(256, 162, (6, 3, 3, 3, 3)),
-    490: DefaultConfig(256, 70, (10, 7, 7)),
-    495: DefaultConfig(64, 55, (11, 9, 5)),
+    490: DefaultConfig(256, 70, (10, 7, 7), half_lds=False),
+    495: DefaultConfig(64, 55, (11, 9, 5), half_lds=False, direct_to_from_reg=False),
     500: DefaultConfig(128, 100, (10, 5, 10)),
-    504: DefaultConfig(64, 63, (7, 9, 4, 2)),
+    504: DefaultConfig(64, 63, (7, 9, 4, 2), half_lds=False, direct_to_from_reg=False),
     507: DefaultConfig(128, 39, (13, 3, 13)),
     510: DefaultConfig(256, 34, (17, 2, 3, 5)),
     512: DefaultConfig(64, 64, (8, 8, 8)),
-    520: DefaultConfig(64, 52, (13, 10, 4)),
-    525: DefaultConfig(128, 105, (7, 3, 5, 5)),
+    520: DefaultConfig(64, 52, (13, 10, 4), half_lds=False, direct_to_from_reg=False),
+    525: DefaultConfig(128, 105, (7, 3, 5, 5), half_lds=False, direct_to_from_reg=False),
     528: DefaultConfig(64, 48, (4, 4, 3, 11)),
     539: DefaultConfig(256, 77, (11, 7, 7)),
     540: DefaultConfig(256, 54, (3, 10, 6, 3)),
     544: DefaultConfig(128, 34, (17, 2, 16)),
     546: DefaultConfig(128, 39, (13, 3, 7, 2)),
-    550: DefaultConfig(64, 55, (11, 10, 5)),
-    560: DefaultConfig(64, 56, (8, 7, 5, 2)),
+    550: DefaultConfig(64, 55, (11, 10, 5), half_lds=False, direct_to_from_reg=False),
+    560: DefaultConfig(64, 56, (8, 7, 5, 2), half_lds=False, direct_to_from_reg=False),
     561: DefaultConfig(256, 51, (17, 3, 11)),
-    567: DefaultConfig(64, 63, (7, 9, 3, 3)),
-    572: DefaultConfig(64, 52, (13, 11, 4)),
+    567: DefaultConfig(64, 63, (7, 9, 3, 3), half_lds=False, direct_to_from_reg=False),
+    572: DefaultConfig(64, 52, (13, 11, 4), half_lds=False, direct_to_from_reg=False),
     576: DefaultConfig(128, 96, (16, 6, 6)),
     578: DefaultConfig(256, 34, (17, 17, 2)),
-    585: DefaultConfig(256, 65, (13, 5, 9)),
-    588: DefaultConfig(256, 84, (7, 3, 4, 7)),
-    594: DefaultConfig(128, 99, (11, 3, 6, 3)),
+    585: DefaultConfig(256, 65, (13, 5, 9), half_lds=False),
+    588: DefaultConfig(256, 84, (7, 3, 4, 7), half_lds=False, direct_to_from_reg=False),
+    594: DefaultConfig(128, 99, (11, 3, 6, 3), half_lds=False),
     595: DefaultConfig(64, 17, (7, 17, 5)),
     600: DefaultConfig(64, 60, (10, 6, 10)),
-    605: DefaultConfig(64, 55, (11, 5, 11)),
+    605: DefaultConfig(64, 55, (11, 5, 11), half_lds=False),
     612: DefaultConfig(64, 51, (17, 3, 6, 2)),
-    616: DefaultConfig(128, 88, (11, 7, 8)),
-    624: DefaultConfig(64, 52, (13, 4, 6, 2)),
+    616: DefaultConfig(128, 88, (11, 7, 8), half_lds=False),
+    624: DefaultConfig(64, 52, (13, 4, 6, 2), half_lds=False),
     625: DefaultConfig(128, 125, (5, 5, 5, 5)),
     630: DefaultConfig(64, 63, (3, 3, 5, 7, 2)),
     637: DefaultConfig(128, 91, (13, 7, 7)),
     640: DefaultConfig(128, 64, (8, 10, 8)),
     648: DefaultConfig(256, 216, (8, 3, 3, 3, 3)),
-    650: DefaultConfig(256, 65, (10, 5, 13)),
+    650: DefaultConfig(256, 65, (10, 5, 13), half_lds=False),
     660: DefaultConfig(128, 110, (11, 6, 10)),
-    663: DefaultConfig(64, 51, (17, 13, 3)),
+    663: DefaultConfig(64, 51, (17, 13, 3), half_lds=False),
     672: DefaultConfig(64, 56, (2, 2, 2, 2, 2, 3, 7)),
     675: DefaultConfig(256, 225, (5, 5, 3, 3, 3)),
-    676: DefaultConfig(64, 52, (13, 13, 4)),
+    676: DefaultConfig(64, 52, (13, 13, 4), half_lds=False),
     680: DefaultConfig(256, 68, (17, 4, 10)),
-    686: DefaultConfig(64, 49, (7, 7, 7, 2)),
+    686: DefaultConfig(64, 49, (7, 7, 7, 2), half_lds=False, direct_to_from_reg=False),
     693: DefaultConfig(128, 99, (11, 7, 9)),
-    700: DefaultConfig(128, 100, (10, 7, 10)),
+    700: DefaultConfig(128, 100, (10, 7, 10), half_lds=False, direct_to_from_reg=False),
     702: DefaultConfig(128, 117, (13, 3, 6, 3)),
     704: DefaultConfig(256, 88, (2, 2, 2, 2, 11, 2, 2)),
     714: DefaultConfig(64, 51, (3, 17, 7, 2)),
     715: DefaultConfig(256, 65, (13, 5, 11)),
     720: DefaultConfig(256, 120, (10, 3, 8, 3)),
-    726: DefaultConfig(256, 66, (11, 6, 11)),
+    726: DefaultConfig(256, 66, (11, 6, 11), half_lds=False),
     728: DefaultConfig(128, 104, (13, 7, 8)),
     729: DefaultConfig(256, 243, (3, 3, 3, 3, 3, 3)),
-    735: DefaultConfig(256, 147, (7, 3, 5, 7)),
+    735: DefaultConfig(256, 147, (7, 3, 5, 7), half_lds=False),
     748: DefaultConfig(256, 68, (17, 4, 11)),
     750: DefaultConfig(256, 250, (10, 5, 3, 5)),
-    756: DefaultConfig(64, 63, (2, 2, 3, 3, 3, 7)),
+    756: DefaultConfig(64, 63, (2, 2, 3, 3, 3, 7), half_lds=False, direct_to_from_reg=False),
     765: DefaultConfig(256, 51, (17, 3, 5, 3)),
     768: DefaultConfig(64, 48, (16, 3, 16)),
-    770: DefaultConfig(256, 110, (11, 10, 7)),
+    770: DefaultConfig(256, 110, (11, 10, 7), half_lds=False),
     780: DefaultConfig(256, 78, (2, 3, 13, 5, 2)),
     784: DefaultConfig(64, 56, (2, 2, 2, 2, 7, 7)),
-    792: DefaultConfig(256, 88, (2, 2, 2, 3, 3, 11)),
+    792: DefaultConfig(256, 88, (2, 2, 2, 3, 3, 11), half_lds=False),
     800: DefaultConfig(256, 160, (16, 5, 10)),
     810: DefaultConfig(128, 81, (3, 10, 3, 3, 3)),
     816: DefaultConfig(64, 51, (17, 2, 3, 2, 2, 2)),
-    819: DefaultConfig(128, 117, (9, 7, 13)),
-    825: DefaultConfig(64, 55, (11, 5, 5, 3)),
+    819: DefaultConfig(128, 117, (9, 7, 13), half_lds=False),
+    825: DefaultConfig(64, 55, (11, 5, 5, 3), half_lds=False, direct_to_from_reg=False),
     832: DefaultConfig(128, 104, (13, 2, 2, 2, 2, 2, 2)),
     833: DefaultConfig(128, 119, (17, 7, 7)),
     840: DefaultConfig(64, 56, (2, 2, 2, 3, 5, 7)),
     845: DefaultConfig(256, 65, (13, 5, 13)),
     847: DefaultConfig(256, 77, (11, 7, 11)),
-    850: DefaultConfig(128, 85, (10, 5, 17)),
+    850: DefaultConfig(128, 85, (10, 5, 17), half_lds=False),
     858: DefaultConfig(256, 78, (13, 11, 6)),
     864: DefaultConfig(64, 54, (3, 6, 16, 3)),
     867: DefaultConfig(64, 51, (17, 17, 3)),
-    875: DefaultConfig(256, 175, (7, 5, 5, 5)),
+    875: DefaultConfig(256, 175, (7, 5, 5, 5), half_lds=False),
     880: DefaultConfig(256, 88, (2, 2, 2, 2, 11, 5)),
-    882: DefaultConfig(64, 63, (9, 7, 7, 2)),
+    882: DefaultConfig(64, 63, (9, 7, 7, 2), half_lds=False, direct_to_from_reg=False),
     884: DefaultConfig(256, 68, (13, 4, 17)),
     891: DefaultConfig(256, 99, (9, 11, 3, 3)),
-    896: DefaultConfig(128, 112, (2, 2, 2, 2, 2, 2, 2, 7)),
+    896: DefaultConfig(128, 112, (2, 2, 2, 2, 2, 2, 2, 7), half_lds=False, direct_to_from_reg=False),
     900: DefaultConfig(256, 90, (10, 10, 3, 3)),
-    910: DefaultConfig(256, 91, (13, 2, 7, 5)),
+    910: DefaultConfig(256, 91, (13, 2, 7, 5), half_lds=False),
     918: DefaultConfig(128, 102, (17, 9, 2, 3)),
     924: DefaultConfig(64, 44, (2, 2, 3, 7, 11)),
     935: DefaultConfig(256, 85, (17, 11, 5)),
     936: DefaultConfig(256, 78, (2, 2, 13, 2, 3, 3)),
     945: DefaultConfig(64, 63, (3, 3, 3, 5, 7)),
     952: DefaultConfig(256, 68, (17, 4, 2, 7)),
-    960: DefaultConfig(256, 160, (16, 10, 6)),
-    968: DefaultConfig(256, 88, (2, 2, 2, 11, 11)),
+    960: DefaultConfig(256, 160, (16, 10, 6), half_lds=False, direct_to_from_reg=False),
+    968: DefaultConfig(256, 88, (2, 2, 2, 11, 11), half_lds=False),
     972: DefaultConfig(256, 162, (3, 6, 3, 6, 3)),
     975: DefaultConfig(128, 39, (13, 5, 3, 5)),
-    980: DefaultConfig(256, 196, (7, 5, 7, 4)),
-    990: DefaultConfig(128, 110, (2, 3, 3, 5, 11)),
+    980: DefaultConfig(256, 196, (7, 5, 7, 4), half_lds=False, direct_to_from_reg=False),
+    990: DefaultConfig(128, 110, (2, 3, 3, 5, 11), half_lds=False),
     1000: DefaultConfig(128, 100, (10, 10, 10)),
     1001: DefaultConfig(256, 91, (13, 7, 11)),
     1008: DefaultConfig(64, 56, (2, 2, 2, 2, 3, 3, 7)),
-    1014: DefaultConfig(256, 78, (13, 6, 13)),
+    1014: DefaultConfig(256, 78, (13, 6, 13), half_lds=False),
     1020: DefaultConfig(256, 68, (2, 17, 2, 3, 5)),
     1024: DefaultConfig(128, 128, (8, 8, 4, 4)),
     1040: DefaultConfig(256, 208, (13, 16, 5)),
-    1050: DefaultConfig(256, 210, (2, 3, 5, 5, 7)),
+    1050: DefaultConfig(256, 210, (2, 3, 5, 5, 7), half_lds=False),
     1053: DefaultConfig(128, 117, (3, 3, 13, 3, 3)),
     1056: DefaultConfig(256, 176, (2, 2, 2, 2, 11, 6)),
     1071: DefaultConfig(128, 119, (17, 7, 9)),
     1078: DefaultConfig(256, 77, (2, 11, 7, 7)),
     1080: DefaultConfig(256, 108, (6, 10, 6, 3)),
     1088: DefaultConfig(256, 68, (17, 4, 4, 2, 2)),
-    1089: DefaultConfig(128, 121, (3, 11, 3, 11)),
+    1089: DefaultConfig(128, 121, (3, 11, 3, 11), half_lds=False),
     1092: DefaultConfig(64, 52, (2, 2, 13, 7, 3)),
-    1100: DefaultConfig(128, 110, (2, 2, 11, 5, 5)),
+    1100: DefaultConfig(128, 110, (2, 2, 11, 5, 5), half_lds=False),
     1105: DefaultConfig(256, 85, (17, 13, 5)),
     1120: DefaultConfig(256, 224, (2, 2, 2, 2, 2, 5, 7)),
     1122: DefaultConfig(256, 102, (17, 11, 6)),
     1125: DefaultConfig(256, 225, (5, 5, 3, 3, 5)),
-    1134: DefaultConfig(128, 126, (2, 3, 3, 3, 3, 7)),
-    1144: DefaultConfig(128, 104, (13, 11, 8)),
+    1134: DefaultConfig(128, 126, (2, 3, 3, 3, 3, 7), half_lds=False, direct_to_from_reg=False),
+    1144: DefaultConfig(128, 104, (13, 11, 8), half_lds=False, direct_to_from_reg=False),
     1152: DefaultConfig(256, 144, (4, 3, 8, 3, 4)),
     1155: DefaultConfig(64, 55, (11, 5, 7, 3)),
     1156: DefaultConfig(256, 68, (17, 2, 17, 2)),
-    1170: DefaultConfig(256, 117, (2, 13, 3, 5, 3)),
+    1170: DefaultConfig(256, 117, (2, 13, 3, 5, 3), half_lds=False),
     1176: DefaultConfig(64, 56, (2, 2, 2, 3, 7, 7)),
     1183: DefaultConfig(256, 91, (7, 13, 13)),
     1188: DefaultConfig(256, 66, (6, 11, 2, 3, 3)),
@@ -555,12 +545,12 @@ SBRR_TABLE: dict[int, DefaultConfig] = {
     1274: DefaultConfig(256, 182, (2, 13, 7, 7)),
     1275: DefaultConfig(256, 85, (17, 3, 5, 5)),
     1280: DefaultConfig(128, 80, (16, 5, 16)),
-    1287: DefaultConfig(128, 117, (3, 13, 3, 11)),
+    1287: DefaultConfig(128, 117, (3, 13, 3, 11), half_lds=False),
     1296: DefaultConfig(128, 108, (6, 6, 6, 6)),
-    1300: DefaultConfig(256, 130, (10, 10, 13)),
+    1300: DefaultConfig(256, 130, (10, 10, 13), half_lds=False),
     1309: DefaultConfig(128, 119, (17, 7, 11)),
-    1320: DefaultConfig(256, 165, (11, 2, 3, 5, 4)),
-    1323: DefaultConfig(256, 189, (3, 3, 3, 7, 7)),
+    1320: DefaultConfig(256, 165, (11, 2, 3, 5, 4), half_lds=False),
+    1323: DefaultConfig(256, 189, (3, 3, 3, 7, 7), half_lds=False),
     1326: DefaultConfig(256, 102, (17, 6, 13)),
     1331: DefaultConfig(256, 121, (11, 11, 11)),
     1344: DefaultConfig(256, 224, (2, 2, 2, 2, 2, 2, 3, 7)),
@@ -576,14 +566,14 @@ SBRR_TABLE: dict[int, DefaultConfig] = {
     1404: DefaultConfig(128, 117, (2, 2, 3, 13, 3, 3)),
     1408: DefaultConfig(256, 176, (2, 2, 2, 2, 2, 2, 11, 2)),
     1428: DefaultConfig(128, 119, (17, 2, 7, 6)),
-    1430: DefaultConfig(256, 143, (13, 11, 10)),
+    1430: DefaultConfig(256, 143, (13, 11, 10), half_lds=False),
     1440: DefaultConfig(128, 90, (10, 16, 3, 3)),
     1445: DefaultConfig(128, 85, (17, 5, 17)),
     1452: DefaultConfig(256, 132, (11, 3, 11, 4)),
     1456: DefaultConfig(256, 182, (13, 4, 7, 2, 2)),
     1458: DefaultConfig(256, 243, (6, 3, 3, 3, 3, 3)),
     1470: DefaultConfig(256, 210, (2, 3, 5, 7, 7)),
-    1485: DefaultConfig(256, 165, (3, 5, 11, 3, 3)),
+    1485: DefaultConfig(256, 165, (3, 5, 11, 3, 3), half_lds=False),
     1496: DefaultConfig(256, 187, (17, 8, 11)),
     1500: DefaultConfig(256, 150, (5, 10, 10, 3)),
     1512: DefaultConfig(64, 63, (2, 2, 2, 3, 3, 3, 7)),
@@ -592,13 +582,13 @@ SBRR_TABLE: dict[int, DefaultConfig] = {
     1536: DefaultConfig(256, 256, (16, 16, 6)),
     1540: DefaultConfig(256, 154, (11, 2, 7, 5, 2)),
     1547: DefaultConfig(128, 119, (17, 7, 13)),
-    1560: DefaultConfig(256, 156, (13, 2, 2, 10, 3)),
+    1560: DefaultConfig(256, 156, (13, 2, 2, 10, 3), half_lds=False),
     1568: DefaultConfig(256, 224, (2, 2, 2, 2, 2, 7, 7)),
-    1573: DefaultConfig(256, 143, (13, 11, 11)),
+    1573: DefaultConfig(256, 143, (13, 11, 11), half_lds=False),
     1575: DefaultConfig(64, 63, (3, 3, 5, 7, 5)),
     1584: DefaultConfig(256, 176, (4, 2, 2, 11, 3, 3)),
     1600: DefaultConfig(256, 100, (10, 16, 10)),
-    1617: DefaultConfig(256, 231, (3, 7, 7, 11)),
+    1617: DefaultConfig(256, 231, (3, 7, 7, 11), half_lds=False),
     1620: DefaultConfig(256, 162, (10, 3, 3, 6, 3)),
     1625: DefaultConfig(256, 65, (13, 5, 5, 5)),
     1632: DefaultConfig(128, 102, (17, 2, 2, 3, 8)),
@@ -608,12 +598,12 @@ SBRR_TABLE: dict[int, DefaultConfig] = {
     1666: DefaultConfig(128, 119, (17, 2, 7, 7)),
     1680: DefaultConfig(128, 112, (2, 2, 2, 2, 3, 7, 5)),
     1683: DefaultConfig(64, 51, (17, 3, 11, 3)),
-    1690: DefaultConfig(256, 169, (13, 10, 13)),
+    1690: DefaultConfig(256, 169, (13, 10, 13), half_lds=False),
     1694: DefaultConfig(256, 154, (11, 2, 11, 7)),
     1700: DefaultConfig(256, 170, (17, 10, 10)),
     1701: DefaultConfig(64, 63, (3, 3, 3, 3, 3, 7)),
     1715: DefaultConfig(256, 245, (5, 7, 7, 7)),
-    1716: DefaultConfig(256, 156, (13, 2, 6, 11)),
+    1716: DefaultConfig(256, 156, (13, 2, 6, 11), half_lds=False),
     1728: DefaultConfig(128, 108, (3, 6, 6, 16)),
     1734: DefaultConfig(128, 102, (17, 17, 6)),
     1750: DefaultConfig(256, 175, (2, 5, 5, 7, 5)),
@@ -625,7 +615,7 @@ SBRR_TABLE: dict[int, DefaultConfig] = {
     1785: DefaultConfig(128, 119, (17, 3, 5, 7)),
     1792: DefaultConfig(256, 224, (4, 4, 4, 4, 7)),
     1800: DefaultConfig(256, 180, (10, 6, 10, 3)),
-    1815: DefaultConfig(256, 165, (11, 3, 5, 11)),
+    1815: DefaultConfig(256, 165, (11, 3, 5, 11), half_lds=False),
     1820: DefaultConfig(256, 182, (10, 13, 7, 2)),
     1836: DefaultConfig(256, 153, (17, 3, 3, 2, 6)),
     1848: DefaultConfig(256, 231, (3, 11, 7, 4, 2)),
@@ -638,9 +628,9 @@ SBRR_TABLE: dict[int, DefaultConfig] = {
     1911: DefaultConfig(128, 91, (13, 7, 7, 3)),
     1920: DefaultConfig(256, 120, (10, 6, 16, 2)),
     1925: DefaultConfig(64, 55, (7, 11, 5, 5)),
-    1936: DefaultConfig(256, 176, (2, 2, 4, 11, 11)),
+    1936: DefaultConfig(256, 176, (2, 2, 4, 11, 11), half_lds=False),
     1944: DefaultConfig(256, 243, (3, 3, 3, 3, 8, 3)),
-    1950: DefaultConfig(256, 195, (13, 5, 10, 3)),
+    1950: DefaultConfig(256, 195, (13, 5, 10, 3), half_lds=False),
     1960: DefaultConfig(64, 56, (4, 7, 2, 7, 5)),
     1980: DefaultConfig(256, 198, (11, 2, 3, 3, 5, 2)),
     1989: DefaultConfig(256, 153, (17, 13, 9)),
@@ -649,7 +639,7 @@ SBRR_TABLE: dict[int, DefaultConfig] = {
     2016: DefaultConfig(256, 112, (2, 2, 2, 2, 2, 3, 3, 7)),
     2023: DefaultConfig(128, 119, (17, 7, 17)),
     2025: DefaultConfig(256, 135, (3, 3, 5, 5, 3, 3)),
-    2028: DefaultConfig(256, 156, (13, 4, 3, 13)),
+    2028: DefaultConfig(256, 156, (13, 4, 3, 13), half_lds=False),
     2040: DefaultConfig(256, 170, (17, 4, 3, 10)),
     2048: DefaultConfig(256, 256, (16, 16, 8)),
     2160: DefaultConfig(256, 60, (10, 6, 6, 6)),
@@ -976,24 +966,30 @@ def _plan_from_solution_match(
 
 
 def _rocfft_leaf_kernel(
-    m: int, r: int, config: DefaultConfig, *, inverse: bool, is_root: bool,
+    m: int, r: int, config: DefaultConfig | BlockConfig, *, inverse: bool, is_root: bool,
     kernel_name: str, target: TargetProfile, source_label: str,
+    leaf_configs: list[dict] | None = None,
 ) -> tuple[FFTLeafPlan | None, BaselineResult | None]:
-    """One CS_KERNEL_STOCKHAM leaf, shared by the flat top-level case and
-    every leaf `_rocfft_leaf_or_recurse` builds -- identical to
-    `_plan_from_scheme_decision`'s own CS_KERNEL_STOCKHAM branch, factored
-    out so both call sites render a leaf exactly the same way."""
+    """Map the selected upstream SBRR/SBCC/SBRC leaf settings to M2NDP."""
     transforms_per_block = config.workgroup_size // config.threads_per_transform
-    gpu_config = GPUKernelConfig(
-        source=source_label, length=m, radices=config.factors,
-        extra={
-            "scheme": "CS_KERNEL_STOCKHAM",
-            "workgroup_size": config.workgroup_size,
-            "threads_per_transform": config.threads_per_transform,
-            "transforms_per_block": transforms_per_block,
-            "mechanism": "compiled-in function_pool default (config_sbrr.py)",
-        },
-    )
+    block = isinstance(config, BlockConfig)
+    scheme = config.scheme if block else "CS_KERNEL_STOCKHAM"
+    table = "config_sbcc.py" if scheme.endswith("_CC") else (
+        "config_sbrc.py" if scheme.endswith("_RC") else "config_sbrr.py")
+    extra = {
+        "scheme": scheme,
+        "workgroup_size": config.workgroup_size,
+        "threads_per_transform": config.threads_per_transform,
+        "transforms_per_block": transforms_per_block,
+        "mechanism": f"compiled-in function_pool default ({table})",
+    }
+    extra.update(half_lds=config.half_lds, direct_to_from_reg=config.direct_to_from_reg)
+    if block:
+        extra.update(use_3steps_large_twd=config.use_3steps_large_twd)
+    gpu_config = GPUKernelConfig(source=source_label, length=m,
+                                 radices=config.factors, extra=extra)
+    if leaf_configs is not None:
+        leaf_configs.append(dict(length=m, replicas=r, radices=config.factors, **extra))
     inverse_scale = (1.0 / m) if (inverse and is_root) else None
     mapping = map_cooperative_kernel(
         length=m, radices=config.factors, workers_per_fft=config.threads_per_transform,
@@ -1009,117 +1005,87 @@ def _rocfft_leaf_kernel(
 def _rocfft_leaf_or_recurse(
     m: int, r: int, *, inverse: bool, is_root: bool, node_id: list[int],
     target: TargetProfile, multiprocessor_count: int, kernel_name_prefix: str,
-    source_label: str,
+    source_label: str, leaf_configs: list[dict],
 ) -> tuple[FFTNode | None, BaselineResult | None]:
-    """CS_L1D_CC / CS_L1D_TRTRT lowering -- see docs/
-    gpu_baseline_rocfft_cc_trtrt_lowering.md for the full source-verified
-    derivation (fetched directly from tree_node_1D.cpp's own `CC1DNode`/
-    `TRTRT1DNode::BuildTree_internal` at this module's own pinned commit).
-    Both schemes are the SAME Cooley-Tukey `(div_length1, div_length0)`
-    split this function's own caller already computes via `decide_scheme`
-    -- CS_L1D_CC fuses the 3 transposes into its own 2 FFT kernels'
-    strided access (`CS_KERNEL_STOCKHAM_BLOCK_CC`/`_RC`); CS_L1D_TRTRT
-    (literally "Transpose-Row-Transpose-Row-Transpose") renders them as 5
-    separate kernels -- a GPU-specific physical-scheduling difference with
-    zero dataflow effect, left to the lowering layer per this task's own
-    instructions. Both lower identically here, via the SAME `_build_
-    recursive_node`-shaped five-kernel PRE/near/MIDDLE/far/POST plan this
-    project's clFFT large-1D path already uses.
+    """Port CC1DNode/TRTRT1DNode child order from pinned tree_node_1D.cpp.
 
-    Real rocFFT's own `row2Plan`/`col2colPlan`+`row2colPlan` pair (this
-    function's own `near` slot, length `div_length0`) is ALWAYS forced
-    straight to `CS_KERNEL_STOCKHAM` (`NodeFactory::CreateNodeFromScheme`,
-    never `RecursiveBuildTree`) -- never re-decided via `Decide1DScheme`.
-    Real rocFFT's `row1Plan` (this function's own `far` slot, length
-    `div_length1`) DOES call `RecursiveBuildTree`, i.e. re-invokes the
-    SAME rocFFT planning algorithm on that sub-length (this task's own
-    section 4B requirement -- never the M2NDP-native recursive splitter).
+    CC forces both block-kernel leaves; TRTRT recursively plans row1(div1)
+    and forces row2(div0) to a plain Stockham leaf. The common IR expands
+    CC's fused transposes, retaining its FFT radices and worker settings.
     """
     idx = node_id[0]
     node_id[0] += 1
     decision = decide_scheme(m, batch=r, multiprocessor_count=multiprocessor_count)
-
     if decision.scheme == "CS_BLUESTEIN":
-        gpu_config = GPUKernelConfig(source=source_label, length=m, radices=())
         return None, unsupported(
-            BaselineStatus.UNSUPPORTED_GPU_ALGORITHM, gpu_config,
-            f"length={m}: Decide1DScheme's own real fallback chain found no decomposition "
-            f"for this CS_L1D_CC/TRTRT sub-node -- real rocFFT falls back to CS_BLUESTEIN here too",
+            BaselineStatus.UNSUPPORTED_GPU_ALGORITHM,
+            GPUKernelConfig(source=source_label, length=m, radices=()),
+            f"length={m}: rocFFT large-1D child requires CS_BLUESTEIN",
         )
-
     if decision.scheme == "CS_KERNEL_STOCKHAM":
         assert decision.single_kernel is not None
         return _rocfft_leaf_kernel(
             m, r, decision.single_kernel, inverse=inverse, is_root=is_root,
-            kernel_name=f"{kernel_name_prefix}Leaf{idx}", target=target, source_label=source_label,
+            kernel_name=f"{kernel_name_prefix}Leaf{idx}", target=target,
+            source_label=source_label, leaf_configs=leaf_configs,
         )
-
-    # CS_L1D_CC or CS_L1D_TRTRT again: recurse. div1 = lenFactor1 (the
-    # "far"/row1 slot, the only one real rocFFT ever recurses further);
-    # div0 = lenFactor0 (the "near"/row2 slot, always forced to a single
-    # kernel -- see this function's own docstring).
     assert decision.div_length1 is not None
     div1 = decision.div_length1
     div0 = m // div1
-
+    cc = decision.scheme == "CS_L1D_CC"
+    first_config = SBCC_TABLE.get(div1) if cc else None
+    second_config = (SBRC_TABLE if cc else SBRR_TABLE).get(div0)
+    if second_config is None or (cc and first_config is None):
+        return None, unsupported(
+            BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN,
+            GPUKernelConfig(source=source_label, length=m, radices=(), extra={
+                "scheme": decision.scheme, "div_length1": div1, "div_length0": div0}),
+            f"length={m}: missing pinned upstream forced-leaf config for "
+            f"{decision.scheme} split {div1} -> {div0}",
+        )
     tile = max(1, min(8, div0, div1))
     pre = _build_physical_transpose(
-        rows=div0, cols=div1, replica_count=r, tile_rows=tile, tile_cols=tile,
+        rows=div1, cols=div0, replica_count=r, tile_rows=tile, tile_cols=tile,
         twiddle_modulus=None, inverse=inverse, kernel_name=f"{kernel_name_prefix}Pre{idx}",
         simd_lanes=8, spad_capacity_bytes=target.spad_capacity_bytes, apply_inverse_scale=False,
     )
-
-    near_node, failure = _rocfft_leaf_or_recurse(
-        div0, r * div1, inverse=inverse, is_root=False, node_id=node_id,
-        target=target, multiprocessor_count=multiprocessor_count,
-        kernel_name_prefix=kernel_name_prefix, source_label=source_label,
-    )
+    if cc:
+        near_node, failure = _rocfft_leaf_kernel(
+            div1, r * div0, first_config, inverse=inverse, is_root=False,
+            kernel_name=f"{kernel_name_prefix}SBCC{idx}", target=target,
+            source_label=source_label, leaf_configs=leaf_configs,
+        )
+    else:
+        near_node, failure = _rocfft_leaf_or_recurse(
+            div1, r * div0, inverse=inverse, is_root=False, node_id=node_id,
+            target=target, multiprocessor_count=multiprocessor_count,
+            kernel_name_prefix=kernel_name_prefix, source_label=source_label,
+            leaf_configs=leaf_configs,
+        )
     if failure is not None:
         return None, failure
-    if not isinstance(near_node, FFTLeafPlan):
-        # Real rocFFT forces this factor straight to CS_KERNEL_STOCKHAM
-        # without consulting Decide1DScheme at all (see this function's
-        # own docstring) -- if this baseline's own decide_scheme port
-        # does NOT resolve it to a single kernel, that is an unverified-
-        # upstream-behavior gap, not something to silently force.
-        gpu_config = GPUKernelConfig(source=source_label, length=div0, radices=())
-        return None, unsupported(
-            BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN, gpu_config,
-            f"length={div0} (the always-single-kernel row/col factor of {m}'s "
-            f"{decision.scheme} split) did not itself resolve to CS_KERNEL_STOCKHAM under "
-            f"decide_scheme -- real rocFFT forces this factor straight to a single Stockham "
-            f"kernel without consulting Decide1DScheme at all, a case this baseline's own "
-            f"decide_scheme port cannot yet reproduce faithfully",
-        )
-
     middle = _build_physical_transpose(
-        rows=div1, cols=div0, replica_count=r, tile_rows=tile, tile_cols=tile,
+        rows=div0, cols=div1, replica_count=r, tile_rows=tile, tile_cols=tile,
         twiddle_modulus=m, inverse=inverse, kernel_name=f"{kernel_name_prefix}Mid{idx}",
         simd_lanes=8, spad_capacity_bytes=target.spad_capacity_bytes, apply_inverse_scale=False,
     )
-
-    far_node, failure = _rocfft_leaf_or_recurse(
-        div1, r * div0, inverse=inverse, is_root=False, node_id=node_id,
-        target=target, multiprocessor_count=multiprocessor_count,
-        kernel_name_prefix=kernel_name_prefix, source_label=source_label,
+    far_node, failure = _rocfft_leaf_kernel(
+        div0, r * div1, second_config, inverse=inverse, is_root=False,
+        kernel_name=f"{kernel_name_prefix}{'SBRC' if cc else 'Row2'}{idx}",
+        target=target, source_label=source_label, leaf_configs=leaf_configs,
     )
     if failure is not None:
         return None, failure
-
     post = _build_physical_transpose(
-        rows=div0, cols=div1, replica_count=r, tile_rows=tile, tile_cols=tile,
+        rows=div1, cols=div0, replica_count=r, tile_rows=tile, tile_cols=tile,
         twiddle_modulus=None, inverse=inverse, kernel_name=f"{kernel_name_prefix}Post{idx}",
         simd_lanes=8, spad_capacity_bytes=target.spad_capacity_bytes,
         apply_inverse_scale=(inverse and is_root),
     )
-
-    return (
-        FFTRecursiveNodePlan(
-            m=m, r=r, a=div1, b=div0, pre_transpose=pre, near_fft=near_node,
-            middle_transpose=middle, far_child=far_node, post_transpose=post,
-        ),
-        None,
-    )
+    return FFTRecursiveNodePlan(
+        m=m, r=r, a=div0, b=div1, pre_transpose=pre, near_fft=near_node,
+        middle_transpose=middle, far_child=far_node, post_transpose=post,
+    ), None
 
 
 def _plan_from_scheme_decision(
@@ -1167,23 +1133,23 @@ def _plan_from_scheme_decision(
                 "workgroup_size": config.workgroup_size,
                 "threads_per_transform": config.threads_per_transform,
                 "transforms_per_block": config.workgroup_size // config.threads_per_transform,
+                "half_lds": config.half_lds,
+                "direct_to_from_reg": config.direct_to_from_reg,
                 "mechanism": "compiled-in function_pool default (config_sbrr.py)",
             },
         )
         return BaselineResult(status=BaselineStatus.OK, gpu_config=gpu_config, plan=recursive_plan)
 
-    # CS_L1D_CC / CS_L1D_TRTRT: see docs/gpu_baseline_rocfft_cc_trtrt_
-    # lowering.md -- both are the SAME Cooley-Tukey (div_length1,
-    # div_length0) split as CS_KERNEL_STOCKHAM's own sibling schemes,
-    # realized via a GPU-specific physical-scheduling choice (fused vs.
-    # separate transpose kernels) this task's own instructions leave to
-    # the lowering layer. Built via the exact same five-kernel PRE/near/
-    # MIDDLE/far/POST structure this project's clFFT large-1D path uses.
+    # Preserve upstream child order/settings using the shared recursive IR.
+    # CC still expands two fused GPU kernels into five M2NDP kernels; see
+    # docs/gpu_baseline_rocfft_cc_trtrt_lowering.md for the performance gap.
     node_id = [0]
+    leaf_configs: list[dict] = []
     node, failure = _rocfft_leaf_or_recurse(
         length, batch, inverse=inverse, is_root=True, node_id=node_id,
         target=target, multiprocessor_count=multiprocessor_count,
         kernel_name_prefix=kernel_name, source_label=source_label,
+        leaf_configs=leaf_configs,
     )
     if failure is not None:
         return failure
@@ -1199,6 +1165,7 @@ def _plan_from_scheme_decision(
             "div_length0": div0,
             "sbcc_length": div1 if decision.scheme == "CS_L1D_CC" else None,
             "sbrc_length": div0 if decision.scheme == "CS_L1D_CC" else None,
+            "leaf_configs": leaf_configs,
         },
     )
     recursive_plan = RecursiveFFTPlan(
@@ -1209,6 +1176,7 @@ def _plan_from_scheme_decision(
     return BaselineResult(status=BaselineStatus.OK, gpu_config=gpu_config, plan=recursive_plan)
 
 
+@preserve_gpu_plan
 def plan(
     length: int,
     *,
@@ -1227,12 +1195,10 @@ def plan(
     non-dummy match there can override what `Decide1DScheme` would
     otherwise pick, so this function checks it first and only falls
     through to the table lookup + `Decide1DScheme` fallback chain below
-    when no match exists. No search, no benchmarking either way. Only ever
-    builds an M2NDP plan for the `CS_KERNEL_STOCKHAM` (single fused kernel)
-    outcome -- see module docstring's own SCOPE LIMIT for why `CS_L1D_CC`/
-    `CS_L1D_TRTRT` (from either source) are decided faithfully but reported
-    `UNSUPPORTED_CURRENT_CODEGEN` rather than force-mapped onto this
-    repository's unrelated PRE/MIDDLE/POST six-step mechanism.
+    when no match exists. No search, no benchmarking either way. Compiled
+    single leaves and CC/TRTRT decisions lower to M2NDP plans, subject to
+    codegen and hardware limits. CC's expanded transpose launches remain
+    a performance-fidelity limitation documented at module level.
     """
     sol_match = upstream_sol_map.apply_solution(
         length, placement="op", inverse=inverse, batch=batch,
@@ -1250,6 +1216,7 @@ def plan(
     )
 
 
+@preserve_gpu_plan
 def plan_m2ndp(
     length: int,
     *,

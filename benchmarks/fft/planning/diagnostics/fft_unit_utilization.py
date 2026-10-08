@@ -266,6 +266,13 @@ def _walk_node(
     same way a loop variable would in `fft_cost_model.compute_stage_
     metrics`'s own flat-list walk."""
     if isinstance(node, FFTLeafPlan):
+        if node.tail_hybrid is not None:
+            h = node.tail_hybrid
+            for kernel, count in ((h.persistent_plan, h.full_blocks), (h.tail_plan, h.tail_blocks)):
+                if kernel is not None:
+                    _walk_node(FFTLeafPlan(m=node.m, r=count, kernel=kernel), target=target,
+                               results=results, next_leaf_index=next_leaf_index)
+            return
         results.append(
             _emit_leaf_estimate(node, leaf_index=next_leaf_index[0], target=target)
         )

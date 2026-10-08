@@ -1,0 +1,7 @@
+  Persistent preload/writeback copy strategies (P2.3):
+    OK   copy_mode='scalar' (default) matches numpy.fft -- unchanged pre-existing behavior
+    OK   copy_mode='vectorized_contiguous' matches numpy.fft across 6 case(s), including non-divisible length/workers_per_group, non-divisible vector_width, and combined with persistent worker-wave virtualization (workers_per_fft=16)
+    OK   copy_mode='scalar' and 'vectorized_contiguous' produce bit-for-bit identical output on the same input, at every length tested
+    OK   both copy modes' own lane<->index assignment is a full, disjoint bijection over [0, length) at every length tested (64, 105, 100, 60, 13, 8, 7, 1000), including lengths that do not divide evenly by workers_per_group=8
+[verify] persistent preload/writeback copy strategies: all checks passed
+

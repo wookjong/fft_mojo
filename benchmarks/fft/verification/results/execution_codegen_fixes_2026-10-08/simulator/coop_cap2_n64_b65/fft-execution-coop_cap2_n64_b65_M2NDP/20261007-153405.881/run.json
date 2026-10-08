@@ -1,0 +1,153 @@
+{
+  "config": "M2NDP",
+  "config_md5": "33d240c5",
+  "config_path": "/work/third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config",
+  "core_mhz": 2000,
+  "cycles": 12277,
+  "detour": "",
+  "dir": "/fft-work/verification/results/execution_codegen_fixes_2026-10-08/simulator/coop_cap2_n64_b65/fft-execution-coop_cap2_n64_b65_M2NDP/20261007-153405.881",
+  "dram": {
+    "channels": 28,
+    "max_pct": 1.71,
+    "mean_pct": 1.41,
+    "min_pct": 1.3
+  },
+  "exit": 0,
+  "finished": "2026-10-07T15:34:26+00:00",
+  "host_log": "host.log",
+  "kernels": [
+    {
+      "finished": 4241,
+      "launch_id": "0",
+      "name": "coop_cap2_n64_b65::FFTFP32Coop::stage_0()",
+      "started": 922
+    },
+    {
+      "finished": 5408,
+      "launch_id": "1",
+      "name": "coop_cap2_n64_b65::FFTFP32Coop::stage_1()",
+      "started": 4345
+    },
+    {
+      "finished": 6583,
+      "launch_id": "2",
+      "name": "coop_cap2_n64_b65::FFTFP32Coop::stage_2()",
+      "started": 5514
+    },
+    {
+      "finished": 8286,
+      "launch_id": "3",
+      "name": "coop_cap2_n64_b65::FFTFP32Coop::stage_0()",
+      "started": 6861
+    },
+    {
+      "finished": 8781,
+      "launch_id": "4",
+      "name": "coop_cap2_n64_b65::FFTFP32Coop::stage_1()",
+      "started": 8396
+    },
+    {
+      "finished": 9406,
+      "launch_id": "5",
+      "name": "coop_cap2_n64_b65::FFTFP32Coop::stage_2()",
+      "started": 8893
+    },
+    {
+      "finished": 11051,
+      "launch_id": "6",
+      "name": "coop_cap2_n64_b65::FFTFP32Coop::stage_0()",
+      "started": 9680
+    },
+    {
+      "finished": 11552,
+      "launch_id": "7",
+      "name": "coop_cap2_n64_b65::FFTFP32Coop::stage_1()",
+      "started": 11167
+    },
+    {
+      "finished": 12177,
+      "launch_id": "8",
+      "name": "coop_cap2_n64_b65::FFTFP32Coop::stage_2()",
+      "started": 11664
+    }
+  ],
+  "launch_spans": [
+    6687,
+    2819,
+    2771
+  ],
+  "launches": 9,
+  "log": "simulator.log",
+  "repo": "",
+  "stats": {
+    "ctrl.addr_issue": 778,
+    "ctrl.cycle": 0,
+    "ctrl.exit_issue": 0,
+    "ctrl.f_issue": 0,
+    "ctrl.i_issue": 806,
+    "ctrl.inst_issue": 1584,
+    "ctrl.ldst_issue": 87,
+    "ctrl.sf_issue": 0,
+    "ctrl.spad_issue": 691,
+    "ctrl.spad_read": 0,
+    "ctrl.spad_write": 0,
+    "ctrl.v_addr_issue": 0,
+    "ctrl.v_issue": 0,
+    "ctrl.v_ldst_issue": 0,
+    "ctrl.v_sf_issue": 0,
+    "ctrl.v_spad_issue": 0,
+    "launches": 9,
+    "ndp.addr_issue": 9880,
+    "ndp.cycle": 0,
+    "ndp.exit_issue": 1560,
+    "ndp.f_issue": 520,
+    "ndp.i_issue": 87230,
+    "ndp.inst_issue": 143195,
+    "ndp.ldst_issue": 4680,
+    "ndp.sf_issue": 0,
+    "ndp.spad_issue": 5200,
+    "ndp.spad_read": 0,
+    "ndp.spad_write": 0,
+    "ndp.v_addr_issue": 19240,
+    "ndp.v_issue": 24765,
+    "ndp.v_ldst_issue": 5720,
+    "ndp.v_sf_issue": 0,
+    "ndp.v_spad_issue": 13520
+  },
+  "stats_file": "stats.txt",
+  "tasks": [
+    {
+      "arrived": 70,
+      "called": 0,
+      "finished": 6615,
+      "issued": 0,
+      "launch": 0,
+      "notified": 6687,
+      "started": 70,
+      "task": 0
+    },
+    {
+      "arrived": 6757,
+      "called": 6687,
+      "finished": 9434,
+      "issued": 6687,
+      "launch": 1,
+      "notified": 9506,
+      "started": 6757,
+      "task": 0
+    },
+    {
+      "arrived": 9576,
+      "called": 9506,
+      "finished": 12205,
+      "issued": 9506,
+      "launch": 2,
+      "notified": 12277,
+      "started": 9576,
+      "task": 0
+    }
+  ],
+  "time_us": 6.138,
+  "wall_s": 21.0,
+  "workload": "fft-execution-coop_cap2_n64_b65"
+}

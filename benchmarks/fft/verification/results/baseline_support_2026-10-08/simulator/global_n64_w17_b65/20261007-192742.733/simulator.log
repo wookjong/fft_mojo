@@ -1,0 +1,768 @@
+Unknown config parameter max_packet_size
+Unknown config parameter token_buffer_size
+Unknown config parameter filter_table_size
+core freq 2000.000000	dram freq 2000.000000	buffer ndp freq 2000.000000	link freq 8000.000000	cache freq 2000.000000	buffer dram freq 800.000000
+[2026-10-07 19:27:43.091] [info] CORE period: 5.0000000000000003114e-10 DRAM period: 5.0000000000000003114e-10 NDP buffer period: 5.0000000000000003114e-10
+[2026-10-07 19:27:43.092] [info] NDP link period:1.2500000000000000779e-10 NDP cache period: 5.0000000000000003114e-10 DRAM buffer period: 1.2500000000000000262e-09
+[2026-10-07 19:27:43.092] [info] Launch stages: H1 0 host, H2 0 host, D1 0 ndp, D2 0 ndp
+match use_mapvalue << 0
+match flit_sizevalue << 8
+match network_countvalue << 2
+match kvalue << 9
+match nvalue << 1
+match num_vcsvalue << 6
+match buf_sizevalue << 2048
+match vc_buf_sizevalue << 2048
+match input_buffer_sizevalue << 2048
+match ejection_buffer_sizevalue << 2048
+match boundary_buffer_sizevalue << 2048
+match wait_for_tail_creditvalue << 0
+match link_latencyvalue << 274
+match alloc_itersvalue << 1
+match credit_delayvalue << 0
+match routing_delayvalue << 0
+match vc_alloc_delayvalue << 1
+match sw_alloc_delayvalue << 1
+match input_speedupvalue << 1
+match output_speedupvalue << 1
+match subnetsvalue << 1
+match read_request_subnetvalue << 0
+match read_reply_subnetvalue << 0
+match write_request_subnetvalue << 0
+match write_reply_subnetvalue << 0
+match read_request_begin_vcvalue << 0
+match read_request_end_vcvalue << 0
+match write_request_begin_vcvalue << 0
+match write_request_end_vcvalue << 0
+match from_ndp_request_begin_vcvalue << 2
+match from_ndp_request_end_vcvalue << 2
+match to_ndp_request_begin_vcvalue << 1
+match to_ndp_request_end_vcvalue << 1
+match read_reply_begin_vcvalue << 3
+match read_reply_end_vcvalue << 3
+match write_reply_begin_vcvalue << 3
+match write_reply_end_vcvalue << 3
+match from_ndp_reply_begin_vcvalue << 5
+match from_ndp_reply_end_vcvalue << 5
+match to_ndp_reply_begin_vcvalue << 4
+match to_ndp_reply_end_vcvalue << 4
+match seedvalue << 0
+Link latency: 274
+BookSim2: interconnect node map (shaderID+MemID to icntID)
+BookSim2: Memory nodes ID start from index: 1
+BookSim2:    0   1   2
+BookSim2:    3   4   5
+BookSim2:    6   7   8
+BookSim2: interconnect node reverse map (icntID to shaderID+MemID)
+BookSim2: Memory nodes start from ID: 1
+BookSim2:    0   1   2
+BookSim2:    3   4   5
+BookSim2:    6   7   8
+match use_mapvalue << 0
+match flit_sizevalue << 68
+match network_countvalue << 2
+match kvalue << 264
+match nvalue << 1
+match num_vcsvalue << 6
+match vc_buf_sizevalue << 64
+match input_buffer_sizevalue << 256
+match ejection_buffer_sizevalue << 64
+match boundary_buffer_sizevalue << 64
+match wait_for_tail_creditvalue << 0
+match alloc_itersvalue << 1
+match credit_delayvalue << 0
+match routing_delayvalue << 0
+match vc_alloc_delayvalue << 1
+match sw_alloc_delayvalue << 1
+match input_speedupvalue << 1
+match output_speedupvalue << 1
+match subnetsvalue << 1
+match read_request_subnetvalue << 0
+match read_reply_subnetvalue << 1
+match write_request_subnetvalue << 0
+match write_reply_subnetvalue << 1
+match read_request_begin_vcvalue << 0
+match read_request_end_vcvalue << 0
+match write_request_begin_vcvalue << 0
+match write_request_end_vcvalue << 0
+match from_ndp_request_begin_vcvalue << 2
+match from_ndp_request_end_vcvalue << 2
+match to_ndp_request_begin_vcvalue << 1
+match to_ndp_request_end_vcvalue << 1
+match read_reply_begin_vcvalue << 3
+match read_reply_end_vcvalue << 3
+match write_reply_begin_vcvalue << 3
+match write_reply_end_vcvalue << 3
+match from_ndp_reply_begin_vcvalue << 5
+match from_ndp_reply_end_vcvalue << 5
+match to_ndp_reply_begin_vcvalue << 4
+match to_ndp_reply_end_vcvalue << 4
+match seedvalue << 0
+Link latency: 2
+BookSim2: interconnect node map (shaderID+MemID to icntID)
+BookSim2: Memory nodes ID start from index: 136
+BookSim2:    0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
+BookSim2:   16  17  18  19  20  21  22  23  24  25  26  27  28  29  30  31
+BookSim2:   32  33  34  35  36  37  38  39  40  41  42  43  44  45  46  47
+BookSim2:   48  49  50  51  52  53  54  55  56  57  58  59  60  61  62  63
+BookSim2:   64  65  66  67  68  69  70  71  72  73  74  75  76  77  78  79
+BookSim2:   80  81  82  83  84  85  86  87  88  89  90  91  92  93  94  95
+BookSim2:   96  97  98  99 100 101 102 103 104 105 106 107 108 109 110 111
+BookSim2:  112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127
+BookSim2:  128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143
+BookSim2:  144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159
+BookSim2:  160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175
+BookSim2:  176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191
+BookSim2:  192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207
+BookSim2:  208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223
+BookSim2:  224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239
+BookSim2:  240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255
+BookSim2:  256 257 258 259 260 261 262 263
+BookSim2: interconnect node reverse map (icntID to shaderID+MemID)
+BookSim2: Memory nodes start from ID: 136
+BookSim2:    0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
+BookSim2:   16  17  18  19  20  21  22  23  24  25  26  27  28  29  30  31
+BookSim2:   32  33  34  35  36  37  38  39  40  41  42  43  44  45  46  47
+BookSim2:   48  49  50  51  52  53  54  55  56  57  58  59  60  61  62  63
+BookSim2:   64  65  66  67  68  69  70  71  72  73  74  75  76  77  78  79
+BookSim2:   80  81  82  83  84  85  86  87  88  89  90  91  92  93  94  95
+BookSim2:   96  97  98  99 100 101 102 103 104 105 106 107 108 109 110 111
+BookSim2:  112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127
+BookSim2:  128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143
+BookSim2:  144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159
+BookSim2:  160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175
+BookSim2:  176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191
+BookSim2:  192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207
+BookSim2:  208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223
+BookSim2:  224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239
+BookSim2:  240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255
+BookSim2:  256 257 258 259 260 261 262 263
+m_channel_unit 32
+Ramulator instance name: M2NDP_0_ramulator
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 8, total size: 8KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 128, assoc: 4, total size: 16KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 32, line_size: 32, assoc: 4, total size: 4KB
+[           0] [info] cache set: 64, line_size: 128, assoc: 16, total size: 128KB
+m2ndp_serve: listening on /tmp/mojo-ndp-run-3QUQxI/m2ndp-launch-eZ6oc7/sim.sock
+[           0] [info] NDP 0 : Register kernel ID 0
+[           0] [info] NDP 0 : Register kernel ID 1
+[           0] [info] NDP 0 : Register kernel ID 2
+[           0] [info] NDP 0 : Register kernel ID 3
+[           0] [info] Host 0 Registered task /tmp/mojo-ndp-run-3QUQxI/m2ndp-launch-5d6qz2/task.elf id 0 at core cycle 0 ndp cycle 0 to CXL 0
+[          70] [info] NDP 0: L1d size: 128 KB -> 64 KB, sets: 64 -> 32
+[         927] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::stage_0() ID 0 | Total active kernels 1
+[         927] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::stage_0() launch id 0 at core cycle 0 ndp cycle 927 to CXL 0
+[        1000] [info] L2 cache slice 0: hit 0, miss 2, hit ratio 0.00 %
+[        1000] [info] DRAM channel  0: total 1.00 % (1.00 % reads, 0.00 % writes)  [400 dram cyc]
+[        1000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.13 / 16 (0.81 %)
+[        1000] [info] NDP  0 SUB-CORE  0 : IPC 0.000  issued 0 / 1000 cyc
+[        1000] [info] NDP  0 SUB-CORE  1 : average active queue count: 0.14 / 16 (0.85 %)
+[        1000] [info] NDP  0 SUB-CORE  1 : IPC 0.000  issued 0 / 1000 cyc
+[        1000] [info] NDP  0 SUB-CORE  2 : average active queue count: 0.13 / 16 (0.84 %)
+[        1000] [info] NDP  0 SUB-CORE  2 : IPC 0.000  issued 0 / 1000 cyc
+[        1000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.13 / 16 (0.82 %)
+[        1000] [info] NDP  0 SUB-CORE  3 : IPC 0.000  issued 0 / 1000 cyc
+[        1000] [info] NDP  0 : int 0, vec 0, addr 0 (spad 0, ldst 0), v_addr 0 (v_spad 0, v_ldst 0), exit 0 / 1000 cyc
+[        1000] [info] NDP 0 Launch ID 0 global_n64_w17_b65::PersistentFFT::stage_0():  base 0x40018600, size 8192 | count 0/8
+[        1000] [info] NDP CONTROLLER : IPC 0.052  issued 52 / 1000 cyc
+[        1000] [info] NDP CONTROLLER : int 27, addr 25 (spad 11, ldst 14) / 1000 cyc
+[        2000] [info] L2 cache slice 0: hit 4, miss 22, hit ratio 15.38 %
+[        2000] [info] DRAM channel  0: total 8.00 % (8.00 % reads, 0.00 % writes)  [400 dram cyc]
+[        2000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.88 / 16 (5.49 %)
+[        2000] [info] NDP  0 SUB-CORE  0 : IPC 0.066  issued 66 / 1000 cyc
+[        2000] [info] NDP  0 SUB-CORE  1 : average active queue count: 1.44 / 16 (8.99 %)
+[        2000] [info] NDP  0 SUB-CORE  1 : IPC 0.138  issued 138 / 1000 cyc
+[        2000] [info] NDP  0 SUB-CORE  2 : average active queue count: 1.44 / 16 (8.99 %)
+[        2000] [info] NDP  0 SUB-CORE  2 : IPC 0.134  issued 134 / 1000 cyc
+[        2000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.88 / 16 (5.49 %)
+[        2000] [info] NDP  0 SUB-CORE  3 : IPC 0.066  issued 66 / 1000 cyc
+[        2000] [info] NDP  0 : int 307, vec 27, addr 26 (spad 26, ldst 0), v_addr 30 (v_spad 0, v_ldst 30), exit 6 / 1000 cyc
+[        2000] [info] NDP 0 Launch ID 0 global_n64_w17_b65::PersistentFFT::stage_0():  base 0x40018600, size 8192 | count 6/8
+[        2000] [info] NDP CONTROLLER : IPC 0.125  issued 125 / 1000 cyc
+[        2000] [info] NDP CONTROLLER : int 62, addr 63 (spad 63, ldst 0) / 1000 cyc
+[        3000] [info] L2 cache slice 0: hit 34, miss 5, hit ratio 87.18 %
+[        3000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[        3000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.00 / 16 (0.00 %)
+[        3000] [info] NDP  0 SUB-CORE  0 : IPC 0.000  issued 0 / 1000 cyc
+[        3000] [info] NDP  0 SUB-CORE  1 : average active queue count: 1.00 / 16 (6.25 %)
+[        3000] [info] NDP  0 SUB-CORE  1 : IPC 0.144  issued 144 / 1000 cyc
+[        3000] [info] NDP  0 SUB-CORE  2 : average active queue count: 1.00 / 16 (6.25 %)
+[        3000] [info] NDP  0 SUB-CORE  2 : IPC 0.160  issued 160 / 1000 cyc
+[        3000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.00 / 16 (0.00 %)
+[        3000] [info] NDP  0 SUB-CORE  3 : IPC 0.000  issued 0 / 1000 cyc
+[        3000] [info] NDP  0 : int 155, vec 50, addr 56 (spad 31, ldst 25), v_addr 43 (v_spad 0, v_ldst 43), exit 0 / 1000 cyc
+[        3000] [info] NDP 0 Launch ID 0 global_n64_w17_b65::PersistentFFT::stage_0():  base 0x40018600, size 8192 | count 6/8
+[        3000] [info] NDP CONTROLLER : IPC 0.125  issued 125 / 1000 cyc
+[        3000] [info] NDP CONTROLLER : int 63, addr 62 (spad 62, ldst 0) / 1000 cyc
+[        4000] [info] L2 cache slice 0: hit 38, miss 8, hit ratio 82.61 %
+[        4000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[        4000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.00 / 16 (0.00 %)
+[        4000] [info] NDP  0 SUB-CORE  0 : IPC 0.000  issued 0 / 1000 cyc
+[        4000] [info] NDP  0 SUB-CORE  1 : average active queue count: 1.00 / 16 (6.25 %)
+[        4000] [info] NDP  0 SUB-CORE  1 : IPC 0.195  issued 195 / 1000 cyc
+[        4000] [info] NDP  0 SUB-CORE  2 : average active queue count: 1.00 / 16 (6.25 %)
+[        4000] [info] NDP  0 SUB-CORE  2 : IPC 0.183  issued 183 / 1000 cyc
+[        4000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.00 / 16 (0.00 %)
+[        4000] [info] NDP  0 SUB-CORE  3 : IPC 0.000  issued 0 / 1000 cyc
+[        4000] [info] NDP  0 : int 194, vec 65, addr 58 (spad 39, ldst 19), v_addr 61 (v_spad 0, v_ldst 61), exit 0 / 1000 cyc
+[        4000] [info] NDP 0 Launch ID 0 global_n64_w17_b65::PersistentFFT::stage_0():  base 0x40018600, size 8192 | count 6/8
+[        4000] [info] NDP CONTROLLER : IPC 0.125  issued 125 / 1000 cyc
+[        4000] [info] NDP CONTROLLER : int 62, addr 63 (spad 63, ldst 0) / 1000 cyc
+[        4848] [info] NDP  0 : Finish kernel launch 0
+[        4896] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::stage_0() launch id 0 at core cycle 0 ndp cycle 4896 at CXL 0
+[        5000] [info] L2 cache slice 0: hit 50, miss 2, hit ratio 96.15 %
+[        5000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[        5000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.00 / 16 (0.00 %)
+[        5000] [info] NDP  0 SUB-CORE  0 : IPC 0.000  issued 0 / 1000 cyc
+[        5000] [info] NDP  0 SUB-CORE  1 : average active queue count: 0.85 / 16 (5.29 %)
+[        5000] [info] NDP  0 SUB-CORE  1 : IPC 0.168  issued 168 / 1000 cyc
+[        5000] [info] NDP  0 SUB-CORE  2 : average active queue count: 0.85 / 16 (5.29 %)
+[        5000] [info] NDP  0 SUB-CORE  2 : IPC 0.168  issued 168 / 1000 cyc
+[        5000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.00 / 16 (0.00 %)
+[        5000] [info] NDP  0 SUB-CORE  3 : IPC 0.000  issued 0 / 1000 cyc
+[        5000] [info] NDP  0 : int 138, vec 66, addr 80 (spad 48, ldst 32), v_addr 50 (v_spad 0, v_ldst 50), exit 2 / 1000 cyc
+[        5000] [info] NDP CONTROLLER : IPC 0.141  issued 141 / 1000 cyc
+[        5000] [info] NDP CONTROLLER : int 73, addr 68 (spad 62, ldst 6) / 1000 cyc
+[        5009] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::stage_1() ID 1 | Total active kernels 1
+[        5009] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::stage_1() launch id 1 at core cycle 0 ndp cycle 5009 to CXL 0
+[        6000] [info] L2 cache slice 0: hit 6, miss 6, hit ratio 50.00 %
+[        6000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[        6000] [info] NDP  0 SUB-CORE  0 : average active queue count: 1.05 / 16 (6.58 %)
+[        6000] [info] NDP  0 SUB-CORE  0 : IPC 0.106  issued 106 / 1000 cyc
+[        6000] [info] NDP  0 SUB-CORE  1 : average active queue count: 1.51 / 16 (9.47 %)
+[        6000] [info] NDP  0 SUB-CORE  1 : IPC 0.182  issued 182 / 1000 cyc
+[        6000] [info] NDP  0 SUB-CORE  2 : average active queue count: 1.51 / 16 (9.46 %)
+[        6000] [info] NDP  0 SUB-CORE  2 : IPC 0.170  issued 170 / 1000 cyc
+[        6000] [info] NDP  0 SUB-CORE  3 : average active queue count: 1.05 / 16 (6.59 %)
+[        6000] [info] NDP  0 SUB-CORE  3 : IPC 0.106  issued 106 / 1000 cyc
+[        6000] [info] NDP  0 : int 466, vec 32, addr 24 (spad 23, ldst 1), v_addr 27 (v_spad 0, v_ldst 27), exit 6 / 1000 cyc
+[        6000] [info] NDP 0 Launch ID 1 global_n64_w17_b65::PersistentFFT::stage_1():  base 0x40018600, size 8192 | count 6/8
+[        6000] [info] NDP CONTROLLER : IPC 0.130  issued 130 / 1000 cyc
+[        6000] [info] NDP CONTROLLER : int 64, addr 66 (spad 63, ldst 3) / 1000 cyc
+[        7000] [info] L2 cache slice 0: hit 24, miss 8, hit ratio 75.00 %
+[        7000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[        7000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.00 / 16 (0.00 %)
+[        7000] [info] NDP  0 SUB-CORE  0 : IPC 0.000  issued 0 / 1000 cyc
+[        7000] [info] NDP  0 SUB-CORE  1 : average active queue count: 1.00 / 16 (6.25 %)
+[        7000] [info] NDP  0 SUB-CORE  1 : IPC 0.191  issued 191 / 1000 cyc
+[        7000] [info] NDP  0 SUB-CORE  2 : average active queue count: 1.00 / 16 (6.25 %)
+[        7000] [info] NDP  0 SUB-CORE  2 : IPC 0.192  issued 192 / 1000 cyc
+[        7000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.00 / 16 (0.00 %)
+[        7000] [info] NDP  0 SUB-CORE  3 : IPC 0.000  issued 0 / 1000 cyc
+[        7000] [info] NDP  0 : int 171, vec 100, addr 37 (spad 37, ldst 0), v_addr 69 (v_spad 0, v_ldst 69), exit 0 / 1000 cyc
+[        7000] [info] NDP 0 Launch ID 1 global_n64_w17_b65::PersistentFFT::stage_1():  base 0x40018600, size 8192 | count 6/8
+[        7000] [info] NDP CONTROLLER : IPC 0.125  issued 125 / 1000 cyc
+[        7000] [info] NDP CONTROLLER : int 63, addr 62 (spad 62, ldst 0) / 1000 cyc
+[        7470] [info] NDP  0 : Finish kernel launch 1
+[        7498] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::stage_1() launch id 1 at core cycle 0 ndp cycle 7498 at CXL 0
+[        7683] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::stage_2() ID 2 | Total active kernels 1
+[        7683] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::stage_2() launch id 2 at core cycle 0 ndp cycle 7683 to CXL 0
+[        8000] [info] L2 cache slice 0: hit 19, miss 2, hit ratio 90.48 %
+[        8000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[        8000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.62 / 16 (3.86 %)
+[        8000] [info] NDP  0 SUB-CORE  0 : IPC 0.060  issued 60 / 1000 cyc
+[        8000] [info] NDP  0 SUB-CORE  1 : average active queue count: 0.98 / 16 (6.10 %)
+[        8000] [info] NDP  0 SUB-CORE  1 : IPC 0.137  issued 137 / 1000 cyc
+[        8000] [info] NDP  0 SUB-CORE  2 : average active queue count: 1.09 / 16 (6.82 %)
+[        8000] [info] NDP  0 SUB-CORE  2 : IPC 0.164  issued 164 / 1000 cyc
+[        8000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.62 / 16 (3.88 %)
+[        8000] [info] NDP  0 SUB-CORE  3 : IPC 0.060  issued 60 / 1000 cyc
+[        8000] [info] NDP  0 : int 285, vec 62, addr 30 (spad 29, ldst 1), v_addr 33 (v_spad 0, v_ldst 33), exit 2 / 1000 cyc
+[        8000] [info] NDP 0 Launch ID 2 global_n64_w17_b65::PersistentFFT::stage_2():  base 0x40018600, size 8192 | count 0/8
+[        8000] [info] NDP CONTROLLER : IPC 0.136  issued 136 / 1000 cyc
+[        8000] [info] NDP CONTROLLER : int 69, addr 67 (spad 58, ldst 9) / 1000 cyc
+[        9000] [info] L2 cache slice 0: hit 0, miss 12, hit ratio 0.00 %
+[        9000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[        9000] [info] NDP  0 SUB-CORE  0 : average active queue count: 1.14 / 16 (7.11 %)
+[        9000] [info] NDP  0 SUB-CORE  0 : IPC 0.002  issued 2 / 1000 cyc
+[        9000] [info] NDP  0 SUB-CORE  1 : average active queue count: 1.57 / 16 (9.81 %)
+[        9000] [info] NDP  0 SUB-CORE  1 : IPC 0.070  issued 70 / 1000 cyc
+[        9000] [info] NDP  0 SUB-CORE  2 : average active queue count: 1.57 / 16 (9.81 %)
+[        9000] [info] NDP  0 SUB-CORE  2 : IPC 0.076  issued 76 / 1000 cyc
+[        9000] [info] NDP  0 SUB-CORE  3 : average active queue count: 1.14 / 16 (7.11 %)
+[        9000] [info] NDP  0 SUB-CORE  3 : IPC 0.002  issued 2 / 1000 cyc
+[        9000] [info] NDP  0 : int 70, vec 32, addr 15 (spad 15, ldst 0), v_addr 27 (v_spad 0, v_ldst 27), exit 6 / 1000 cyc
+[        9000] [info] NDP 0 Launch ID 2 global_n64_w17_b65::PersistentFFT::stage_2():  base 0x40018600, size 8192 | count 6/8
+[        9000] [info] NDP CONTROLLER : IPC 0.125  issued 125 / 1000 cyc
+[        9000] [info] NDP CONTROLLER : int 63, addr 62 (spad 62, ldst 0) / 1000 cyc
+[        9283] [info] NDP  0 : Finish kernel launch 2
+[        9285] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::stage_2() launch id 2 at core cycle 0 ndp cycle 9285 at CXL 0
+[        9397] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::writeback() ID 3 | Total active kernels 1
+[        9397] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::writeback() launch id 3 at core cycle 0 ndp cycle 9397 to CXL 0
+[        9607] [info] NDP  0 : Finish kernel launch 3
+[        9655] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::writeback() launch id 3 at core cycle 0 ndp cycle 9655 at CXL 0
+[        9760] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::stage_0() ID 4 | Total active kernels 1
+[        9760] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::stage_0() launch id 4 at core cycle 0 ndp cycle 9760 to CXL 0
+[       10000] [info] L2 cache slice 0: hit 16, miss 16, hit ratio 50.00 %
+[       10000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[       10000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.64 / 16 (4.02 %)
+[       10000] [info] NDP  0 SUB-CORE  0 : IPC 0.124  issued 124 / 1000 cyc
+[       10000] [info] NDP  0 SUB-CORE  1 : average active queue count: 1.05 / 16 (6.56 %)
+[       10000] [info] NDP  0 SUB-CORE  1 : IPC 0.212  issued 212 / 1000 cyc
+[       10000] [info] NDP  0 SUB-CORE  2 : average active queue count: 1.05 / 16 (6.54 %)
+[       10000] [info] NDP  0 SUB-CORE  2 : IPC 0.212  issued 212 / 1000 cyc
+[       10000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.64 / 16 (4.03 %)
+[       10000] [info] NDP  0 SUB-CORE  3 : IPC 0.124  issued 124 / 1000 cyc
+[       10000] [info] NDP  0 : int 486, vec 32, addr 50 (spad 50, ldst 0), v_addr 48 (v_spad 0, v_ldst 48), exit 16 / 1000 cyc
+[       10000] [info] NDP 0 Launch ID 4 global_n64_w17_b65::PersistentFFT::stage_0():  base 0x40018600, size 8192 | count 6/8
+[       10000] [info] NDP CONTROLLER : IPC 0.165  issued 165 / 1000 cyc
+[       10000] [info] NDP CONTROLLER : int 84, addr 81 (spad 63, ldst 18) / 1000 cyc
+[       11000] [info] L2 cache slice 0: hit 93, miss 9, hit ratio 91.18 %
+[       11000] [info] DRAM channel  0: total 8.00 % (8.00 % reads, 0.00 % writes)  [400 dram cyc]
+[       11000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.00 / 16 (0.00 %)
+[       11000] [info] NDP  0 SUB-CORE  0 : IPC 0.000  issued 0 / 1000 cyc
+[       11000] [info] NDP  0 SUB-CORE  1 : average active queue count: 1.00 / 16 (6.25 %)
+[       11000] [info] NDP  0 SUB-CORE  1 : IPC 0.301  issued 301 / 1000 cyc
+[       11000] [info] NDP  0 SUB-CORE  2 : average active queue count: 1.00 / 16 (6.25 %)
+[       11000] [info] NDP  0 SUB-CORE  2 : IPC 0.312  issued 312 / 1000 cyc
+[       11000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.00 / 16 (0.00 %)
+[       11000] [info] NDP  0 SUB-CORE  3 : IPC 0.000  issued 0 / 1000 cyc
+[       11000] [info] NDP  0 : int 318, vec 103, addr 102 (spad 64, ldst 38), v_addr 90 (v_spad 0, v_ldst 90), exit 0 / 1000 cyc
+[       11000] [info] NDP 0 Launch ID 4 global_n64_w17_b65::PersistentFFT::stage_0():  base 0x40018600, size 8192 | count 6/8
+[       11000] [info] NDP CONTROLLER : IPC 0.125  issued 125 / 1000 cyc
+[       11000] [info] NDP CONTROLLER : int 63, addr 62 (spad 62, ldst 0) / 1000 cyc
+[       11721] [info] NDP  0 : Finish kernel launch 4
+[       11725] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::stage_0() launch id 4 at core cycle 0 ndp cycle 11725 at CXL 0
+[       11835] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::stage_1() ID 5 | Total active kernels 1
+[       11835] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::stage_1() launch id 5 at core cycle 0 ndp cycle 11835 to CXL 0
+[       12000] [info] L2 cache slice 0: hit 68, miss 0, hit ratio 100.00 %
+[       12000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[       12000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.31 / 16 (1.96 %)
+[       12000] [info] NDP  0 SUB-CORE  0 : IPC 0.103  issued 103 / 1000 cyc
+[       12000] [info] NDP  0 SUB-CORE  1 : average active queue count: 1.04 / 16 (6.50 %)
+[       12000] [info] NDP  0 SUB-CORE  1 : IPC 0.357  issued 357 / 1000 cyc
+[       12000] [info] NDP  0 SUB-CORE  2 : average active queue count: 1.01 / 16 (6.31 %)
+[       12000] [info] NDP  0 SUB-CORE  2 : IPC 0.349  issued 349 / 1000 cyc
+[       12000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.32 / 16 (1.98 %)
+[       12000] [info] NDP  0 SUB-CORE  3 : IPC 0.104  issued 104 / 1000 cyc
+[       12000] [info] NDP  0 : int 602, vec 105, addr 113 (spad 75, ldst 38), v_addr 82 (v_spad 0, v_ldst 82), exit 3 / 1000 cyc
+[       12000] [info] NDP 0 Launch ID 5 global_n64_w17_b65::PersistentFFT::stage_1():  base 0x40018600, size 8192 | count 0/8
+[       12000] [info] NDP CONTROLLER : IPC 0.145  issued 145 / 1000 cyc
+[       12000] [info] NDP CONTROLLER : int 73, addr 72 (spad 63, ldst 9) / 1000 cyc
+[       12918] [info] NDP  0 : Finish kernel launch 5
+[       12918] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::stage_1() launch id 5 at core cycle 0 ndp cycle 12918 at CXL 0
+[       13000] [info] L2 cache slice 0: hit 65, miss 0, hit ratio 100.00 %
+[       13000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[       13000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.01 / 16 (0.05 %)
+[       13000] [info] NDP  0 SUB-CORE  0 : IPC 0.003  issued 3 / 1000 cyc
+[       13000] [info] NDP  0 SUB-CORE  1 : average active queue count: 0.93 / 16 (5.82 %)
+[       13000] [info] NDP  0 SUB-CORE  1 : IPC 0.345  issued 345 / 1000 cyc
+[       13000] [info] NDP  0 SUB-CORE  2 : average active queue count: 0.92 / 16 (5.76 %)
+[       13000] [info] NDP  0 SUB-CORE  2 : IPC 0.364  issued 364 / 1000 cyc
+[       13000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.01 / 16 (0.04 %)
+[       13000] [info] NDP  0 SUB-CORE  3 : IPC 0.002  issued 2 / 1000 cyc
+[       13000] [info] NDP  0 : int 304, vec 194, addr 73 (spad 71, ldst 2), v_addr 128 (v_spad 0, v_ldst 128), exit 7 / 1000 cyc
+[       13000] [info] NDP CONTROLLER : IPC 0.132  issued 132 / 1000 cyc
+[       13000] [info] NDP CONTROLLER : int 70, addr 62 (spad 61, ldst 1) / 1000 cyc
+[       13030] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::stage_2() ID 6 | Total active kernels 1
+[       13030] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::stage_2() launch id 6 at core cycle 0 ndp cycle 13030 to CXL 0
+[       13590] [info] NDP  0 : Finish kernel launch 6
+[       13590] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::stage_2() launch id 6 at core cycle 0 ndp cycle 13590 at CXL 0
+[       13697] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::writeback() ID 7 | Total active kernels 1
+[       13697] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::writeback() launch id 7 at core cycle 0 ndp cycle 13697 to CXL 0
+[       13817] [info] NDP  0 : Finish kernel launch 7
+[       13817] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::writeback() launch id 7 at core cycle 0 ndp cycle 13817 at CXL 0
+[       14000] [info] L2 cache slice 0: hit 16, miss 16, hit ratio 50.00 %
+[       14000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[       14000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.45 / 16 (2.84 %)
+[       14000] [info] NDP  0 SUB-CORE  0 : IPC 0.120  issued 120 / 1000 cyc
+[       14000] [info] NDP  0 SUB-CORE  1 : average active queue count: 0.89 / 16 (5.59 %)
+[       14000] [info] NDP  0 SUB-CORE  1 : IPC 0.260  issued 260 / 1000 cyc
+[       14000] [info] NDP  0 SUB-CORE  2 : average active queue count: 0.87 / 16 (5.46 %)
+[       14000] [info] NDP  0 SUB-CORE  2 : IPC 0.260  issued 260 / 1000 cyc
+[       14000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.45 / 16 (2.84 %)
+[       14000] [info] NDP  0 SUB-CORE  3 : IPC 0.120  issued 120 / 1000 cyc
+[       14000] [info] NDP  0 : int 516, vec 64, addr 60 (spad 60, ldst 0), v_addr 64 (v_spad 0, v_ldst 64), exit 16 / 1000 cyc
+[       14000] [info] NDP CONTROLLER : IPC 0.148  issued 148 / 1000 cyc
+[       14000] [info] NDP CONTROLLER : int 76, addr 72 (spad 54, ldst 18) / 1000 cyc
+[       14035] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::stage_0() ID 8 | Total active kernels 1
+[       14035] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::stage_0() launch id 8 at core cycle 0 ndp cycle 14035 to CXL 0
+[       14139] [info] NDP  0 : Finish kernel launch 8
+[       15000] [info] L2 cache slice 0: hit 0, miss 0, hit ratio -nan %
+[       15000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[       15000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.19 / 16 (1.16 %)
+[       15000] [info] NDP  0 SUB-CORE  0 : IPC 0.050  issued 50 / 1000 cyc
+[       15000] [info] NDP  0 SUB-CORE  1 : average active queue count: 0.19 / 16 (1.19 %)
+[       15000] [info] NDP  0 SUB-CORE  1 : IPC 0.050  issued 50 / 1000 cyc
+[       15000] [info] NDP  0 SUB-CORE  2 : average active queue count: 0.19 / 16 (1.19 %)
+[       15000] [info] NDP  0 SUB-CORE  2 : IPC 0.050  issued 50 / 1000 cyc
+[       15000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.19 / 16 (1.16 %)
+[       15000] [info] NDP  0 SUB-CORE  3 : IPC 0.050  issued 50 / 1000 cyc
+[       15000] [info] NDP  0 : int 176, vec 0, addr 8 (spad 8, ldst 0), v_addr 0 (v_spad 0, v_ldst 0), exit 8 / 1000 cyc
+[       15000] [info] NDP CONTROLLER : IPC 0.139  issued 139 / 1000 cyc
+[       15000] [info] NDP CONTROLLER : int 65, addr 74 (spad 66, ldst 8) / 1000 cyc
+[       15973] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::stage_0() launch id 8 at core cycle 0 ndp cycle 15973 at CXL 0
+[       16000] [info] L2 cache slice 0: hit 0, miss 0, hit ratio -nan %
+[       16000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[       16000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.00 / 16 (0.00 %)
+[       16000] [info] NDP  0 SUB-CORE  0 : IPC 0.000  issued 0 / 1000 cyc
+[       16000] [info] NDP  0 SUB-CORE  1 : average active queue count: 0.00 / 16 (0.00 %)
+[       16000] [info] NDP  0 SUB-CORE  1 : IPC 0.000  issued 0 / 1000 cyc
+[       16000] [info] NDP  0 SUB-CORE  2 : average active queue count: 0.00 / 16 (0.00 %)
+[       16000] [info] NDP  0 SUB-CORE  2 : IPC 0.000  issued 0 / 1000 cyc
+[       16000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.00 / 16 (0.00 %)
+[       16000] [info] NDP  0 SUB-CORE  3 : IPC 0.000  issued 0 / 1000 cyc
+[       16000] [info] NDP  0 : int 0, vec 0, addr 0 (spad 0, ldst 0), v_addr 0 (v_spad 0, v_ldst 0), exit 0 / 1000 cyc
+[       16000] [info] NDP CONTROLLER : IPC 0.125  issued 125 / 1000 cyc
+[       16000] [info] NDP CONTROLLER : int 63, addr 62 (spad 62, ldst 0) / 1000 cyc
+[       16078] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::stage_1() ID 9 | Total active kernels 1
+[       16078] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::stage_1() launch id 9 at core cycle 0 ndp cycle 16078 to CXL 0
+[       16182] [info] NDP  0 : Finish kernel launch 9
+[       17000] [info] L2 cache slice 0: hit 0, miss 0, hit ratio -nan %
+[       17000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[       17000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.19 / 16 (1.16 %)
+[       17000] [info] NDP  0 SUB-CORE  0 : IPC 0.050  issued 50 / 1000 cyc
+[       17000] [info] NDP  0 SUB-CORE  1 : average active queue count: 0.19 / 16 (1.16 %)
+[       17000] [info] NDP  0 SUB-CORE  1 : IPC 0.050  issued 50 / 1000 cyc
+[       17000] [info] NDP  0 SUB-CORE  2 : average active queue count: 0.19 / 16 (1.16 %)
+[       17000] [info] NDP  0 SUB-CORE  2 : IPC 0.050  issued 50 / 1000 cyc
+[       17000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.19 / 16 (1.16 %)
+[       17000] [info] NDP  0 SUB-CORE  3 : IPC 0.050  issued 50 / 1000 cyc
+[       17000] [info] NDP  0 : int 176, vec 0, addr 8 (spad 8, ldst 0), v_addr 0 (v_spad 0, v_ldst 0), exit 8 / 1000 cyc
+[       17000] [info] NDP CONTROLLER : IPC 0.145  issued 145 / 1000 cyc
+[       17000] [info] NDP CONTROLLER : int 72, addr 73 (spad 64, ldst 9) / 1000 cyc
+[       17159] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::stage_1() launch id 9 at core cycle 0 ndp cycle 17159 at CXL 0
+[       17257] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::stage_2() ID 10 | Total active kernels 1
+[       17257] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::stage_2() launch id 10 at core cycle 0 ndp cycle 17257 to CXL 0
+[       17356] [info] NDP  0 : Finish kernel launch 10
+[       17813] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::stage_2() launch id 10 at core cycle 0 ndp cycle 17813 at CXL 0
+[       17930] [info] NDP 0  : Launching kernel global_n64_w17_b65::PersistentFFT::writeback() ID 11 | Total active kernels 1
+[       17930] [info] Gate info: Host 0 launched NDP kernel global_n64_w17_b65::PersistentFFT::writeback() launch id 11 at core cycle 0 ndp cycle 17930 to CXL 0
+[       18000] [info] L2 cache slice 0: hit 0, miss 0, hit ratio -nan %
+[       18000] [info] DRAM channel  0: total 0.00 % (0.00 % reads, 0.00 % writes)  [400 dram cyc]
+[       18000] [info] NDP  0 SUB-CORE  0 : average active queue count: 0.30 / 16 (1.88 %)
+[       18000] [info] NDP  0 SUB-CORE  0 : IPC 0.078  issued 78 / 1000 cyc
+[       18000] [info] NDP  0 SUB-CORE  1 : average active queue count: 0.31 / 16 (1.91 %)
+[       18000] [info] NDP  0 SUB-CORE  1 : IPC 0.081  issued 81 / 1000 cyc
+[       18000] [info] NDP  0 SUB-CORE  2 : average active queue count: 0.30 / 16 (1.90 %)
+[       18000] [info] NDP  0 SUB-CORE  2 : IPC 0.079  issued 79 / 1000 cyc
+[       18000] [info] NDP  0 SUB-CORE  3 : average active queue count: 0.30 / 16 (1.89 %)
+[       18000] [info] NDP  0 SUB-CORE  3 : IPC 0.078  issued 78 / 1000 cyc
+[       18000] [info] NDP  0 : int 276, vec 0, addr 16 (spad 16, ldst 0), v_addr 0 (v_spad 0, v_ldst 0), exit 8 / 1000 cyc
+[       18000] [info] NDP 0 Launch ID 11 global_n64_w17_b65::PersistentFFT::writeback():  base 0x40018600, size 8192 | count 0/8
+[       18000] [info] NDP CONTROLLER : IPC 0.169  issued 169 / 1000 cyc
+[       18000] [info] NDP CONTROLLER : int 84, addr 85 (spad 62, ldst 23) / 1000 cyc
+[       18029] [info] NDP  0 : Finish kernel launch 11
+[       18046] [info] Gantt info: Host 0 finished NDP kernel global_n64_w17_b65::PersistentFFT::writeback() launch id 11 at core cycle 0 ndp cycle 18046 at CXL 0
+[       18071] [info] NDP 0: L1d size: 128 KB -> 128 KB, sets: 64 -> 64
+[       18143] [info] Task info: Host 0 task 0 launch id 0 called 0 issued 0 arrived 70 started 70 finished 18071 notified 18143 at CXL 0
+m2ndp_serve: final ndp_cycle=18143
+STAT ctrl.cycle=0
+STAT ctrl.inst_issue=2386
+STAT ctrl.i_issue=1201
+STAT ctrl.exit_issue=0
+STAT ctrl.f_issue=0
+STAT ctrl.sf_issue=0
+STAT ctrl.addr_issue=1185
+STAT ctrl.ldst_issue=118
+STAT ctrl.spad_issue=1067
+STAT ctrl.v_issue=0
+STAT ctrl.v_sf_issue=0
+STAT ctrl.v_addr_issue=0
+STAT ctrl.v_ldst_issue=0
+STAT ctrl.v_spad_issue=0
+STAT ctrl.spad_read=0
+STAT ctrl.spad_write=0
+STAT ndp.cycle=0
+STAT ndp.inst_issue=238666
+STAT ndp.i_issue=151190
+STAT ndp.exit_issue=3072
+STAT ndp.f_issue=5152
+STAT ndp.sf_issue=0
+STAT ndp.addr_issue=24522
+STAT ndp.ldst_issue=5070
+STAT ndp.spad_issue=19452
+STAT ndp.v_issue=30290
+STAT ndp.v_sf_issue=0
+STAT ndp.v_addr_issue=24440
+STAT ndp.v_ldst_issue=24440
+STAT ndp.v_spad_issue=0
+STAT ndp.spad_read=0
+STAT ndp.spad_write=0
+STAT launches=12
+M2NDP_0_ramulator memory channel  0:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel  1:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel  2:  Overall mem bandwidth utilization 0.96 % (0.96 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel  3:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel  4:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel  5:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel  6:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel  7:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel  8:  Overall mem bandwidth utilization 1.16 % (1.16 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel  9:  Overall mem bandwidth utilization 1.07 % (1.07 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 10:  Overall mem bandwidth utilization 1.02 % (1.02 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 11:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 12:  Overall mem bandwidth utilization 1.16 % (1.16 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 13:  Overall mem bandwidth utilization 1.16 % (1.16 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 14:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 15:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 16:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 17:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 18:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 19:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 20:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 21:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 22:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 23:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 24:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 25:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 26:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator memory channel 27:  Overall mem bandwidth utilization 0.94 % (0.94 % from Read, 0.00 % from Write)
+M2NDP_0_ramulator

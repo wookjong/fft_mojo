@@ -1,0 +1,334 @@
+  Persistent-workgroup leaf: target-invariant rejection checks:
+    OK   rejected: mapping_stride_bytes not a multiple of uthread_bytes
+    OK   rejected: interleave_chunk_uthreads inconsistent with mapping_stride/uthread_bytes
+  Persistent-workgroup leaf: registered-kernel-count stability across rounds:
+    OK   blocks=64 (2 rounds): 5 distinct kernel functions (['preload', 'stage_0', 'stage_1', 'stage_2', 'writeback']), 10 launch_parallel calls
+    OK   blocks=256 (8 rounds): 5 distinct kernel functions (['preload', 'stage_0', 'stage_1', 'stage_2', 'writeback']), 40 launch_parallel calls
+    OK   blocks=1024 (32 rounds): 5 distinct kernel functions (['preload', 'stage_0', 'stage_1', 'stage_2', 'writeback']), 160 launch_parallel calls
+  Persistent-workgroup leaf: single stage invocation regardless of workers_per_fft (worker-wave fusion):
+    OK   mode=wave      workers_per_fft=8 (waves=1) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=fused     workers_per_fft=8 (waves=1) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=physical  workers_per_fft=8 (waves=1) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=10 (waves=2) blocks=40 (2 rounds): 16 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=10 (waves=2) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=10 (waves=2) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=16 (waves=2) blocks=40 (2 rounds): 16 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=16 (waves=2) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=16 (waves=2) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=18 (waves=3) blocks=40 (2 rounds): 22 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=18 (waves=3) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=18 (waves=3) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=32 (waves=4) blocks=40 (2 rounds): 28 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=32 (waves=4) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=32 (waves=4) blocks=40 (2 rounds): 10 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=36 (waves=5) blocks=96 (3 rounds): 51 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=36 (waves=5) blocks=96 (3 rounds): 15 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=36 (waves=5) blocks=96 (3 rounds): 15 launch_parallel calls, wave_tracker=False, loop=False
+    OK   mode=wave      workers_per_fft=64 (waves=8) blocks=96 (3 rounds): 78 launch_parallel calls, wave_tracker=True, loop=False
+    OK   mode=fused     workers_per_fft=64 (waves=8) blocks=96 (3 rounds): 15 launch_parallel calls, wave_tracker=False, loop=True
+    OK   mode=physical  workers_per_fft=64 (waves=8) blocks=96 (3 rounds): 15 launch_parallel calls, wave_tracker=False, loop=False
+  Persistent-workgroup leaf: plan-equivalence + numeric checks:
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=32 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 1.843e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=32 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 2.247e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=30 radices=(2, 3, 5) blocks=40 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 9.537e-09
+    OK   persistent N=30 radices=(2, 3, 5) blocks=40 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 5.998e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=None exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=None exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=reserved workers_per_fft=None exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=reserved workers_per_fft=None exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=33 mode=adaptive workers_per_fft=None exec_mode=physical inverse=False: max error 1.660e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=33 mode=adaptive workers_per_fft=None exec_mode=physical inverse=True: max error 2.066e-10
+  Persistent-workgroup leaf: worker-wave (workers_per_fft > workers_per_group) numeric checks:
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=reserved workers_per_fft=32 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=reserved workers_per_fft=32 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=96 mode=adaptive workers_per_fft=64 exec_mode=physical inverse=False: max error 1.162e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=96 mode=adaptive workers_per_fft=64 exec_mode=physical inverse=True: max error 1.721e-10
+  Persistent-workgroup leaf: ragged worker-wave (workers_per_fft not a divisor or multiple of workers_per_group) logical-worker coverage checks:
+    OK   workers_per_fft=3: exact 0..2 coverage, no gap/duplicate
+    OK   workers_per_fft=5: exact 0..4 coverage, no gap/duplicate
+    OK   workers_per_fft=6: exact 0..5 coverage, no gap/duplicate
+    OK   workers_per_fft=7: exact 0..6 coverage, no gap/duplicate
+    OK   workers_per_fft=10: exact 0..9 coverage, no gap/duplicate
+    OK   workers_per_fft=12: exact 0..11 coverage, no gap/duplicate
+    OK   workers_per_fft=18: exact 0..17 coverage, no gap/duplicate
+    OK   workers_per_fft=20: exact 0..19 coverage, no gap/duplicate
+    OK   workers_per_fft=36: exact 0..35 coverage, no gap/duplicate
+  Persistent-workgroup leaf: ragged dispatch source-level checks:
+    OK   workers_per_fft=3: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=5: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=6: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=7: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=10: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=12: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=18: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=20: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=36: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=8: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+    OK   workers_per_fft=16: every dispatch branch < W (all modes), Mode C additionally < workers_per_group, no else anywhere
+  Persistent-workgroup leaf: ragged worker-wave numeric checks (GPU-baseline-observed W values: 3/5/6/7/10/12/18/20/36):
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=6 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=6 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=96 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 1.162e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=96 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.721e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 2.106e-10
+  Persistent-workgroup leaf: worker-wave FUSION matrix -- W = 3,5,6,7,8,10,12,16,18,20,24,32,36 across single/multi replica, tail/no-tail, mixed-radix/power-of-two, single/multi round (docs/worker_wave_fusion.md's own required coverage):
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 8.729e-09
+    OK   persistent N=64 radices=(4, 4, 4) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.180e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=3 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=3 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=5 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=5 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=6 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=6 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=7 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=7 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=8 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=8 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=10 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=10 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=12 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=12 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=16 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=16 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=18 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=18 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=20 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=20 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=24 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=24 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=32 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=32 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=36 exec_mode=physical inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=reserved workers_per_fft=36 exec_mode=physical inverse=True: max error 1.778e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 1.568e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.516e-10
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 1.719e-08
+    OK   persistent N=105 radices=(3, 5, 7) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 2.106e-10
+    OK   persistent N=216 radices=(6, 6, 6) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 3.105e-08
+    OK   persistent N=216 radices=(6, 6, 6) blocks=1 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.349e-10
+    OK   persistent N=216 radices=(6, 6, 6) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=False: max error 3.321e-08
+    OK   persistent N=216 radices=(6, 6, 6) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=physical inverse=True: max error 1.806e-10
+    OK   persistent N=216 radices=(6, 6, 6) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 3.105e-08
+    OK   persistent N=216 radices=(6, 6, 6) blocks=1 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.349e-10
+    OK   persistent N=216 radices=(6, 6, 6) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=False: max error 3.321e-08
+    OK   persistent N=216 radices=(6, 6, 6) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=physical inverse=True: max error 1.806e-10
+  Persistent-workgroup leaf: explicit exec_mode='wave'/'fused' regression (mode-parameter routing, not the default 'physical' path the matrix above already exercised exhaustively):
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=3 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=5 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=6 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=7 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=8 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=10 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=12 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=16 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=18 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=20 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=24 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=32 exec_mode=fused inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=wave inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=wave inverse=True: max error 1.778e-10
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=fused inverse=False: max error 1.085e-08
+    OK   persistent N=64 radices=(4, 4, 4) blocks=40 mode=adaptive workers_per_fft=36 exec_mode=fused inverse=True: max error 1.778e-10
+  Persistent-workgroup leaf: physical-lane strip-mining (Mode C) bit-for-bit cross-mode equivalence -- wave vs fused vs physical on the SAME plan/input, not just each vs numpy:
+    OK   N=64 radices=(4, 4, 4) W=3 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=3 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=5 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=5 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=6 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=6 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=7 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=7 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=8 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=8 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=10 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=10 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=12 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=12 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=16 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=16 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=18 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=18 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=20 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=20 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=24 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=24 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=32 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=32 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=64 radices=(4, 4, 4) W=36 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=105 radices=(3, 5, 7) W=36 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=10 blocks=1 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=10 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=10 blocks=40 inverse=True: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=18 blocks=1 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=18 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=18 blocks=40 inverse=True: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=36 blocks=1 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=36 blocks=40 inverse=False: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+    OK   N=216 radices=(6, 6, 6) W=36 blocks=40 inverse=True: wave-vs-fused diff=0.000e+00, wave-vs-physical diff=0.000e+00
+[verify] persistent leaf: all cases matched numpy's FFT
+

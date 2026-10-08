@@ -1,0 +1,49 @@
+clFFT-m2ndp: numerical correctness across the LDS-threshold boundary
+  OK   clfft-m2ndp N=216 inverse=False: max error 2.704e-08
+  OK   clfft-m2ndp N=512 inverse=False: max error 3.207e-08
+  OK   clfft-m2ndp N=4096 inverse=False: max error 1.263e-07
+  OK   clfft-m2ndp N=5000 inverse=False: max error 3.031e-07
+  OK   clfft-m2ndp N=6144 inverse=False: max error 1.563e-07
+  OK   clfft-m2ndp N=8000 inverse=False: max error 3.314e-07
+  OK   clfft-m2ndp N=10000 inverse=False: max error 4.621e-07
+clFFT-m2ndp: decision differences trace ONLY to the documented LDS mapping
+  source threshold=4096, M2NDP threshold=4096 -- checked every length in between
+clFFT: SBCC (block-compute) lengths now build, forward + inverse
+  OK   clfft-sbcc N=8192 inverse=False: max error 1.776e-07
+  OK   clfft-sbcc N=8192 inverse=True: max error 1.156e-10
+  OK   clfft-sbcc N=16384 inverse=False: max error 3.067e-07
+  OK   clfft-sbcc N=16384 inverse=True: max error 2.994e-11
+  OK   clfft-sbcc N=32768 inverse=False: max error 4.536e-07
+  OK   clfft-sbcc N=32768 inverse=True: max error 2.052e-11
+  OK   clfft-sbcc N=65536 inverse=False: max error 6.653e-07
+  OK   clfft-sbcc N=65536 inverse=True: max error 2.616e-11
+  OK   clfft-sbcc N=131072 inverse=False: max error 9.764e-07
+  OK   clfft-sbcc N=131072 inverse=True: max error 7.990e-12
+  OK   clfft-sbcc N=262144 inverse=False: max error 1.616e-06
+  OK   clfft-sbcc N=262144 inverse=True: max error 7.851e-12
+  OK   clfft-sbcc N=524288 inverse=False: max error 2.383e-06
+  OK   clfft-sbcc N=524288 inverse=True: max error 9.509e-12
+  OK   clfft-sbcc N=1048576 inverse=False: max error 3.492e-06
+  OK   clfft-sbcc N=1048576 inverse=True: max error 4.304e-12
+rocFFT-default-m2ndp: numerical correctness
+  OK   rocfft-default-m2ndp N=216 inverse=False: max error 2.704e-08
+  OK   rocfft-default-m2ndp N=512 inverse=False: max error 3.207e-08
+  OK   rocfft-default-m2ndp N=4096 inverse=False: max error 1.414e-07
+  OK   rocfft-default-m2ndp N=8192 inverse=False: max error 2.066e-07
+rocFFT-default-m2ndp: multiprocessor_count mapping changes ONLY the documented occupancy branch
+  checked 5 lengths x 9 batch values; found_a_difference=True
+VkFFT-m2ndp: numerical correctness
+  FAIL: vkfft-m2ndp N=12 should map OK, got BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN
+  OK   vkfft-m2ndp N=20 inverse=False: max error 5.020e-09
+  OK   vkfft-m2ndp N=216 inverse=False: max error 2.704e-08
+  OK   vkfft-m2ndp N=512 inverse=False: max error 3.207e-08
+  FAIL: vkfft-m2ndp N=768 should map OK, got BaselineStatus.UNSUPPORTED_CURRENT_CODEGEN
+  OK   vkfft-m2ndp N=1024 inverse=False: max error 5.124e-08
+  OK   vkfft-m2ndp N=4096 inverse=False: max error 1.263e-07
+  OK   vkfft-m2ndp N=4704 inverse=False: max error 1.353e-07
+VkFFT-m2ndp: warp_size stays fixed at VKFFT_WARP_SIZE (NO_EQUIVALENT, not mapped)
+VkFFT-m2ndp: num_compute_units mapping reaches choose_pow2_grouping_radix correctly
+  choose_pow2_grouping_radix(65536, 5000): source=8 m2ndp=8 (equal is an expected, verified null result -- see this function's own docstring)
+
+2 FAILURE(S)
+

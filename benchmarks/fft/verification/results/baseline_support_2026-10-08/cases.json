@@ -1,0 +1,150 @@
+[
+  {
+    "name": "vkfft_r12_b3",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          8
+        ],
+        "compute_lanes": null,
+        "kernel": "FFTVkfftLeaf0",
+        "launch": {
+          "alignment_bytes": 256,
+          "chunk_uthreads": 8,
+          "padded": false,
+          "round_fft_capacity": 3,
+          "round_uthread_capacity": 3,
+          "simd_lanes": 8,
+          "slots_per_chunk": 8,
+          "spread_across_units": false,
+          "target_units": 32,
+          "total_ffts": 3,
+          "workers_per_fft": 1
+        },
+        "loop_stages": true,
+        "narrow_middle_stages": false
+      }
+    ]
+  },
+  {
+    "name": "vkfft_r14_b3",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          8
+        ],
+        "compute_lanes": null,
+        "kernel": "FFTVkfftLeaf0",
+        "launch": {
+          "alignment_bytes": 256,
+          "chunk_uthreads": 8,
+          "padded": false,
+          "round_fft_capacity": 3,
+          "round_uthread_capacity": 3,
+          "simd_lanes": 8,
+          "slots_per_chunk": 8,
+          "spread_across_units": false,
+          "target_units": 32,
+          "total_ffts": 3,
+          "workers_per_fft": 1
+        },
+        "loop_stages": true,
+        "narrow_middle_stages": false
+      }
+    ]
+  },
+  {
+    "name": "vkfft_r15_b3",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          8
+        ],
+        "compute_lanes": null,
+        "kernel": "FFTVkfftLeaf0",
+        "launch": {
+          "alignment_bytes": 256,
+          "chunk_uthreads": 8,
+          "padded": false,
+          "round_fft_capacity": 3,
+          "round_uthread_capacity": 3,
+          "simd_lanes": 8,
+          "slots_per_chunk": 8,
+          "spread_across_units": false,
+          "target_units": 32,
+          "total_ffts": 3,
+          "workers_per_fft": 1
+        },
+        "loop_stages": true,
+        "narrow_middle_stages": false
+      }
+    ]
+  },
+  {
+    "name": "global_n64_w17_b65",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "copy_mode": "scalar",
+        "dram_bytes": 199680,
+        "host_launches": 1,
+        "internal_rounds": 3,
+        "kernel": "PersistentFFT",
+        "launch": null,
+        "loop_stages": false,
+        "narrow_middle_stages": true,
+        "persistent_mode": "physical",
+        "phase_launches": 12,
+        "registered_functions": 4,
+        "scratchpad_bytes": 32,
+        "storage_mode": "global",
+        "tracker_bytes": 32,
+        "vector_width": 1,
+        "workspace_bytes": 32768
+      }
+    ]
+  },
+  {
+    "name": "rocfft_global_n8192_b2",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          2,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "copy_mode": "scalar",
+        "dram_bytes": 1310720,
+        "host_launches": 1,
+        "internal_rounds": 1,
+        "kernel": "FFTRocfftDefaultM2ndp",
+        "launch": null,
+        "loop_stages": true,
+        "narrow_middle_stages": true,
+        "persistent_mode": "physical",
+        "phase_launches": 6,
+        "registered_functions": 6,
+        "scratchpad_bytes": 32,
+        "storage_mode": "global",
+        "tracker_bytes": 32,
+        "vector_width": 1,
+        "workspace_bytes": 262144
+      }
+    ],
+    "run_timeout": 900,
+    "scope": "Original rocFFT batch=33 radix/worker choice; two replicas for functional simulation only"
+  }
+]

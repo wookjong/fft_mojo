@@ -1,0 +1,379 @@
+{
+  "image": "ghcr.io/psal-postech/mojo-m2ndp:main",
+  "image_id": "b8155d935ba7",
+  "scope": "Functional execution/codegen validation; distinct workloads, no GPU comparison",
+  "host_compatibility": "MappedDomain bridge; temporary driver links libm",
+  "passed": 8,
+  "cases": [
+    {
+      "name": "plain_cap1_n64_b64",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 16374,
+      "time_us": 8.187,
+      "host_launches": 2,
+      "phase_launches": 6,
+      "kernel_exec_cycles": 14638,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function plain_cap1_n64_b64::FFTFP32::stage_1() void (): M2NDP kernel spills to memory (64-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "b6d339e65619e7b8e5220de43b6c10b172ea39943005ccee68dac9c9903f68f5",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "kernel": "FFTFP32",
+          "launch": {
+            "alignment_bytes": 256,
+            "chunk_uthreads": 8,
+            "padded": true,
+            "round_fft_capacity": 32,
+            "round_uthread_capacity": 256,
+            "simd_lanes": 8,
+            "slots_per_chunk": 1,
+            "spread_across_units": true,
+            "target_units": 32,
+            "total_ffts": 64,
+            "workers_per_fft": 1
+          },
+          "loop_stages": false,
+          "narrow_middle_stages": true
+        }
+      ],
+      "run_log": "plain_cap1_n64_b64.run.log"
+    },
+    {
+      "name": "coop_cap2_n64_b65",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 12277,
+      "time_us": 6.138,
+      "host_launches": 3,
+      "phase_launches": 9,
+      "kernel_exec_cycles": 10043,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function coop_cap2_n64_b65::FFTFP32Coop::stage_0() void (): M2NDP kernel spills to memory (144-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "abe8da43f57fefe1e65edee37649d156b6e940db60c0d1a6ef5a60edf9c9ba2f",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            4,
+            4,
+            4
+          ],
+          "compute_lanes": 4,
+          "kernel": "FFTFP32Coop",
+          "launch": {
+            "alignment_bytes": 256,
+            "chunk_uthreads": 8,
+            "padded": false,
+            "round_fft_capacity": 32,
+            "round_uthread_capacity": 256,
+            "simd_lanes": 8,
+            "slots_per_chunk": 1,
+            "spread_across_units": true,
+            "target_units": 32,
+            "total_ffts": 65,
+            "workers_per_fft": 8
+          },
+          "loop_stages": false
+        }
+      ],
+      "run_log": "coop_cap2_n64_b65.run.log"
+    },
+    {
+      "name": "persistent_physical_w16_b33",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 12320,
+      "time_us": 6.16,
+      "host_launches": 1,
+      "phase_launches": 10,
+      "kernel_exec_cycles": 10183,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function persistent_physical_w16_b33::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (176-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "adfda6d2b130f29a4da6814a91a2c263f1d7fe0c6343eae304aa193ce14ee915",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "copy_mode": "vectorized_contiguous",
+          "host_launches": 1,
+          "internal_rounds": 2,
+          "kernel": "PersistentFFT",
+          "launch": null,
+          "narrow_middle_stages": true,
+          "persistent_mode": "physical",
+          "phase_launches": 10,
+          "registered_functions": 5,
+          "scratchpad_bytes": 1056,
+          "tracker_bytes": 32,
+          "vector_width": 4
+        }
+      ],
+      "run_log": "persistent_physical_w16_b33.run.log"
+    },
+    {
+      "name": "persistent_fused_w17_b33",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 13696,
+      "time_us": 6.848,
+      "host_launches": 1,
+      "phase_launches": 10,
+      "kernel_exec_cycles": 11508,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function persistent_fused_w17_b33::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (208-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "63a14c493f99fba1fab6de7bdfc9bd6455fb0d6b602706482914a94646213a1b",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "copy_mode": "vectorized_contiguous",
+          "host_launches": 1,
+          "internal_rounds": 2,
+          "kernel": "PersistentFFT",
+          "launch": null,
+          "narrow_middle_stages": true,
+          "persistent_mode": "fused",
+          "phase_launches": 10,
+          "registered_functions": 5,
+          "scratchpad_bytes": 1056,
+          "tracker_bytes": 32,
+          "vector_width": 4
+        }
+      ],
+      "run_log": "persistent_fused_w17_b33.run.log"
+    },
+    {
+      "name": "persistent_wave_w10_b65",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 19512,
+      "time_us": 9.756,
+      "host_launches": 1,
+      "phase_launches": 24,
+      "kernel_exec_cycles": 15521,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function persistent_wave_w10_b65::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (192-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "50359f3a31c363a8ae1ca4e050b09c6bc8037a52caa26d2ac80eb724875558d5",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "copy_mode": "vectorized_contiguous",
+          "host_launches": 1,
+          "internal_rounds": 3,
+          "kernel": "PersistentFFT",
+          "launch": null,
+          "narrow_middle_stages": true,
+          "persistent_mode": "wave",
+          "phase_launches": 24,
+          "registered_functions": 5,
+          "scratchpad_bytes": 1088,
+          "tracker_bytes": 64,
+          "vector_width": 4
+        }
+      ],
+      "run_log": "persistent_wave_w10_b65.run.log"
+    },
+    {
+      "name": "persistent_wave_rtx3060_inverse_b57",
+      "config": "M2NDP_RTX3060",
+      "verified": true,
+      "config_md5": "fc15d795",
+      "core_mhz": 1640,
+      "cycles": 30291,
+      "time_us": 18.47,
+      "host_launches": 1,
+      "phase_launches": 24,
+      "kernel_exec_cycles": 18231,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (192-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "5399274c047dd276515a93b55442bc3f2c56b2b7cbd966db4c485dd5227c6a63",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "copy_mode": "scalar",
+          "host_launches": 1,
+          "internal_rounds": 3,
+          "kernel": "PersistentFFT",
+          "launch": null,
+          "narrow_middle_stages": true,
+          "persistent_mode": "wave",
+          "phase_launches": 24,
+          "registered_functions": 5,
+          "scratchpad_bytes": 1088,
+          "tracker_bytes": 64,
+          "vector_width": 1
+        }
+      ],
+      "run_log": "persistent_wave_rtx3060_inverse_b57.run.log"
+    },
+    {
+      "name": "hybrid_cooperative_b65",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 21281,
+      "time_us": 10.64,
+      "host_launches": 2,
+      "phase_launches": 13,
+      "kernel_exec_cycles": 17856,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function hybrid_cooperative_b65::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (176-byte frame); spills go to DRAM",
+        "warning: <unknown>:0:0: in function hybrid_cooperative_b65::TailFFT::stage_0() void (): M2NDP kernel spills to memory (144-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "53683f163ccf3b0d9c33c808c91bc94ca606ad2c3ab14667669d2be301eb4fcd",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "copy_mode": "scalar",
+          "host_launches": 1,
+          "internal_rounds": 2,
+          "kernel": "PersistentFFT",
+          "launch": null,
+          "narrow_middle_stages": true,
+          "persistent_mode": "physical",
+          "phase_launches": 10,
+          "registered_functions": 5,
+          "scratchpad_bytes": 1056,
+          "tracker_bytes": 32,
+          "vector_width": 1
+        },
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "kernel": "TailFFT",
+          "launch": {
+            "alignment_bytes": 256,
+            "chunk_uthreads": 8,
+            "padded": false,
+            "round_fft_capacity": 32,
+            "round_uthread_capacity": 256,
+            "simd_lanes": 8,
+            "slots_per_chunk": 1,
+            "spread_across_units": true,
+            "target_units": 32,
+            "total_ffts": 1,
+            "workers_per_fft": 8
+          },
+          "loop_stages": false,
+          "narrow_middle_stages": true
+        }
+      ],
+      "run_log": "hybrid_cooperative_b65.run.log"
+    },
+    {
+      "name": "recursive_cooperative_n960_b2",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 19419,
+      "time_us": 9.71,
+      "host_launches": 5,
+      "phase_launches": 9,
+      "kernel_exec_cycles": 14244,
+      "spill_warnings": [],
+      "source_sha256": "a88e7f4890e31daa2a8a8404716ab86a5c68220d82bb5e3f986c12846cf70ee3",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "kernel": "FFTRecNear0",
+          "launch": {
+            "alignment_bytes": 256,
+            "chunk_uthreads": 8,
+            "padded": false,
+            "round_fft_capacity": 2048,
+            "round_uthread_capacity": 4096,
+            "simd_lanes": 8,
+            "slots_per_chunk": 4,
+            "spread_across_units": true,
+            "target_units": 32,
+            "total_ffts": 64,
+            "workers_per_fft": 2
+          },
+          "loop_stages": true,
+          "narrow_middle_stages": true
+        },
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "kernel": "FFTRecLeaf1",
+          "launch": {
+            "alignment_bytes": 256,
+            "chunk_uthreads": 8,
+            "padded": false,
+            "round_fft_capacity": 1920,
+            "round_uthread_capacity": 3840,
+            "simd_lanes": 8,
+            "slots_per_chunk": 4,
+            "spread_across_units": true,
+            "target_units": 32,
+            "total_ffts": 60,
+            "workers_per_fft": 2
+          },
+          "loop_stages": true,
+          "narrow_middle_stages": true
+        }
+      ],
+      "run_log": "recursive_cooperative_n960_b2.run.log"
+    }
+  ]
+}

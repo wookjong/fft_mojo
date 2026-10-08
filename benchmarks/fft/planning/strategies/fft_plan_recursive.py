@@ -23,7 +23,7 @@ implemented, then verified again by direct index/numeric simulation
 numpy.fft) before any codegen was written -- see verify_fft_plan.py.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Union
 
 from planning.core.fft_plan_core import (
@@ -38,8 +38,11 @@ from planning.core.fft_plan_core import (
     pingpong_needed,
 )
 from planning.execution.fft_plan_cooperative import choose_workers_per_fft, make_cooperative_leaf_plan
-from planning.execution.fft_plan_persistent import make_persistent_leaf_plan
-from planning.core.target_profile import DEFAULT_TARGET_PROFILE
+from planning.execution.fft_plan_persistent import (
+    make_persistent_leaf_plan, PersistentTailHybridPlan, persistent_tracker_scratchpad_bytes,
+)
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from planning.execution.launch_support import validate_fft_launch_granule
 
 
 @dataclass(frozen=True)
@@ -116,11 +119,16 @@ class FFTLeafPlan:
     with `length=m`, `total_uthreads=r`, both DRAM mappings plain
     `contiguous(row_stride=m)`, built via the existing layouts_for_radices/
     _build_plan exactly as every other single-kernel FFT in this module.
+    `tail_hybrid`, when set at the root, replaces that whole-batch kernel
+    with independent full/tail tasks; flattening returns their actual kernels.
+    Nested tail hybrids are rejected until recursive segment binding is supported.
     """
 
     m: int
     r: int
     kernel: FFTCodegenPlan
+    # Root-only batch alternative: full rounds and tail are independent tasks.
+    tail_hybrid: PersistentTailHybridPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +140,8 @@ class FFTRecursiveNodePlan:
     this exact shape sequence (b x a -> a x b -> [twiddle] -> b x a ->
     a x b) reproduces FFTNode's own natural-order contract at every
     junction, cross-checked address by address before implementation.
+    Either FFT child may recurse; native planners use a leaf near_fft,
+    while rocFFT TRTRT may recursively plan the first child.
     """
 
     m: int
@@ -139,7 +149,7 @@ class FFTRecursiveNodePlan:
     a: int
     b: int
     pre_transpose: PhysicalTransposePlan
-    near_fft: FFTLeafPlan
+    near_fft: "FFTNode"
     middle_transpose: PhysicalTransposePlan
     far_child: "FFTNode"
     post_transpose: PhysicalTransposePlan
@@ -167,9 +177,9 @@ class RecursiveFFTPlan:
     batch: int = 1
 
 
-def flatten_recursive_node(node: FFTNode) -> list:
+def flatten_recursive_node(node: FFTNode, *, _allow_hybrid: bool = True) -> list:
     """Flat, ordered stage list for a recursive FFTNode: leaf -> [kernel];
-    node -> [pre, near_fft.kernel, middle] + flatten(far_child) + [post].
+    node -> [pre] + flatten(near_fft) + [middle] + flatten(far_child) + [post].
     Each element is either an FFTCodegenPlan (an ordinary FFT kernel) or a
     PhysicalTransposePlan (a standalone transpose kernel) -- a pure tree
     walk over already-decided plan data, no new decisions, so it lives in
@@ -179,11 +189,18 @@ def flatten_recursive_node(node: FFTNode) -> list:
     view -- one source, not a codegen-owned helper cost estimation would
     otherwise have to import backwards for)."""
     if isinstance(node, FFTLeafPlan):
+        if node.tail_hybrid is not None:
+            if not _allow_hybrid:
+                raise ValueError("persistent tail hybrid is supported at the root only")
+            return [k for k in (node.tail_hybrid.persistent_plan, node.tail_hybrid.tail_plan)
+                    if k is not None]
         return [node.kernel]
     assert isinstance(node, FFTRecursiveNodePlan)
     return (
-        [node.pre_transpose, node.near_fft.kernel, node.middle_transpose]
-        + flatten_recursive_node(node.far_child)
+        [node.pre_transpose]
+        + flatten_recursive_node(node.near_fft, _allow_hybrid=False)
+        + [node.middle_transpose]
+        + flatten_recursive_node(node.far_child, _allow_hybrid=False)
         + [node.post_transpose]
     )
 
@@ -378,6 +395,7 @@ def _build_leaf_kernel(
     cooperative_workers: int | str | None,
     interleave_chunk_uthreads: int,
     persistent_leaf: bool = False,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
 ) -> FFTCodegenPlan:
     """One leaf/near_fft kernel -- `_build_plan` (today's one-uthread-per-
     sub-FFT leaf), `make_cooperative_leaf_plan` (see
@@ -434,6 +452,7 @@ def _build_leaf_kernel(
             simd_lanes=simd_lanes,
             kernel_name=kernel_name,
             inverse_scale=inverse_scale,
+            target=target,
         )
 
     workers = 1
@@ -456,6 +475,7 @@ def _build_leaf_kernel(
             inverse_scale=inverse_scale,
             spad_capacity_bytes=spad_capacity_bytes,
             max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
+            interleave_chunk_uthreads=interleave_chunk_uthreads,
         )
 
     return _build_plan(
@@ -591,6 +611,7 @@ def _build_recursive_node(
     forced_split_sequence: tuple[int, ...] | None = None,
     forced_worker_sequence: tuple[int | str | None, ...] | None = None,
     persistent_leaf: bool = False,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
 ) -> FFTNode:
     """`allowed_radix_composites`: `None` (the default) keeps every leaf's
     radix tier exactly `coalesce_radices`'s own default
@@ -689,39 +710,6 @@ def _build_recursive_node(
             "about a leaf that isn't cooperative at all"
         )
 
-    if forced_split_sequence is not None:
-        assert forced_split_near_length is None, (
-            "forced_split_sequence and forced_split_near_length are mutually "
-            "exclusive -- the former already forces every level, including this one"
-        )
-        if forced_split_sequence:
-            split_b = forced_split_sequence[0]
-            legal = _recursive_split_candidates(m, scratchpad_byte_budget=scratchpad_byte_budget)
-            if split_b not in legal:
-                raise ValueError(
-                    f"forced_split_sequence's next entry {split_b} is not a "
-                    f"legal split of m={m} under scratchpad_byte_budget="
-                    f"{scratchpad_byte_budget} (legal candidates: {legal})"
-                )
-        else:
-            assert _leaf_scratchpad_bytes(m) <= scratchpad_byte_budget, (
-                f"forced_split_sequence ran out with m={m} still too large for "
-                f"one leaf under scratchpad_byte_budget={scratchpad_byte_budget} "
-                f"-- _enumerate_leaf_segmentations should never produce this"
-            )
-            split_b = None
-    elif forced_split_near_length is not None:
-        legal = _recursive_split_candidates(m, scratchpad_byte_budget=scratchpad_byte_budget)
-        if forced_split_near_length not in legal:
-            raise ValueError(
-                f"forced_split_near_length={forced_split_near_length} is not a "
-                f"legal split of m={m} under scratchpad_byte_budget="
-                f"{scratchpad_byte_budget} (legal candidates: {legal})"
-            )
-        split_b = forced_split_near_length
-    else:
-        split_b = _choose_recursive_split(m, scratchpad_byte_budget=scratchpad_byte_budget)
-
     if forced_worker_sequence is not None:
         assert cooperative_workers is None, (
             "forced_worker_sequence and cooperative_workers are mutually "
@@ -755,6 +743,47 @@ def _build_recursive_node(
         this_leaf_persistent = persistent_leaf
         rest_worker_sequence = None
 
+
+    # Persistent leaves reserve worker-private phase trackers as well as FFT data.
+    leaf_byte_budget = scratchpad_byte_budget
+    if this_leaf_persistent:
+        leaf_byte_budget = min(leaf_byte_budget, target.spad_capacity_bytes
+                               - persistent_tracker_scratchpad_bytes(target.interleave_chunk_uthreads))
+
+    if forced_split_sequence is not None:
+        assert forced_split_near_length is None, (
+            "forced_split_sequence and forced_split_near_length are mutually "
+            "exclusive -- the former already forces every level, including this one"
+        )
+        if forced_split_sequence:
+            split_b = forced_split_sequence[0]
+            legal = _recursive_split_candidates(m, scratchpad_byte_budget=leaf_byte_budget)
+            if split_b not in legal:
+                raise ValueError(
+                    f"forced_split_sequence's next entry {split_b} is not a "
+                    f"legal split of m={m} under scratchpad_byte_budget="
+                    f"{scratchpad_byte_budget} (legal candidates: {legal})"
+                )
+        else:
+            assert _leaf_scratchpad_bytes(m) <= leaf_byte_budget, (
+                f"forced_split_sequence ran out with m={m} still too large for "
+                f"one leaf under scratchpad_byte_budget={scratchpad_byte_budget} "
+                f"-- _enumerate_leaf_segmentations should never produce this"
+            )
+            split_b = None
+    elif forced_split_near_length is not None:
+        legal = _recursive_split_candidates(m, scratchpad_byte_budget=leaf_byte_budget)
+        if forced_split_near_length not in legal:
+            raise ValueError(
+                f"forced_split_near_length={forced_split_near_length} is not a "
+                f"legal split of m={m} under scratchpad_byte_budget="
+                f"{scratchpad_byte_budget} (legal candidates: {legal})"
+            )
+        split_b = forced_split_near_length
+    else:
+        split_b = _choose_recursive_split(m, scratchpad_byte_budget=leaf_byte_budget)
+
+
     if split_b is None:
         if forced_worker_sequence is not None and rest_worker_sequence:
             raise ValueError(
@@ -777,6 +806,7 @@ def _build_recursive_node(
             cooperative_workers=this_leaf_workers,
             interleave_chunk_uthreads=interleave_chunk_uthreads,
             persistent_leaf=this_leaf_persistent,
+            target=target,
         )
         return FFTLeafPlan(m=m, r=r, kernel=kernel)
 
@@ -808,6 +838,7 @@ def _build_recursive_node(
         cooperative_workers=this_leaf_workers,
         interleave_chunk_uthreads=interleave_chunk_uthreads,
         persistent_leaf=this_leaf_persistent,
+        target=target,
     )
     near_fft = FFTLeafPlan(m=b, r=r * a, kernel=near_kernel)
 
@@ -827,6 +858,7 @@ def _build_recursive_node(
         cooperative_workers=cooperative_workers,
         interleave_chunk_uthreads=interleave_chunk_uthreads,
         persistent_leaf=persistent_leaf,
+        target=target,
         allowed_radix_composites=allowed_radix_composites,
         # forced_split_near_length intentionally NOT propagated -- only the
         # outermost (root) split is ever forced, see this function's own
@@ -866,12 +898,14 @@ def make_recursive_transpose_plan(
     spad_capacity_bytes: int | None = None,
     max_concurrent_scratchpad_bytes: int | None = None,
     cooperative_workers: int | str | None = None,
-    interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
+    interleave_chunk_uthreads: int | None = None,
     allowed_radix_composites: frozenset[int] | None = None,
     forced_split_near_length: int | None = None,
     forced_split_sequence: tuple[int, ...] | None = None,
     forced_worker_sequence: tuple[int | str | None, ...] | None = None,
     persistent_leaf: bool = False,
+    target: TargetProfile | None = None,
+    spread_across_units: bool = False,
 ) -> RecursiveFFTPlan:
     """N decomposed recursively (six-step-FFT style): each node either
     fuses into one multi-radix leaf kernel (see FFTLeafPlan) or splits
@@ -886,6 +920,16 @@ def make_recursive_transpose_plan(
     completely independently of any FFT chunk length -- see the module
     design writeup. Additive: make_multi_kernel_plan/
     make_balanced_plan/make_balanced_transpose_plan are untouched.
+
+    `spread_across_units`: validate launch eligibility for the intended rendering;
+    False preserves non-spreading experiments. True requires simd_lanes=8.
+    This argument validates only; pass it to codegen as well.
+
+    `target`: applies the caller's resource profile to every recursive leaf,
+    including persistent leaves selected by `forced_worker_sequence`. Explicit
+    resource arguments override profile fields; omitted arguments inherit them.
+    Without a profile, legacy uncapped plain/cooperative defaults are preserved,
+    while persistent leaves use DEFAULT_TARGET_PROFILE with explicit overrides.
 
     `max_concurrent_scratchpad_bytes`: see `_cap_max_uthread` -- caps `max_uthread`
     by microthread count, independent of `spad_capacity_bytes`'s byte cap.
@@ -926,6 +970,33 @@ def make_recursive_transpose_plan(
     same layout `codegen.common.emit_reference_check`'s own `batch_count`
     already assumes for a single-kernel plan's `total_uthreads`.
     """
+    validate_fft_launch_granule(simd_lanes, spread_across_units=spread_across_units)
+    # Preserve legacy uncapped plain leaves when no profile is supplied.
+    # Explicit resource arguments override the profile for every leaf kind.
+    selected_target = target or DEFAULT_TARGET_PROFILE
+    if target is not None:
+        if spad_capacity_bytes is None:
+            spad_capacity_bytes = target.spad_capacity_bytes
+        if max_concurrent_scratchpad_bytes is None:
+            max_concurrent_scratchpad_bytes = target.max_concurrent_scratchpad_bytes
+    if interleave_chunk_uthreads is None:
+        interleave_chunk_uthreads = selected_target.interleave_chunk_uthreads
+    target = replace(
+        selected_target,
+        spad_capacity_bytes=(spad_capacity_bytes if spad_capacity_bytes is not None
+                             else selected_target.spad_capacity_bytes),
+        max_concurrent_scratchpad_bytes=(
+            max_concurrent_scratchpad_bytes if max_concurrent_scratchpad_bytes is not None
+            else selected_target.max_concurrent_scratchpad_bytes),
+        interleave_chunk_uthreads=interleave_chunk_uthreads,
+    )
+    # A policy budget is an upper bound, not permission to exceed this target.
+    # Resolve it before selecting a fused leaf so resource-limited targets can
+    # decompose rather than abort on an otherwise avoidable unsplit candidate.
+    if spad_capacity_bytes is not None:
+        scratchpad_byte_budget = min(scratchpad_byte_budget, spad_capacity_bytes)
+    if max_concurrent_scratchpad_bytes is not None:
+        scratchpad_byte_budget = min(scratchpad_byte_budget, max_concurrent_scratchpad_bytes)
     node_id = [0]
     root = _build_recursive_node(
         n, batch, scratchpad_byte_budget=scratchpad_byte_budget,
@@ -940,6 +1011,7 @@ def make_recursive_transpose_plan(
         forced_split_sequence=forced_split_sequence,
         forced_worker_sequence=forced_worker_sequence,
         persistent_leaf=persistent_leaf,
+        target=target,
     )
     host = MultiKernelHostPlan(n=n, inverse=inverse, tolerance=1.0e-3)
     return RecursiveFFTPlan(n=n, inverse=inverse, root=root, host=host, batch=batch)

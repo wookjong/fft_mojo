@@ -1,0 +1,12 @@
+test_analysis_matches_plain_and_cooperative_emission (__main__.KernelRegistrationTests.test_analysis_matches_plain_and_cooperative_emission) ... ok
+test_boundary_and_target_cap (__main__.KernelRegistrationTests.test_boundary_and_target_cap) ... ok
+test_gpu_mapping_refuses_over_limit_without_losing_original_choice (__main__.KernelRegistrationTests.test_gpu_mapping_refuses_over_limit_without_losing_original_choice) ... ok
+test_n729_is_six_stages_but_nine_functions (__main__.KernelRegistrationTests.test_n729_is_six_stages_but_nine_functions) ... ok
+test_persistent_rounds_and_waves_do_not_multiply_registrations (__main__.KernelRegistrationTests.test_persistent_rounds_and_waves_do_not_multiply_registrations) ... ok
+test_plain_standalone_checks_stage_only_limit (__main__.KernelRegistrationTests.test_plain_standalone_checks_stage_only_limit) ... ok
+test_search_prunes_every_over_limit_task (__main__.KernelRegistrationTests.test_search_prunes_every_over_limit_task) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 14.960s
+
+OK

@@ -121,20 +121,19 @@ def check_report_shows_both_numbers_distinctly() -> None:
     assert kernel.m2ndp_memory_optimization_status == "NO_EQUIVALENT"
     expected_gpu_bytes = rocfft.gpu_logical_lds_bytes(24, half_lds=True)
     assert kernel.gpu_logical_shared_memory_bytes == expected_gpu_bytes == 96
-    assert kernel.gpu_shared_memory_bytes != kernel.gpu_logical_shared_memory_bytes, (
-        f"expected the M2NDP real scratchpad number ({kernel.gpu_shared_memory_bytes}) to differ "
-        f"from the GPU's own half_lds-adjusted number ({kernel.gpu_logical_shared_memory_bytes}) "
-        f"for this case -- otherwise this test isn't exercising a genuine divergence"
-    )
+    from planning.gpu_baseline.common import reconstruct_m2ndp_physical_plan
+    [physical] = reconstruct_m2ndp_physical_plan(result, target=_T)
+    assert kernel.gpu_shared_memory_bytes is None
+    assert physical.scratchpad_bytes != expected_gpu_bytes
 
     report = format_gpu_m2ndp_execution_report(result, target=_T)
     assert "gpu_memory_optimization:       half_lds" in report
     assert "m2ndp_memory_optimization_status: NO_EQUIVALENT" in report
     assert f"gpu_logical_shared_memory_bytes: {expected_gpu_bytes}" in report
-    assert f"scratchpad_bytes:              {kernel.gpu_shared_memory_bytes}" in report
+    assert f"scratchpad_bytes:              {physical.scratchpad_bytes}" in report
     print(
         f"    OK   report distinctly shows gpu_logical_shared_memory_bytes={expected_gpu_bytes} "
-        f"(GPU, half_lds-adjusted) and scratchpad_bytes={kernel.gpu_shared_memory_bytes} (M2NDP, "
+        f"(GPU, half_lds-adjusted) and scratchpad_bytes={physical.scratchpad_bytes} (M2NDP, "
         f"real, half_lds-UNaffected) as two separate numbers, plus NO_EQUIVALENT classification"
     )
 

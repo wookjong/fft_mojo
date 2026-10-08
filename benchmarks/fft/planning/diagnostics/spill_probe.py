@@ -181,7 +181,8 @@ def probe_spill_free(
     m2ndp_root: str | None = None,
     build_timeout: float = 120.0,
     run_timeout: float = 200.0,
-    persistent_mode: str = "physical",
+    persistent_mode: str | None = None,
+    persistent_copy_mode: str | None = None, persistent_vector_width: int = 4,
 ) -> SpillProbeResult:
     """Render `plan` (exactly as make_fft_kernel.py would, at this
     compute_lanes/narrow_middle_stages), build it against the real
@@ -239,7 +240,8 @@ def probe_spill_free(
     source = generate_recursive_fft_kernels(
         plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         reference_check=False, target=target, spread_across_units=spread_across_units,
-        persistent_mode=persistent_mode,
+        persistent_mode=persistent_mode, persistent_copy_mode=persistent_copy_mode,
+        persistent_vector_width=persistent_vector_width,
     )
     return probe_source_spill_free(
         source, mojo_root=mojo_root, m2ndp_root=m2ndp_root,
@@ -604,6 +606,13 @@ def _probe_plan(
         else min(simd_lanes, target.lmul1_float32_lanes)
     )
     root = plan.root
+    if isinstance(root, FFTLeafPlan) and root.tail_hybrid is not None:
+        return probe_spill_free(
+            plan, compute_lanes=compute_lanes, simd_lanes=simd_lanes,
+            narrow_middle_stages=narrow_middle_stages, target=target,
+            mojo_root=mojo_root, m2ndp_root=m2ndp_root,
+            build_timeout=build_timeout, run_timeout=run_timeout,
+        )
     if isinstance(root, FFTLeafPlan) and root.kernel.persistent is not None:
         return probe_persistent_kernel_spill_free(
             root.kernel, num_logical_blocks=root.r,

@@ -1,0 +1,15 @@
+test_benchmark_exports_independent_accounting (__main__.OriginalGPUPlanTests.test_benchmark_exports_independent_accounting) ... ok
+test_clfft_large_row_keeps_its_separate_post_transpose (__main__.OriginalGPUPlanTests.test_clfft_large_row_keeps_its_separate_post_transpose) ... ok
+test_fused_kernel_count_and_batch_traffic (__main__.OriginalGPUPlanTests.test_fused_kernel_count_and_batch_traffic) ... ok
+test_missing_capture_never_fabricates_zero_gpu_traffic (__main__.OriginalGPUPlanTests.test_missing_capture_never_fabricates_zero_gpu_traffic) ... ok
+test_native_transposes_are_not_counted_as_unfusing_overhead (__main__.OriginalGPUPlanTests.test_native_transposes_are_not_counted_as_unfusing_overhead) ... ok
+test_original_plan_retained_on_mapping_refusal (__main__.OriginalGPUPlanTests.test_original_plan_retained_on_mapping_refusal) ... ok
+test_raw_metadata_survives_slot_clipping_and_persistence (__main__.OriginalGPUPlanTests.test_raw_metadata_survives_slot_clipping_and_persistence) ... ok
+test_report_independent_sequences_and_unknown_fields (__main__.OriginalGPUPlanTests.test_report_independent_sequences_and_unknown_fields) ... ok
+test_snapshot_independent_of_physical_tree (__main__.OriginalGPUPlanTests.test_snapshot_independent_of_physical_tree) ... ok
+test_three_uploads_are_not_nine_gpu_kernels (__main__.OriginalGPUPlanTests.test_three_uploads_are_not_nine_gpu_kernels) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 2.387s
+
+OK

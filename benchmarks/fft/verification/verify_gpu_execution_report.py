@@ -69,8 +69,8 @@ def check_no_merged_fields() -> None:
     genuinely DIFFER in vocabulary (persistent: `logical_workers_per_fft`
     on the M2NDP side equals `gpu_threads_per_transform` on the GPU side
     numerically, by design -- see verify_gpu_m2ndp_execution_mapping.py --
-    but `gpu_transforms_per_workgroup` is None while `fft_slots_per_group`
-    is 1, a genuinely DIFFERENT pair of numbers/vocabulary), confirm the
+    but the original `gpu_transforms_per_workgroup` survives while physical
+    `fft_slots_per_group` is 1), confirm the
     report shows BOTH labels distinctly rather than collapsing them into
     one line."""
     result = vkfft.plan(512, batch=3, target=_T)

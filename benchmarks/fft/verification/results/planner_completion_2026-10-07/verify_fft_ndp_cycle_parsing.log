@@ -1,0 +1,6 @@
+  spill_probe.py: _parse_ndp_cycles multi-kernel-plan fix (2026-08-31):
+    OK   single-kernel plan: total == its own one Gantt value (517), unaffected by the fix
+    OK   5-struct split plan (real N=630 non-cooperative values): total=35246 (old wrong convention would have said 1867, ~19x too low)
+    OK   log with no Gantt lines -> None, not 0
+    OK   trailing unfinished task group contributes 0, not a stale carry-over
+[verify] ndp_cycles parsing fix: all checks passed

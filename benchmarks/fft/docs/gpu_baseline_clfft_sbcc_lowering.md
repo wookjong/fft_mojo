@@ -1,5 +1,11 @@
 # clFFT block-compute (SBCC) lowering onto M2NDP
 
+2026-10-07 audit update: this lowering preserves FFT mathematics and the factor
+split, but expands GPU fused kernels into separate FFT/transpose nodes. It does
+not preserve the original fusion or traffic cost. See
+[gpu_baseline_original_plan_and_lowering_overhead.md](gpu_baseline_original_plan_and_lowering_overhead.md)
+for the independent original plan and overhead accounting.
+
 ## The question
 
 `is_block_compute_length` previously gated `_plan_leaf_or_recurse` to

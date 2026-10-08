@@ -120,15 +120,13 @@ def check_frozen_plan_unaffected() -> None:
     GPU baseline should not silently start reasoning about M2NDP's own
     resource limits)."""
     result = vkfft.plan(_N, target=_T)
-    assert result.status is BaselineStatus.RESOURCE_INFEASIBLE, (
-        f"expected the frozen vkfft.plan(N={_N}) to still refuse with "
-        f"RESOURCE_INFEASIBLE (unchanged pre-fix behavior), got {result.status}"
-    )
+    assert result.status is BaselineStatus.OK
+    assert result.plan.root.kernel.persistent.storage_mode == "global"
     assert result.gpu_config.extra.get("workers_per_fft") is not None
     print(
         f"    OK   frozen vkfft.plan(N={_N}) unchanged: still chooses one-pass "
-        f"(8-byte convention) and still refuses RESOURCE_INFEASIBLE once mapped onto "
-        f"M2NDP -- this fix does not touch the frozen baseline's own decision"
+        f"(8-byte convention) and executes using global staging -- its original "
+        f"GPU decision is preserved"
     )
 
 

@@ -1,0 +1,225 @@
+{
+  "image": "ghcr.io/psal-postech/mojo-m2ndp:main",
+  "image_id": "b8155d935ba7",
+  "scope": "Functional execution/codegen validation; distinct workloads, no GPU comparison",
+  "host_compatibility": "MappedDomain bridge; temporary driver links libm",
+  "passed": 5,
+  "cases": [
+    {
+      "name": "vkfft_r12_b3",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 3743,
+      "time_us": 1.871,
+      "host_launches": 1,
+      "phase_launches": 1,
+      "kernel_exec_cycles": 2714,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function vkfft_r12_b3::FFTVkfftLeaf0::stage_0() void (): M2NDP kernel spills to memory (16-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "799d504def21bcee906acc466e877603ec453fb395e029a4415391a541007051",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            8
+          ],
+          "compute_lanes": null,
+          "kernel": "FFTVkfftLeaf0",
+          "launch": {
+            "alignment_bytes": 256,
+            "chunk_uthreads": 8,
+            "padded": false,
+            "round_fft_capacity": 3,
+            "round_uthread_capacity": 3,
+            "simd_lanes": 8,
+            "slots_per_chunk": 8,
+            "spread_across_units": false,
+            "target_units": 32,
+            "total_ffts": 3,
+            "workers_per_fft": 1
+          },
+          "loop_stages": true,
+          "narrow_middle_stages": false
+        }
+      ],
+      "run_log": "vkfft_r12_b3.run.log"
+    },
+    {
+      "name": "vkfft_r14_b3",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 8831,
+      "time_us": 4.415,
+      "host_launches": 1,
+      "phase_launches": 1,
+      "kernel_exec_cycles": 7803,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function vkfft_r14_b3::FFTVkfftLeaf0::stage_0() void (): M2NDP kernel spills to memory (16-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "facd41b73c5f443352c03f93d17773fd8d165d0cbb9893a3b9d90b6bbac1bfe9",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            8
+          ],
+          "compute_lanes": null,
+          "kernel": "FFTVkfftLeaf0",
+          "launch": {
+            "alignment_bytes": 256,
+            "chunk_uthreads": 8,
+            "padded": false,
+            "round_fft_capacity": 3,
+            "round_uthread_capacity": 3,
+            "simd_lanes": 8,
+            "slots_per_chunk": 8,
+            "spread_across_units": false,
+            "target_units": 32,
+            "total_ffts": 3,
+            "workers_per_fft": 1
+          },
+          "loop_stages": true,
+          "narrow_middle_stages": false
+        }
+      ],
+      "run_log": "vkfft_r14_b3.run.log"
+    },
+    {
+      "name": "vkfft_r15_b3",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 5583,
+      "time_us": 2.792,
+      "host_launches": 1,
+      "phase_launches": 1,
+      "kernel_exec_cycles": 4568,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function vkfft_r15_b3::FFTVkfftLeaf0::stage_0() void (): M2NDP kernel spills to memory (16-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "18fa75e713036b40f1036d2d5be4961d6e5f881e50bceb815c058e1a29822937",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            8
+          ],
+          "compute_lanes": null,
+          "kernel": "FFTVkfftLeaf0",
+          "launch": {
+            "alignment_bytes": 256,
+            "chunk_uthreads": 8,
+            "padded": false,
+            "round_fft_capacity": 3,
+            "round_uthread_capacity": 3,
+            "simd_lanes": 8,
+            "slots_per_chunk": 8,
+            "spread_across_units": false,
+            "target_units": 32,
+            "total_ffts": 3,
+            "workers_per_fft": 1
+          },
+          "loop_stages": true,
+          "narrow_middle_stages": false
+        }
+      ],
+      "run_log": "vkfft_r15_b3.run.log"
+    },
+    {
+      "name": "global_n64_w17_b65",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 18143,
+      "time_us": 9.072,
+      "host_launches": 1,
+      "phase_launches": 12,
+      "kernel_exec_cycles": 15737,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function global_n64_w17_b65::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (160-byte frame); spills go to DRAM",
+        "warning: <unknown>:0:0: in function global_n64_w17_b65::PersistentFFT::stage_1() void (): M2NDP kernel spills to memory (16-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "98c4e26fe1904bcaad726020ae73e498583d9bb0f9aaa377290a9addb71bd397",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "copy_mode": "scalar",
+          "dram_bytes": 199680,
+          "host_launches": 1,
+          "internal_rounds": 3,
+          "kernel": "PersistentFFT",
+          "launch": null,
+          "loop_stages": false,
+          "narrow_middle_stages": true,
+          "persistent_mode": "physical",
+          "phase_launches": 12,
+          "registered_functions": 4,
+          "scratchpad_bytes": 32,
+          "storage_mode": "global",
+          "tracker_bytes": 32,
+          "vector_width": 1,
+          "workspace_bytes": 32768
+        }
+      ],
+      "run_log": "global_n64_w17_b65.run.log"
+    },
+    {
+      "name": "rocfft_global_n8192_b2",
+      "config": "M2NDP",
+      "verified": true,
+      "config_md5": "33d240c5",
+      "core_mhz": 2000,
+      "cycles": 467111,
+      "time_us": 233.555,
+      "host_launches": 1,
+      "phase_launches": 6,
+      "kernel_exec_cycles": 465360,
+      "spill_warnings": [
+        "warning: <unknown>:0:0: in function rocfft_global_n8192_b2::FFTRocfftDefaultM2ndp::stage_0() void (): M2NDP kernel spills to memory (16-byte frame); spills go to DRAM",
+        "warning: <unknown>:0:0: in function rocfft_global_n8192_b2::FFTRocfftDefaultM2ndp::stage_1() void (): M2NDP kernel spills to memory (320-byte frame); spills go to DRAM",
+        "warning: <unknown>:0:0: in function rocfft_global_n8192_b2::FFTRocfftDefaultM2ndp::stage_2() void (): M2NDP kernel spills to memory (368-byte frame); spills go to DRAM",
+        "warning: <unknown>:0:0: in function rocfft_global_n8192_b2::FFTRocfftDefaultM2ndp::stage_3() void (): M2NDP kernel spills to memory (400-byte frame); spills go to DRAM",
+        "warning: <unknown>:0:0: in function rocfft_global_n8192_b2::FFTRocfftDefaultM2ndp::stage_4() void (): M2NDP kernel spills to memory (320-byte frame); spills go to DRAM"
+      ],
+      "source_sha256": "9e75062effdf3a0d5c974c52ba9961b3d9811521c188e7391f4dc7aff1712407",
+      "execution": [
+        {
+          "arithmetic_lanes": [
+            4,
+            2,
+            2,
+            2,
+            4
+          ],
+          "compute_lanes": 4,
+          "copy_mode": "scalar",
+          "dram_bytes": 1310720,
+          "host_launches": 1,
+          "internal_rounds": 1,
+          "kernel": "FFTRocfftDefaultM2ndp",
+          "launch": null,
+          "loop_stages": true,
+          "narrow_middle_stages": true,
+          "persistent_mode": "physical",
+          "phase_launches": 6,
+          "registered_functions": 6,
+          "scratchpad_bytes": 32,
+          "storage_mode": "global",
+          "tracker_bytes": 32,
+          "vector_width": 1,
+          "workspace_bytes": 262144
+        }
+      ],
+      "run_log": "rocfft_global_n8192_b2.run.log"
+    }
+  ]
+}

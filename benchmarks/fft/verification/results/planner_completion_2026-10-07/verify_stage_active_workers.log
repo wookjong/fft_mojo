@@ -1,0 +1,8 @@
+  Stage-local active physical worker diagnostics (P2.1):
+    OK   N=64 radices=(4,4,4): every stage has active_physical_workers=2 < 8 (6 idle lanes), confirmed against real emitted batch buckets
+    OK   N=2048 radices=(4,4,4,4,4,2): stages 0-4 have active_physical_workers=8 (no idle lanes), perfectly balanced (imbalance_ratio=1.0)
+    OK   N=2048 stage 5: max_batches_per_lane=16 (> 8) across all 8 active physical lanes, still perfectly balanced
+    OK   N=105 radices=(3,5,7) workers_per_fft=10 (not divisible by 8): every stage's own physical_batches_per_lane is genuinely uneven, imbalance_ratio computed correctly (stage0=1.60, stage1=1.33)
+    OK   cooperative leaf (workers_per_fft=4): physical_workers_per_group == logical_workers_per_fft exactly (no virtualization), strategy correctly tagged
+    OK   report's own batch totals match the underlying plan's raw batch counts exactly (no invented/estimated count)
+[verify] stage active worker diagnostics: all checks passed

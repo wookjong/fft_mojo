@@ -1,0 +1,269 @@
+[
+  {
+    "name": "plain_cap1_n64_b64",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "kernel": "FFTFP32",
+        "launch": {
+          "alignment_bytes": 256,
+          "chunk_uthreads": 8,
+          "padded": true,
+          "round_fft_capacity": 32,
+          "round_uthread_capacity": 256,
+          "simd_lanes": 8,
+          "slots_per_chunk": 1,
+          "spread_across_units": true,
+          "target_units": 32,
+          "total_ffts": 64,
+          "workers_per_fft": 1
+        },
+        "loop_stages": false,
+        "narrow_middle_stages": true
+      }
+    ]
+  },
+  {
+    "name": "coop_cap2_n64_b65",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          4,
+          4,
+          4
+        ],
+        "compute_lanes": 4,
+        "kernel": "FFTFP32Coop",
+        "launch": {
+          "alignment_bytes": 256,
+          "chunk_uthreads": 8,
+          "padded": false,
+          "round_fft_capacity": 32,
+          "round_uthread_capacity": 256,
+          "simd_lanes": 8,
+          "slots_per_chunk": 1,
+          "spread_across_units": true,
+          "target_units": 32,
+          "total_ffts": 65,
+          "workers_per_fft": 8
+        },
+        "loop_stages": false
+      }
+    ]
+  },
+  {
+    "name": "persistent_physical_w16_b33",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "copy_mode": "vectorized_contiguous",
+        "host_launches": 1,
+        "internal_rounds": 2,
+        "kernel": "PersistentFFT",
+        "launch": null,
+        "narrow_middle_stages": true,
+        "persistent_mode": "physical",
+        "phase_launches": 10,
+        "registered_functions": 5,
+        "scratchpad_bytes": 1056,
+        "tracker_bytes": 32,
+        "vector_width": 4
+      }
+    ]
+  },
+  {
+    "name": "persistent_fused_w17_b33",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "copy_mode": "vectorized_contiguous",
+        "host_launches": 1,
+        "internal_rounds": 2,
+        "kernel": "PersistentFFT",
+        "launch": null,
+        "narrow_middle_stages": true,
+        "persistent_mode": "fused",
+        "phase_launches": 10,
+        "registered_functions": 5,
+        "scratchpad_bytes": 1056,
+        "tracker_bytes": 32,
+        "vector_width": 4
+      }
+    ]
+  },
+  {
+    "name": "persistent_wave_w10_b65",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "copy_mode": "vectorized_contiguous",
+        "host_launches": 1,
+        "internal_rounds": 3,
+        "kernel": "PersistentFFT",
+        "launch": null,
+        "narrow_middle_stages": true,
+        "persistent_mode": "wave",
+        "phase_launches": 24,
+        "registered_functions": 5,
+        "scratchpad_bytes": 1088,
+        "tracker_bytes": 64,
+        "vector_width": 4
+      }
+    ]
+  },
+  {
+    "name": "persistent_wave_rtx3060_inverse_b57",
+    "config": "M2NDP_RTX3060",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "copy_mode": "scalar",
+        "host_launches": 1,
+        "internal_rounds": 3,
+        "kernel": "PersistentFFT",
+        "launch": null,
+        "narrow_middle_stages": true,
+        "persistent_mode": "wave",
+        "phase_launches": 24,
+        "registered_functions": 5,
+        "scratchpad_bytes": 1088,
+        "tracker_bytes": 64,
+        "vector_width": 1
+      }
+    ]
+  },
+  {
+    "name": "hybrid_cooperative_b65",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "copy_mode": "scalar",
+        "host_launches": 1,
+        "internal_rounds": 2,
+        "kernel": "PersistentFFT",
+        "launch": null,
+        "narrow_middle_stages": true,
+        "persistent_mode": "physical",
+        "phase_launches": 10,
+        "registered_functions": 5,
+        "scratchpad_bytes": 1056,
+        "tracker_bytes": 32,
+        "vector_width": 1
+      },
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "kernel": "TailFFT",
+        "launch": {
+          "alignment_bytes": 256,
+          "chunk_uthreads": 8,
+          "padded": false,
+          "round_fft_capacity": 32,
+          "round_uthread_capacity": 256,
+          "simd_lanes": 8,
+          "slots_per_chunk": 1,
+          "spread_across_units": true,
+          "target_units": 32,
+          "total_ffts": 1,
+          "workers_per_fft": 8
+        },
+        "loop_stages": false,
+        "narrow_middle_stages": true
+      }
+    ]
+  },
+  {
+    "name": "recursive_cooperative_n960_b2",
+    "config": "M2NDP",
+    "execution": [
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "kernel": "FFTRecNear0",
+        "launch": {
+          "alignment_bytes": 256,
+          "chunk_uthreads": 8,
+          "padded": false,
+          "round_fft_capacity": 2048,
+          "round_uthread_capacity": 4096,
+          "simd_lanes": 8,
+          "slots_per_chunk": 4,
+          "spread_across_units": true,
+          "target_units": 32,
+          "total_ffts": 64,
+          "workers_per_fft": 2
+        },
+        "loop_stages": true,
+        "narrow_middle_stages": true
+      },
+      {
+        "arithmetic_lanes": [
+          4,
+          2,
+          4
+        ],
+        "compute_lanes": 4,
+        "kernel": "FFTRecLeaf1",
+        "launch": {
+          "alignment_bytes": 256,
+          "chunk_uthreads": 8,
+          "padded": false,
+          "round_fft_capacity": 1920,
+          "round_uthread_capacity": 3840,
+          "simd_lanes": 8,
+          "slots_per_chunk": 4,
+          "spread_across_units": true,
+          "target_units": 32,
+          "total_ffts": 60,
+          "workers_per_fft": 2
+        },
+        "loop_stages": true,
+        "narrow_middle_stages": true
+      }
+    ]
+  }
+]

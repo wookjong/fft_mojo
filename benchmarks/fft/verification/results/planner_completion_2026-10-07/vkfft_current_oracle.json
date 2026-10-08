@@ -1,0 +1,4751 @@
+{
+  "upstream_commit": "066a17c17068c0f11c9298d848c2976c71fad1c1",
+  "scheduler_sha256": "9b37b786a70cd416be468e637d21bf463ad307e98b6217b2c0149878460e5809",
+  "axisblock_sha256": "21eb1ec88ed2db54f3d81dafd012aba672c0bf7ec2795ac4c2643b2ea1803220",
+  "port_sha256": "7664975a482e837f4296367d59cd1f69368d32990a99c1a5f8e670462ec6c0ea",
+  "shared_bytes": 122880,
+  "complex_size_bytes": 8,
+  "scope": "Compare the current port with compiled, pinned VkFFT host code.\n\nRun from benchmarks/fft: python -m verification.audit_fft_planner_porting\nRequires the sibling VkFFT checkout and a host C++ compiler (no GPU).\nThe oracle compiles original register, radix-optimization, and upload-zero\nAxisBlock blocks. It covers direct single-upload FFTs <=4096 with register\nboost one, NVIDIA defaults, and the portable backend (VKFFT_BACKEND=0).\nQuad-flag rows identify the alternate register table with an otherwise\nfixed FP32 layout; they are not complete quad-precision library plans.\nThis is a review artifact: discrepancies are recorded, not auto-corrected.\n",
+  "default_sweep_summary": {
+    "different_radices": [
+      12,
+      16,
+      20,
+      24,
+      32,
+      40,
+      48,
+      64,
+      80,
+      96,
+      120,
+      128,
+      192,
+      216,
+      240,
+      256,
+      320,
+      384,
+      480,
+      512,
+      768,
+      960,
+      1024,
+      1536,
+      2048,
+      3072,
+      4096
+    ],
+    "different_registers": [
+      12,
+      20,
+      24,
+      40,
+      48,
+      80,
+      96,
+      120,
+      192,
+      240,
+      320,
+      384,
+      480,
+      768,
+      960,
+      1536,
+      3072
+    ],
+    "different_workers": [
+      12,
+      20,
+      24,
+      40,
+      48,
+      80,
+      96,
+      120,
+      192,
+      240,
+      320,
+      384,
+      480,
+      768,
+      960,
+      1536,
+      3072
+    ]
+  },
+  "cases": [
+    {
+      "length": 12,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12
+      ],
+      "upstream_workers": 1,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        6,
+        2
+      ],
+      "port_workers": 2,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 12,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2
+      ],
+      "upstream_workers": 2,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        6,
+        2
+      ],
+      "port_workers": 2,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 12,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12
+      ],
+      "upstream_workers": 1,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        6,
+        2
+      ],
+      "port_workers": 16,
+      "port_slots": 2,
+      "port_status": "OK"
+    },
+    {
+      "length": 12,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2
+      ],
+      "upstream_workers": 2,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        6,
+        2
+      ],
+      "port_workers": 16,
+      "port_slots": 2,
+      "port_status": "OK"
+    },
+    {
+      "length": 12,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12
+      ],
+      "upstream_workers": 1,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        6,
+        2
+      ],
+      "port_workers": 32,
+      "port_slots": 2,
+      "port_status": "OK"
+    },
+    {
+      "length": 12,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2
+      ],
+      "upstream_workers": 2,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        6,
+        2
+      ],
+      "port_workers": 32,
+      "port_slots": 2,
+      "port_status": "OK"
+    },
+    {
+      "length": 15,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 15,
+      "upstream_final_min_registers": 15,
+      "upstream_radices": [
+        15
+      ],
+      "upstream_workers": 1,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 3,
+      "port_radices": [
+        5,
+        3
+      ],
+      "port_workers": 5,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 15,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 3,
+      "upstream_final_min_registers": 3,
+      "upstream_radices": [
+        3,
+        5
+      ],
+      "upstream_workers": 5,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 3,
+      "port_radices": [
+        5,
+        3
+      ],
+      "port_workers": 5,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 15,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 15,
+      "upstream_final_min_registers": 15,
+      "upstream_radices": [
+        15
+      ],
+      "upstream_workers": 1,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 3,
+      "port_radices": [
+        5,
+        3
+      ],
+      "port_workers": 16,
+      "port_slots": 5,
+      "port_status": "OK"
+    },
+    {
+      "length": 15,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 3,
+      "upstream_final_min_registers": 3,
+      "upstream_radices": [
+        3,
+        5
+      ],
+      "upstream_workers": 5,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 3,
+      "port_radices": [
+        5,
+        3
+      ],
+      "port_workers": 16,
+      "port_slots": 5,
+      "port_status": "OK"
+    },
+    {
+      "length": 15,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 15,
+      "upstream_final_min_registers": 15,
+      "upstream_radices": [
+        15
+      ],
+      "upstream_workers": 1,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 3,
+      "port_radices": [
+        5,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 5,
+      "port_status": "OK"
+    },
+    {
+      "length": 15,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 3,
+      "upstream_final_min_registers": 3,
+      "upstream_radices": [
+        3,
+        5
+      ],
+      "upstream_workers": 5,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 3,
+      "port_radices": [
+        5,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 5,
+      "port_status": "OK"
+    },
+    {
+      "length": 16,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        4,
+        4
+      ],
+      "port_workers": 4,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 16,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        4,
+        4
+      ],
+      "port_workers": 4,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 16,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        4,
+        4
+      ],
+      "port_workers": 16,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 16,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        4,
+        4
+      ],
+      "port_workers": 16,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 16,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        4,
+        4
+      ],
+      "port_workers": 32,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 16,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        4,
+        4
+      ],
+      "port_workers": 32,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 20,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        2
+      ],
+      "upstream_workers": 2,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        2
+      ],
+      "port_workers": 5,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 20,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5
+      ],
+      "upstream_workers": 5,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        2
+      ],
+      "port_workers": 5,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 20,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        2
+      ],
+      "upstream_workers": 2,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        2
+      ],
+      "port_workers": 16,
+      "port_slots": 5,
+      "port_status": "OK"
+    },
+    {
+      "length": 20,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5
+      ],
+      "upstream_workers": 5,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        2
+      ],
+      "port_workers": 16,
+      "port_slots": 5,
+      "port_status": "OK"
+    },
+    {
+      "length": 20,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        2
+      ],
+      "upstream_workers": 2,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        2
+      ],
+      "port_workers": 32,
+      "port_slots": 5,
+      "port_status": "OK"
+    },
+    {
+      "length": 20,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5
+      ],
+      "upstream_workers": 5,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        2
+      ],
+      "port_workers": 32,
+      "port_slots": 5,
+      "port_status": "OK"
+    },
+    {
+      "length": 24,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        2
+      ],
+      "upstream_workers": 2,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        3
+      ],
+      "port_workers": 4,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 24,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        3
+      ],
+      "port_workers": 4,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 24,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        2
+      ],
+      "upstream_workers": 2,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        3
+      ],
+      "port_workers": 16,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 24,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        3
+      ],
+      "port_workers": 16,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 24,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        2
+      ],
+      "upstream_workers": 2,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 24,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 30,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6
+      ],
+      "upstream_workers": 6,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        3
+      ],
+      "port_workers": 6,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 30,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6
+      ],
+      "upstream_workers": 6,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        3
+      ],
+      "port_workers": 6,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 30,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6
+      ],
+      "upstream_workers": 6,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        3
+      ],
+      "port_workers": 16,
+      "port_slots": 6,
+      "port_status": "OK"
+    },
+    {
+      "length": 30,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6
+      ],
+      "upstream_workers": 6,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        3
+      ],
+      "port_workers": 16,
+      "port_slots": 6,
+      "port_status": "OK"
+    },
+    {
+      "length": 30,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6
+      ],
+      "upstream_workers": 6,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 6,
+      "port_status": "OK"
+    },
+    {
+      "length": 30,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6
+      ],
+      "upstream_workers": 6,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 6,
+      "port_status": "OK"
+    },
+    {
+      "length": 32,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        4
+      ],
+      "port_workers": 4,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 32,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        4
+      ],
+      "port_workers": 4,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 32,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        4
+      ],
+      "port_workers": 16,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 32,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        4
+      ],
+      "port_workers": 16,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 32,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        4
+      ],
+      "port_workers": 32,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 32,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        4
+      ],
+      "port_workers": 32,
+      "port_slots": 4,
+      "port_status": "OK"
+    },
+    {
+      "length": 40,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        5
+      ],
+      "upstream_workers": 5,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        4
+      ],
+      "port_workers": 10,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 40,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5,
+        2
+      ],
+      "upstream_workers": 10,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        4
+      ],
+      "port_workers": 10,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 40,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        5
+      ],
+      "upstream_workers": 5,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        4
+      ],
+      "port_workers": 16,
+      "port_slots": 10,
+      "port_status": "OK"
+    },
+    {
+      "length": 40,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5,
+        2
+      ],
+      "upstream_workers": 10,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        4
+      ],
+      "port_workers": 16,
+      "port_slots": 10,
+      "port_status": "OK"
+    },
+    {
+      "length": 40,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        5
+      ],
+      "upstream_workers": 5,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        4
+      ],
+      "port_workers": 16,
+      "port_slots": 10,
+      "port_status": "OK"
+    },
+    {
+      "length": 40,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5,
+        2
+      ],
+      "upstream_workers": 10,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        4
+      ],
+      "port_workers": 16,
+      "port_slots": 10,
+      "port_status": "OK"
+    },
+    {
+      "length": 48,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6
+      ],
+      "port_workers": 8,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 48,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6
+      ],
+      "port_workers": 8,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 48,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6
+      ],
+      "port_workers": 16,
+      "port_slots": 8,
+      "port_status": "OK"
+    },
+    {
+      "length": 48,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6
+      ],
+      "port_workers": 16,
+      "port_slots": 8,
+      "port_status": "OK"
+    },
+    {
+      "length": 48,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4
+      ],
+      "upstream_workers": 4,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6
+      ],
+      "port_workers": 16,
+      "port_slots": 8,
+      "port_status": "OK"
+    },
+    {
+      "length": 48,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6
+      ],
+      "port_workers": 16,
+      "port_slots": 8,
+      "port_status": "OK"
+    },
+    {
+      "length": 60,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        5,
+        12
+      ],
+      "upstream_workers": 6,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6
+      ],
+      "port_workers": 12,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 60,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2
+      ],
+      "upstream_workers": 12,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6
+      ],
+      "port_workers": 12,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 60,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        5,
+        12
+      ],
+      "upstream_workers": 6,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6
+      ],
+      "port_workers": 16,
+      "port_slots": 12,
+      "port_status": "OK"
+    },
+    {
+      "length": 60,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2
+      ],
+      "upstream_workers": 12,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6
+      ],
+      "port_workers": 16,
+      "port_slots": 12,
+      "port_status": "OK"
+    },
+    {
+      "length": 60,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        5,
+        12
+      ],
+      "upstream_workers": 6,
+      "upstream_slots": 32,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6
+      ],
+      "port_workers": 16,
+      "port_slots": 12,
+      "port_status": "OK"
+    },
+    {
+      "length": 60,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2
+      ],
+      "upstream_workers": 12,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6
+      ],
+      "port_workers": 16,
+      "port_slots": 12,
+      "port_status": "OK"
+    },
+    {
+      "length": 64,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8
+      ],
+      "port_workers": 8,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 64,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8
+      ],
+      "port_workers": 8,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 64,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8
+      ],
+      "port_workers": 16,
+      "port_slots": 8,
+      "port_status": "OK"
+    },
+    {
+      "length": 64,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8
+      ],
+      "port_workers": 16,
+      "port_slots": 8,
+      "port_status": "OK"
+    },
+    {
+      "length": 64,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8
+      ],
+      "port_workers": 16,
+      "port_slots": 8,
+      "port_status": "OK"
+    },
+    {
+      "length": 64,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8
+      ],
+      "port_workers": 16,
+      "port_slots": 8,
+      "port_status": "OK"
+    },
+    {
+      "length": 80,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        5,
+        2
+      ],
+      "upstream_workers": 10,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8
+      ],
+      "port_workers": 20,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 80,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5,
+        4
+      ],
+      "upstream_workers": 20,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8
+      ],
+      "port_workers": 20,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 80,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        5,
+        2
+      ],
+      "upstream_workers": 10,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8
+      ],
+      "port_workers": 8,
+      "port_slots": 20,
+      "port_status": "OK"
+    },
+    {
+      "length": 80,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5,
+        4
+      ],
+      "upstream_workers": 20,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8
+      ],
+      "port_workers": 8,
+      "port_slots": 20,
+      "port_status": "OK"
+    },
+    {
+      "length": 80,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        5,
+        2
+      ],
+      "upstream_workers": 10,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8
+      ],
+      "port_workers": 8,
+      "port_slots": 20,
+      "port_status": "OK"
+    },
+    {
+      "length": 80,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5,
+        4
+      ],
+      "upstream_workers": 20,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8
+      ],
+      "port_workers": 8,
+      "port_slots": 20,
+      "port_status": "OK"
+    },
+    {
+      "length": 96,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        2
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6,
+        2
+      ],
+      "port_workers": 16,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 96,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6,
+        2
+      ],
+      "port_workers": 16,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 96,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        2
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 16,
+      "port_status": "OK"
+    },
+    {
+      "length": 96,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 16,
+      "port_status": "OK"
+    },
+    {
+      "length": 96,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        2
+      ],
+      "upstream_workers": 8,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 16,
+      "port_status": "OK"
+    },
+    {
+      "length": 96,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        6,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 16,
+      "port_status": "OK"
+    },
+    {
+      "length": 120,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12
+      ],
+      "upstream_workers": 12,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6,
+        2
+      ],
+      "port_workers": 24,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 120,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2
+      ],
+      "upstream_workers": 24,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6,
+        2
+      ],
+      "port_workers": 24,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 120,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12
+      ],
+      "upstream_workers": 12,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 24,
+      "port_status": "OK"
+    },
+    {
+      "length": 120,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2
+      ],
+      "upstream_workers": 24,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 24,
+      "port_status": "OK"
+    },
+    {
+      "length": 120,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12
+      ],
+      "upstream_workers": 12,
+      "upstream_slots": 16,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 24,
+      "port_status": "OK"
+    },
+    {
+      "length": 120,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2
+      ],
+      "upstream_workers": 24,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        6,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 24,
+      "port_status": "OK"
+    },
+    {
+      "length": 128,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        2
+      ],
+      "port_workers": 16,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 128,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        2
+      ],
+      "port_workers": 16,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 128,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 16,
+      "port_status": "OK"
+    },
+    {
+      "length": 128,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 16,
+      "port_status": "OK"
+    },
+    {
+      "length": 128,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 16,
+      "port_status": "OK"
+    },
+    {
+      "length": 128,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        2
+      ],
+      "port_workers": 8,
+      "port_slots": 16,
+      "port_status": "OK"
+    },
+    {
+      "length": 192,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 192,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 192,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 192,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 192,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4
+      ],
+      "upstream_workers": 16,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 192,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        3
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 210,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 14,
+      "upstream_final_min_registers": 14,
+      "upstream_radices": [
+        14,
+        15
+      ],
+      "upstream_workers": 15,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        7,
+        3
+      ],
+      "port_workers": 42,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 210,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        7
+      ],
+      "upstream_workers": 42,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        7,
+        3
+      ],
+      "port_workers": 42,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 210,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 14,
+      "upstream_final_min_registers": 14,
+      "upstream_radices": [
+        14,
+        15
+      ],
+      "upstream_workers": 15,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        7,
+        3
+      ],
+      "port_workers": 42,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 210,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        7
+      ],
+      "upstream_workers": 42,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        7,
+        3
+      ],
+      "port_workers": 42,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 210,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 14,
+      "upstream_final_min_registers": 14,
+      "upstream_radices": [
+        14,
+        15
+      ],
+      "upstream_workers": 15,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        7,
+        3
+      ],
+      "port_workers": 42,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 210,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        7
+      ],
+      "upstream_workers": 42,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        7,
+        3
+      ],
+      "port_workers": 42,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 216,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        6,
+        6
+      ],
+      "upstream_workers": 36,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        9,
+        8,
+        3
+      ],
+      "port_workers": 36,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 216,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        6,
+        6
+      ],
+      "upstream_workers": 36,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        9,
+        8,
+        3
+      ],
+      "port_workers": 36,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 216,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        6,
+        6
+      ],
+      "upstream_workers": 36,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        9,
+        8,
+        3
+      ],
+      "port_workers": 36,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 216,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        6,
+        6
+      ],
+      "upstream_workers": 36,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        9,
+        8,
+        3
+      ],
+      "port_workers": 36,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 216,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        6,
+        6
+      ],
+      "upstream_workers": 36,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        9,
+        8,
+        3
+      ],
+      "port_workers": 36,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 216,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        6,
+        6
+      ],
+      "upstream_workers": 36,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        9,
+        8,
+        3
+      ],
+      "port_workers": 36,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 240,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12,
+        2
+      ],
+      "upstream_workers": 24,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        3
+      ],
+      "port_workers": 48,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 240,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 48,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        3
+      ],
+      "port_workers": 48,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 240,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12,
+        2
+      ],
+      "upstream_workers": 24,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        3
+      ],
+      "port_workers": 48,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 240,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 48,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        3
+      ],
+      "port_workers": 48,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 240,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12,
+        2
+      ],
+      "upstream_workers": 24,
+      "upstream_slots": 8,
+      "upstream_axis_swapped": true,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        3
+      ],
+      "port_workers": 48,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 240,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 48,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        3
+      ],
+      "port_workers": 48,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 256,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        4
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 256,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        4
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 256,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        4
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 256,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        4
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 256,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        4
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 256,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        4
+      ],
+      "port_workers": 32,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 320,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        5
+      ],
+      "upstream_workers": 40,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8,
+        4
+      ],
+      "port_workers": 80,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 320,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5,
+        4,
+        4
+      ],
+      "upstream_workers": 80,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8,
+        4
+      ],
+      "port_workers": 80,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 320,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        5
+      ],
+      "upstream_workers": 40,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8,
+        4
+      ],
+      "port_workers": 80,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 320,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5,
+        4,
+        4
+      ],
+      "upstream_workers": 80,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8,
+        4
+      ],
+      "port_workers": 80,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 320,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        5
+      ],
+      "upstream_workers": 40,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8,
+        4
+      ],
+      "port_workers": 80,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 320,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 4,
+      "upstream_final_min_registers": 4,
+      "upstream_radices": [
+        4,
+        5,
+        4,
+        4
+      ],
+      "upstream_workers": 80,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 4,
+      "port_radices": [
+        10,
+        8,
+        4
+      ],
+      "port_workers": 80,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 384,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        2
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 384,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 384,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        2
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 384,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 384,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        2
+      ],
+      "upstream_workers": 32,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 384,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 480,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12,
+        4
+      ],
+      "upstream_workers": 48,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6
+      ],
+      "port_workers": 96,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 480,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 96,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6
+      ],
+      "port_workers": 96,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 480,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12,
+        4
+      ],
+      "upstream_workers": 48,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6
+      ],
+      "port_workers": 96,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 480,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 96,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6
+      ],
+      "port_workers": 96,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 480,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12,
+        4
+      ],
+      "upstream_workers": 48,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6
+      ],
+      "port_workers": 96,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 480,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 96,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6
+      ],
+      "port_workers": 96,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 512,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 512,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 512,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 512,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 512,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 512,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8
+      ],
+      "port_workers": 64,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 630,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 14,
+      "upstream_final_min_registers": 14,
+      "upstream_radices": [
+        14,
+        15,
+        3
+      ],
+      "upstream_workers": 45,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        9,
+        7
+      ],
+      "port_workers": 126,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 630,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        7,
+        3
+      ],
+      "upstream_workers": 126,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        9,
+        7
+      ],
+      "port_workers": 126,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 630,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 14,
+      "upstream_final_min_registers": 14,
+      "upstream_radices": [
+        14,
+        15,
+        3
+      ],
+      "upstream_workers": 45,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        9,
+        7
+      ],
+      "port_workers": 126,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 630,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        7,
+        3
+      ],
+      "upstream_workers": 126,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        9,
+        7
+      ],
+      "port_workers": 126,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 630,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 14,
+      "upstream_final_min_registers": 14,
+      "upstream_radices": [
+        14,
+        15,
+        3
+      ],
+      "upstream_workers": 45,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        9,
+        7
+      ],
+      "port_workers": 126,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 630,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        7,
+        3
+      ],
+      "upstream_workers": 126,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        9,
+        7
+      ],
+      "port_workers": 126,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 768,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        4
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 768,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 768,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        4
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 768,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 768,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        4
+      ],
+      "upstream_workers": 64,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 768,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 960,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12,
+        4,
+        2
+      ],
+      "upstream_workers": 96,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 192,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 960,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 192,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 192,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 960,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12,
+        4,
+        2
+      ],
+      "upstream_workers": 96,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 192,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 960,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 192,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 192,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 960,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 10,
+      "upstream_final_min_registers": 10,
+      "upstream_radices": [
+        10,
+        12,
+        4,
+        2
+      ],
+      "upstream_workers": 96,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 192,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 960,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 5,
+      "upstream_final_min_registers": 5,
+      "upstream_radices": [
+        5,
+        6,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 192,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 5,
+      "port_radices": [
+        10,
+        8,
+        6,
+        2
+      ],
+      "port_workers": 192,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1024,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1024,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1024,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1024,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1024,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1024,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        2
+      ],
+      "port_workers": 128,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1536,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        4,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        3
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1536,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        3
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1536,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        4,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        3
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1536,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        3
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1536,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        4,
+        2
+      ],
+      "upstream_workers": 128,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        3
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 1536,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        3
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 2048,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 2048,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 2048,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 2048,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 2048,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 2048,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        4
+      ],
+      "port_workers": 256,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 3072,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        4,
+        4
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        6
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 3072,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 512,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        6
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 3072,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        4,
+        4
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        6
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 3072,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 512,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        6
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 3072,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 12,
+      "upstream_final_min_registers": 12,
+      "upstream_radices": [
+        12,
+        4,
+        4,
+        4,
+        4
+      ],
+      "upstream_workers": 256,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        6
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 3072,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 6,
+      "upstream_final_min_registers": 6,
+      "upstream_radices": [
+        6,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "upstream_workers": 512,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 6,
+      "port_radices": [
+        8,
+        8,
+        8,
+        6
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 4096,
+      "batch": 1,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 512,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 4096,
+      "batch": 1,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 512,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 4096,
+      "batch": 16,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 512,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 4096,
+      "batch": 16,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 512,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 4096,
+      "batch": 32,
+      "precision": "fp32",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 512,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    },
+    {
+      "length": 4096,
+      "batch": 32,
+      "precision": "quad",
+      "upstream_initial_min_registers": 8,
+      "upstream_final_min_registers": 8,
+      "upstream_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "upstream_workers": 512,
+      "upstream_slots": 1,
+      "upstream_axis_swapped": false,
+      "port_min_registers": 8,
+      "port_radices": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "port_workers": 512,
+      "port_slots": 1,
+      "port_status": "OK"
+    }
+  ]
+}

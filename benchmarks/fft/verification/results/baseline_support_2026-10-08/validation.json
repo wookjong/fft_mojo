@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-08",
+  "scope": "1D C2C FP32 contiguous batch execution strategy and codegeneration",
+  "regression": {
+    "command": "python -m unittest discover -s verification -p 'verify*.py' -q",
+    "tests": 94,
+    "passed": 94,
+    "seconds": 118.809
+  },
+  "planner_and_registration": {
+    "command": "python verification/audit_fft_baseline_support.py",
+    "cases": 684,
+    "passed": 684,
+    "artifact": "planner_matrix.json",
+    "scope": "Plan construction and distinct kernel registration; not simulator execution"
+  },
+  "simulator": {
+    "command": "python3 /fft-work/verification/simulate_fft_baseline_support.py --run",
+    "cases": 5,
+    "passed": 5,
+    "artifact": "summary.json",
+    "large_case": "N=8192, batch=2; original batch=33-selected radices (16,4,4,4,8) and logical worker count 512 preserved",
+    "excluded_case": "Full N=8192 batch=33 compiled, simulation exceeded the 300-second harness timeout; not counted as passed"
+  },
+  "limitations": [
+    "No GPU performance comparison was performed",
+    "Global staging adds full-array traffic and is not an equivalent of GPU half-LDS",
+    "GPU fused transpose/twiddle remains separate M2NDP passes with reported overhead",
+    "Actual compiler register spill warnings are retained in summary.json",
+    "No simulator config or toolchain settings were modified"
+  ]
+}

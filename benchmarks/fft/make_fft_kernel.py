@@ -54,6 +54,7 @@ from planning.search.fft_plan_search import (
     rank_candidates,
 )
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from planning.execution.launch_support import validate_fft_launch_granule
 
 
 def _no_tail_tile_suggestions(plan: RecursiveFFTPlan) -> str:
@@ -419,6 +420,7 @@ def make_fft_kernel(
     `GPUBaselineUnsupportedError` carrying the full diagnostic, rather
     than silently falling back to `"current"`.
     """
+    validate_fft_launch_granule(simd_lanes, spread_across_units=spread_across_units)
     if planner in GPU_BASELINE_PLANNERS:
         conflicting = {
             "scratchpad_byte_budget": scratchpad_byte_budget,
@@ -458,8 +460,10 @@ def make_fft_kernel(
     if plan_index is None:
         plan = make_recursive_transpose_plan(
             n,
+            target=target,
             scratchpad_byte_budget=scratchpad_byte_budget,
             simd_lanes=simd_lanes,
+            spread_across_units=spread_across_units,
             tile_rows=tile_rows,
             tile_cols=tile_cols,
             inverse=inverse,
@@ -473,6 +477,7 @@ def make_fft_kernel(
         plan = plan_for_index(
             n, plan_index, inverse=inverse, target=target, batch=batch,
             scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
+            spread_across_units=spread_across_units,
         )
 
     if verify_spill_free:
@@ -524,6 +529,7 @@ def make_fft_kernel(
             ranked = rank_candidates(generate_candidates(
                 n, target=target, inverse=inverse, batch=batch,
                 scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
+                spread_across_units=spread_across_units,
             ))
             probed = probe_and_rerank_candidates(
                 ranked, compute_lanes=compute_lanes, simd_lanes=simd_lanes,
@@ -551,6 +557,7 @@ def make_fft_kernel(
 def plan_for_index(
     n: int, plan_index: int, *, inverse: bool, target: TargetProfile,
     scratchpad_byte_budget: int, simd_lanes: int, batch: int = 1,
+    spread_across_units: bool = False,
 ) -> RecursiveFFTPlan:
     """The `plan_index`'th plan from `generate_candidates`/`rank_candidates`
     (index 0 = lowest estimated cost) -- shared by `make_fft_kernel` and
@@ -559,6 +566,7 @@ def plan_for_index(
     ranked = rank_candidates(generate_candidates(
         n, target=target, inverse=inverse, batch=batch,
         scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=simd_lanes,
+        spread_across_units=spread_across_units,
     ))
     if not (0 <= plan_index < len(ranked)):
         raise ValueError(
@@ -618,7 +626,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "back to back in one flat buffer -- default: 1 (a single transform, "
         "today's prior behavior)",
     )
-    parser.add_argument("--simd-lanes", type=int, default=8, help="SIMD lane count (default: 8)")
+    parser.add_argument("--simd-lanes", type=int, default=8, help="pool launch granule in Float32 elements (default: 8 = 32 bytes); "
+                            "unit spreading requires 8. Use --compute-lanes 4 for 4-lane arithmetic")
     parser.add_argument(
         "--compute-lanes", type=int, default=None,
         help="SIMD width the emitted arithmetic actually uses, independent of "
@@ -697,7 +706,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "reference_check docstring; O(N^2) dominates wall-clock well before N "
         "reaches the range plan comparison needs)",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    try:
+        validate_fft_launch_granule(args.simd_lanes, spread_across_units=not args.no_spread_across_units)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return args
 
 
 def main() -> None:
@@ -711,6 +725,7 @@ def main() -> None:
         ranked = rank_candidates(generate_candidates(
             args.n, inverse=args.inverse, batch=args.batch,
             scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=args.simd_lanes,
+            spread_across_units=not args.no_spread_across_units,
         ))
         for i, candidate in enumerate(ranked):
             print(format_plan_summary(candidate, index=i))
@@ -722,6 +737,7 @@ def main() -> None:
             ranked = rank_candidates(generate_candidates(
                 args.n, inverse=args.inverse, batch=args.batch,
                 scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=args.simd_lanes,
+                spread_across_units=not args.no_spread_across_units,
             ))
             if not (0 <= args.plan_index < len(ranked)):
                 raise ValueError(
@@ -732,6 +748,8 @@ def main() -> None:
         else:
             plan = make_recursive_transpose_plan(
                 args.n, scratchpad_byte_budget=scratchpad_byte_budget, simd_lanes=args.simd_lanes,
+                spread_across_units=not args.no_spread_across_units,
+                target=DEFAULT_TARGET_PROFILE,
                 tile_rows=args.tile_rows, tile_cols=args.tile_cols, inverse=args.inverse,
                 batch=args.batch,
                 spad_capacity_bytes=DEFAULT_TARGET_PROFILE.spad_capacity_bytes,

@@ -365,13 +365,28 @@ def verify_compute_lanes_planner_promotion(
     planned_lanes = [s.compute_lanes for s in plan_new.stages]
     text_new = generate_fft_kernel(plan_new, compute_lanes=None, narrow_middle_stages=False)
 
+    # Render arguments are diagnostic provenance, not emitted arithmetic.
+    # Preserve effective widths and launch data when comparing the two paths.
+    import json
+
+    def canonical_render(source):
+        lines = []
+        for line in source.splitlines():
+            if line.startswith("# FFT_EXECUTION "):
+                metadata = json.loads(line[len("# FFT_EXECUTION "):])
+                metadata.pop("compute_lanes")
+                metadata.pop("narrow_middle_stages")
+                line = "# FFT_EXECUTION " + json.dumps(metadata, sort_keys=True)
+            lines.append(line)
+        return lines
+
     candidates = generate_compute_lane_candidates(plan, compute_lanes=compute_lanes)
     candidate_lane_tuples = [tuple(s.compute_lanes for s in c.stages) for c in candidates]
 
     return {
         "all_stages_set": all(lanes is not None for lanes in planned_lanes) if compute_lanes is not None else True,
         "planned_matches_live": planned_lanes == live_lanes,
-        "text_identical": text_old == text_new,
+        "text_identical": canonical_render(text_old) == canonical_render(text_new),
         "candidates_distinct": len(candidate_lane_tuples) == len(set(candidate_lane_tuples)),
         "candidate_count": len(candidates),
     }

@@ -267,9 +267,9 @@ def verify_rocfft_winner_selection() -> None:
 def verify_vkfft_register_classification() -> None:
     print("VkFFT: register-per-thread good/bad sequence classification")
     max_r, min_r, is_good = vkfft.registers_per_thread_for({2: 1, 3: 1, 5: 1, 7: 1})
-    check(max_r == 7 and min_r == 5, f"2&3&5&7 branch: expected max=7 min=5, got max={max_r} min={min_r}")
+    check(max_r == 15 and min_r == 14, f"FP32 2&3&5&7 branch: expected max=15 min=14, got max={max_r} min={min_r}")
     check(is_good == (not (max_r > 16 or max_r >= 2 * min_r)), "isGoodSequence must match the exact source rule")
-    check(is_good is True, f"7<=16 and 7<2*5=10, so this sequence should be classified good, got {is_good}")
+    check(is_good is True, f"15<=16 and 15<2*14=28, so this sequence should be classified good, got {is_good}")
 
 
 def verify_vkfft_pow2_grouping() -> None:
@@ -495,7 +495,7 @@ def verify_three_way_mapping_classification() -> None:
     # version of this test (and of BaselineStatus itself) incorrectly
     # believed was a genuine hardware wall.
     r = map_cooperative_kernel(
-        length=105, radices=(7, 15), workers_per_fft=15, fft_slots_wanted=1,
+        length=105, radices=(7, 5, 3), workers_per_fft=15, fft_slots_wanted=1,
         total_ffts=4, inverse=False, inverse_scale=None, kernel_name="T3",
         target=DEFAULT_TARGET_PROFILE, gpu_config=gpu_config,
     )
@@ -669,7 +669,9 @@ def verify_vkfft_four_step_reordering() -> None:
 def verify_vkfft_num_passes_fix() -> None:
     print("VkFFT: choose_num_passes fidelity fix (reorderFourStep=True default formula)")
     target = DEFAULT_TARGET_PROFILE
-    max_strided = vkfft.max_sequence_length_shared_memory_strided(target)
+    # Power-of-two axes use sharedMemorySizePow2, not the raw 120 KiB.
+    shared_pow2 = 1 << (target.spad_capacity_bytes.bit_length() - 1)
+    max_strided = shared_pow2 // vkfft.VKFFT_COALESCED_MEMORY_BYTES
     # Real formula (reorderFourStep default): ceil(log2(N) / log2(maxSingleSizeStrided)).
     for length in (1 << 20, 1 << 24, 1 << 28):
         expected = math.ceil(math.log2(length) / math.log2(max_strided))

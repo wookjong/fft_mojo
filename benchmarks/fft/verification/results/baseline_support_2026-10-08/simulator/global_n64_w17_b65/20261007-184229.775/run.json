@@ -1,0 +1,149 @@
+{
+  "config": "M2NDP",
+  "config_md5": "33d240c5",
+  "config_path": "/work/third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config",
+  "core_mhz": 2000,
+  "cycles": 18143,
+  "detour": "",
+  "dir": "/fft-work/verification/results/baseline_support_2026-10-08/simulator/global_n64_w17_b65/20261007-184229.775",
+  "dram": {
+    "channels": 28,
+    "max_pct": 1.16,
+    "mean_pct": 0.97,
+    "min_pct": 0.94
+  },
+  "exit": 0,
+  "finished": "2026-10-07T18:42:43+00:00",
+  "host_log": "host.log",
+  "kernels": [
+    {
+      "finished": 4896,
+      "launch_id": "0",
+      "name": "global_n64_w17_b65::PersistentFFT::stage_0()",
+      "started": 927
+    },
+    {
+      "finished": 7498,
+      "launch_id": "1",
+      "name": "global_n64_w17_b65::PersistentFFT::stage_1()",
+      "started": 5009
+    },
+    {
+      "finished": 9285,
+      "launch_id": "2",
+      "name": "global_n64_w17_b65::PersistentFFT::stage_2()",
+      "started": 7683
+    },
+    {
+      "finished": 9655,
+      "launch_id": "3",
+      "name": "global_n64_w17_b65::PersistentFFT::writeback()",
+      "started": 9397
+    },
+    {
+      "finished": 11725,
+      "launch_id": "4",
+      "name": "global_n64_w17_b65::PersistentFFT::stage_0()",
+      "started": 9760
+    },
+    {
+      "finished": 12918,
+      "launch_id": "5",
+      "name": "global_n64_w17_b65::PersistentFFT::stage_1()",
+      "started": 11835
+    },
+    {
+      "finished": 13590,
+      "launch_id": "6",
+      "name": "global_n64_w17_b65::PersistentFFT::stage_2()",
+      "started": 13030
+    },
+    {
+      "finished": 13817,
+      "launch_id": "7",
+      "name": "global_n64_w17_b65::PersistentFFT::writeback()",
+      "started": 13697
+    },
+    {
+      "finished": 15973,
+      "launch_id": "8",
+      "name": "global_n64_w17_b65::PersistentFFT::stage_0()",
+      "started": 14035
+    },
+    {
+      "finished": 17159,
+      "launch_id": "9",
+      "name": "global_n64_w17_b65::PersistentFFT::stage_1()",
+      "started": 16078
+    },
+    {
+      "finished": 17813,
+      "launch_id": "10",
+      "name": "global_n64_w17_b65::PersistentFFT::stage_2()",
+      "started": 17257
+    },
+    {
+      "finished": 18046,
+      "launch_id": "11",
+      "name": "global_n64_w17_b65::PersistentFFT::writeback()",
+      "started": 17930
+    }
+  ],
+  "launch_spans": [
+    18143
+  ],
+  "launches": 12,
+  "log": "simulator.log",
+  "repo": "",
+  "stats": {
+    "ctrl.addr_issue": 1185,
+    "ctrl.cycle": 0,
+    "ctrl.exit_issue": 0,
+    "ctrl.f_issue": 0,
+    "ctrl.i_issue": 1201,
+    "ctrl.inst_issue": 2386,
+    "ctrl.ldst_issue": 118,
+    "ctrl.sf_issue": 0,
+    "ctrl.spad_issue": 1067,
+    "ctrl.spad_read": 0,
+    "ctrl.spad_write": 0,
+    "ctrl.v_addr_issue": 0,
+    "ctrl.v_issue": 0,
+    "ctrl.v_ldst_issue": 0,
+    "ctrl.v_sf_issue": 0,
+    "ctrl.v_spad_issue": 0,
+    "launches": 12,
+    "ndp.addr_issue": 24522,
+    "ndp.cycle": 0,
+    "ndp.exit_issue": 3072,
+    "ndp.f_issue": 5152,
+    "ndp.i_issue": 151190,
+    "ndp.inst_issue": 238666,
+    "ndp.ldst_issue": 5070,
+    "ndp.sf_issue": 0,
+    "ndp.spad_issue": 19452,
+    "ndp.spad_read": 0,
+    "ndp.spad_write": 0,
+    "ndp.v_addr_issue": 24440,
+    "ndp.v_issue": 30290,
+    "ndp.v_ldst_issue": 24440,
+    "ndp.v_sf_issue": 0,
+    "ndp.v_spad_issue": 0
+  },
+  "stats_file": "stats.txt",
+  "tasks": [
+    {
+      "arrived": 70,
+      "called": 0,
+      "finished": 18071,
+      "issued": 0,
+      "launch": 0,
+      "notified": 18143,
+      "started": 70,
+      "task": 0
+    }
+  ],
+  "time_us": 9.072,
+  "wall_s": 14.0,
+  "workload": "fft-execution-global_n64_w17_b65"
+}

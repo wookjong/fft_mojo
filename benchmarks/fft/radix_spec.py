@@ -10,4 +10,4 @@ that both sides must agree on, so neither package should be the other's
 source for it.
 """
 
-SUPPORTED_RADICES = frozenset((2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 16, 17))
+SUPPORTED_RADICES = frozenset((2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17))

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from planning.execution.launch_plan import resolve_fft_launch
+from codegen.common import emit_aligned_pool, emit_fft_identity, emit_fft_launches, emit_execution_record
+
 """Code emission specific to cooperative-worker leaves (`workers_per_fft`
 microthreads sharing one sub-FFT's scratchpad -- see `CooperationPlan` in
 fft_plan_core.py and the builder/design rationale in planning/fft_plan_
@@ -92,7 +96,8 @@ def _emit_cooperative_prelude(
             e.add("        var spad_base = 0")
         else:
             e.add(f"        var spad_base = fft_slot * {plan.scratchpad_uthread_stride}")
-    e.add("        var logical_fft_id = global_uthread_id() // WORKERS_PER_FFT")
+    if not emit_fft_identity(e, plan=plan):
+        e.add("        var logical_fft_id = global_uthread_id() // WORKERS_PER_FFT")
     if is_first:
         e.add(
             f"        var in_batch_base = "
@@ -288,10 +293,11 @@ def _emit_cooperative_stage(
 def generate_cooperative_fft_kernel(
     plan: FFTCodegenPlan, *, compute_lanes: int | None = None, in_place: bool = False,
     target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    spread_across_units: bool = True,
 ) -> str:
     """Render a standalone cooperative leaf (`plan.cooperation is not None` --
-    see fft_plan_cooperative.make_cooperative_leaf_plan): one NDPTask, one
-    launch, `workers_per_fft` microthreads sharing each sub-FFT's scratchpad
+    see fft_plan_cooperative.make_cooperative_leaf_plan): one NDPTask,
+    safe host rounds, `workers_per_fft` microthreads sharing each sub-FFT's scratchpad
     instead of `generate_fft_kernel`'s one-uthread-per-sub-FFT. This function
     performs no FFT planning.
 
@@ -327,14 +333,18 @@ def generate_cooperative_fft_kernel(
     """
     assert plan.cooperation is not None
     total_ffts = plan.total_uthreads // plan.cooperation.workers_per_fft
+    plan = replace(plan, launch_mapping=resolve_fft_launch(plan, target=target,
+                                                         spread_across_units=spread_across_units))
 
     e = Emitter()
     _emit_prelude(e)
+    emit_execution_record(e, plan=plan, compute_lanes=compute_lanes, loop_stages=False)
     e.add(f"comptime N = {plan.length}")
     e.add(f"comptime MAX_UTHREAD_{plan.kernel_name} = {plan.max_uthread}")
     e.add()
     _emit_params_struct(e, plan=plan)
-    _emit_task_struct(e, plan=plan, compute_lanes=compute_lanes)
+    _emit_task_struct(e, plan=plan, compute_lanes=compute_lanes,
+                      max_kernel_register=target.max_kernel_register)
 
     host = plan.host
     e.add("def main() raises:")
@@ -357,7 +367,7 @@ def generate_cooperative_fft_kernel(
     e.add("    var ref_real = cxl_alloc[Float32](total_elems)")
     e.add("    var ref_imag = cxl_alloc[Float32](total_elems)")
     e.add()
-    e.add(f"    var pool_elems = {host.pool_elems}")
+    e.add(f"    var pool_elems = {max(r.pool_elems for r in plan.launch_mapping.rounds())}")
     # This launch's own pool must start exactly on a hardware interleave-
     # chunk boundary -- `_emit_cooperative_stage`'s fft_slot/worker_id
     # grouping only partitions the same physical microthreads local_
@@ -371,15 +381,8 @@ def generate_cooperative_fft_kernel(
     # fft_persistent_codegen.py's pre-existing one (docs/
     # persistent_leaf_design.md's "uthread pool alignment" section) this
     # mirrors.
-    chunk_bytes = target.interleave_chunk_uthreads * target.uthread_bytes
-    pad_elems = chunk_bytes // 4
-    e.add(f"    var pool_raw = cxl_alloc[Float32](pool_elems + {pad_elems})")
-    e.add("    var pool_raw_addr = Int(pool_raw)")
-    e.add(f"    var pool_addr = (pool_raw_addr + {chunk_bytes - 1}) // {chunk_bytes} * {chunk_bytes}")
-    e.add(f"    if pool_addr % {chunk_bytes} != 0:")
-    e.add('        print("[host] pool alignment assertion failed:", pool_addr)')
-    e.add("        return")
-    e.add("    var uthread_pool = UnsafePointer[Float32, MutAnyOrigin](unsafe_from_address=pool_addr)")
+    emit_aligned_pool(e, name="uthread_pool", elems="pool_elems",
+                      alignment_bytes=plan.launch_mapping.alignment_bytes)
     e.add()
 
     e.add("    seed(0)")
@@ -396,17 +399,8 @@ def generate_cooperative_fft_kernel(
     e.add("        ref_imag[i] = Float32(0)")
     e.add()
 
-    e.add(f"    var rc = {plan.kernel_name}.launch(")
-    e.add("        PooledRange.over(uthread_pool, pool_elems),")
-    e.add(
-        f"        {plan.kernel_name}Params(input_real, input_imag, output_real, output_imag),"
-    )
-    e.add("    )")
-    e.add()
-    e.add("    if rc != 0:")
-    e.add('        print("[host] FFT failed, exit", rc)')
-    e.add("        return")
-    e.add()
+    emit_fft_launches(e, plan=plan, pool="uthread_pool",
+                     args=["input_real", "input_imag", "output_real", "output_imag"])
 
     _emit_reference_check(
         e,

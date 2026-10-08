@@ -1,0 +1,3 @@
+warning: <unknown>:0:0: in function plain_cap1_n64_b64::FFTFP32::stage_1() void (): M2NDP kernel spills to memory (64-byte frame); spills go to DRAM
+
+[host] FFT verification passed

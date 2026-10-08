@@ -1,0 +1,26 @@
+#### mojo-ndp ################################################################
+#  Workload     /tmp/fft-execution-vkfft_r15_b3 51ef524e9c
+#  Config       third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config 8309eda294
+#  Machine      uthread_span  32 B  (vector_reg 32 B)
+#  Toolchain    mojo          1.0.0b2.dev2026061203 (2cf4d08a)
+#               llc           23.1.0-rc1
+#  Simulator    m2ndp_run     0349fff1f293
+#  Third-party  m2ndp-detour  pin unknown  (not checked out)
+#               llvm-project  pin unknown  (not checked out)
+#               LLVM_RELEASE  
+#  Source       ?             
+##############################################################################
+warning: <unknown>:0:0: in function vkfft_r15_b3::FFTVkfftLeaf0::stage_0() void (): M2NDP kernel spills to memory (16-byte frame); spills go to DRAM
+
+[host] recursive tiled-transpose FFT verification passed
+[mojo-ndp] Simulated 5583 NDP cycles (2.79 us)
+[mojo-ndp] 
+[mojo-ndp]   launch          issued   arrived   started  finished  notified
+[mojo-ndp]   0                    0        70        70      5511      5583
+[mojo-ndp] 
+[mojo-ndp]   kernel                      started  finished     exec    gap
+[mojo-ndp]   stage_0()                       922      5490     4568      -
+[mojo-ndp]   total                                             4568      0
+[mojo-ndp] 
+[mojo-ndp] DRAM bandwidth utilisation 0.1 % (mean of 28 channels, 0.0-0.9 %)
+[mojo-ndp] Results in "/fft-work/verification/results/baseline_support_2026-10-08/simulator/vkfft_r15_b3/20261007-192639.932"

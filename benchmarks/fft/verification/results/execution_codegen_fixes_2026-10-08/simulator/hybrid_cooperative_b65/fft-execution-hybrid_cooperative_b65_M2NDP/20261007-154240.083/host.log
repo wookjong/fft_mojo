@@ -1,0 +1,6 @@
+warning: <unknown>:0:0: in function hybrid_cooperative_b65::PersistentFFT::stage_0() void (): M2NDP kernel spills to memory (176-byte frame); spills go to DRAM
+
+[host] persistent-tail-hybrid: full rounds (persistent) verification passed
+warning: <unknown>:0:0: in function hybrid_cooperative_b65::TailFFT::stage_0() void (): M2NDP kernel spills to memory (144-byte frame); spills go to DRAM
+
+[host] persistent-tail-hybrid: tail (cooperative) verification passed

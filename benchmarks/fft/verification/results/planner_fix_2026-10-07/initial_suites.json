@@ -1,0 +1,47 @@
+[
+  {
+    "module": "verify_fft_search",
+    "exit_code": 0,
+    "seconds": 3.91
+  },
+  {
+    "module": "verify_fft_persistent_search",
+    "exit_code": 0,
+    "seconds": 3.09
+  },
+  {
+    "module": "verify_fft_recursive_target",
+    "exit_code": 1,
+    "seconds": 4.63
+  },
+  {
+    "module": "verify_fft_execution_option_search",
+    "exit_code": 1,
+    "seconds": 18.59
+  },
+  {
+    "module": "verify_gpu_baseline_golden",
+    "exit_code": 0,
+    "seconds": 1.2
+  },
+  {
+    "module": "verify_gpu_original_plan",
+    "exit_code": 1,
+    "seconds": 2.65
+  },
+  {
+    "module": "verify_gpu_baseline_vkfft_multipass",
+    "exit_code": 0,
+    "seconds": 15.39
+  },
+  {
+    "module": "verify_gpu_baseline_source_fidelity",
+    "exit_code": 1,
+    "seconds": 85.37
+  },
+  {
+    "module": "verify_gpu_baseline",
+    "exit_code": 1,
+    "seconds": 3.27
+  }
+]

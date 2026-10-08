@@ -1,0 +1,166 @@
+{
+  "config": "M2NDP",
+  "config_md5": "33d240c5",
+  "config_path": "/work/third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config",
+  "core_mhz": 2000,
+  "cycles": 21281,
+  "detour": "",
+  "dir": "/fft-work/verification/results/execution_codegen_fixes_2026-10-08/simulator/hybrid_cooperative_b65/fft-execution-hybrid_cooperative_b65_M2NDP/20261007-154240.083",
+  "dram": {
+    "channels": 28,
+    "max_pct": 0.99,
+    "mean_pct": 0.84,
+    "min_pct": 0.8
+  },
+  "exit": 0,
+  "finished": "2026-10-07T15:43:00+00:00",
+  "host_log": "host.log",
+  "kernels": [
+    {
+      "finished": 2437,
+      "launch_id": "0",
+      "name": "hybrid_cooperative_b65::PersistentFFT::preload()",
+      "started": 927
+    },
+    {
+      "finished": 5445,
+      "launch_id": "1",
+      "name": "hybrid_cooperative_b65::PersistentFFT::stage_0()",
+      "started": 2545
+    },
+    {
+      "finished": 7128,
+      "launch_id": "2",
+      "name": "hybrid_cooperative_b65::PersistentFFT::stage_1()",
+      "started": 5632
+    },
+    {
+      "finished": 8029,
+      "launch_id": "3",
+      "name": "hybrid_cooperative_b65::PersistentFFT::stage_2()",
+      "started": 7234
+    },
+    {
+      "finished": 9135,
+      "launch_id": "4",
+      "name": "hybrid_cooperative_b65::PersistentFFT::writeback()",
+      "started": 8148
+    },
+    {
+      "finished": 10388,
+      "launch_id": "5",
+      "name": "hybrid_cooperative_b65::PersistentFFT::preload()",
+      "started": 9247
+    },
+    {
+      "finished": 11666,
+      "launch_id": "6",
+      "name": "hybrid_cooperative_b65::PersistentFFT::stage_0()",
+      "started": 10490
+    },
+    {
+      "finished": 12409,
+      "launch_id": "7",
+      "name": "hybrid_cooperative_b65::PersistentFFT::stage_1()",
+      "started": 11765
+    },
+    {
+      "finished": 13004,
+      "launch_id": "8",
+      "name": "hybrid_cooperative_b65::PersistentFFT::stage_2()",
+      "started": 12631
+    },
+    {
+      "finished": 13583,
+      "launch_id": "9",
+      "name": "hybrid_cooperative_b65::PersistentFFT::writeback()",
+      "started": 13113
+    },
+    {
+      "finished": 18410,
+      "launch_id": "10",
+      "name": "hybrid_cooperative_b65::TailFFT::stage_0()",
+      "started": 14597
+    },
+    {
+      "finished": 20003,
+      "launch_id": "11",
+      "name": "hybrid_cooperative_b65::TailFFT::stage_1()",
+      "started": 18516
+    },
+    {
+      "finished": 21181,
+      "launch_id": "12",
+      "name": "hybrid_cooperative_b65::TailFFT::stage_2()",
+      "started": 20117
+    }
+  ],
+  "launch_spans": [
+    13678,
+    7603
+  ],
+  "launches": 13,
+  "log": "simulator.log",
+  "repo": "",
+  "stats": {
+    "ctrl.addr_issue": 1337,
+    "ctrl.cycle": 0,
+    "ctrl.exit_issue": 0,
+    "ctrl.f_issue": 0,
+    "ctrl.i_issue": 1361,
+    "ctrl.inst_issue": 2698,
+    "ctrl.ldst_issue": 131,
+    "ctrl.sf_issue": 0,
+    "ctrl.spad_issue": 1206,
+    "ctrl.spad_read": 0,
+    "ctrl.spad_write": 0,
+    "ctrl.v_addr_issue": 0,
+    "ctrl.v_issue": 0,
+    "ctrl.v_ldst_issue": 0,
+    "ctrl.v_sf_issue": 0,
+    "ctrl.v_spad_issue": 0,
+    "launches": 13,
+    "ndp.addr_issue": 57968,
+    "ndp.cycle": 0,
+    "ndp.exit_issue": 2584,
+    "ndp.f_issue": 4616,
+    "ndp.i_issue": 169422,
+    "ndp.inst_issue": 288932,
+    "ndp.ldst_issue": 22088,
+    "ndp.sf_issue": 0,
+    "ndp.spad_issue": 35880,
+    "ndp.spad_read": 0,
+    "ndp.spad_write": 0,
+    "ndp.v_addr_issue": 23400,
+    "ndp.v_issue": 30942,
+    "ndp.v_ldst_issue": 1624,
+    "ndp.v_sf_issue": 0,
+    "ndp.v_spad_issue": 21776
+  },
+  "stats_file": "stats.txt",
+  "tasks": [
+    {
+      "arrived": 70,
+      "called": 0,
+      "finished": 13606,
+      "issued": 0,
+      "launch": 0,
+      "notified": 13678,
+      "started": 70,
+      "task": 0
+    },
+    {
+      "arrived": 13748,
+      "called": 13678,
+      "finished": 21209,
+      "issued": 13678,
+      "launch": 1,
+      "notified": 21281,
+      "started": 13748,
+      "task": 1
+    }
+  ],
+  "time_us": 10.64,
+  "wall_s": 20.0,
+  "workload": "fft-execution-hybrid_cooperative_b65"
+}

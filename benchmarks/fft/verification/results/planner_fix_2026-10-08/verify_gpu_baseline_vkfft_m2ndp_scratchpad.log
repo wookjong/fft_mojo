@@ -1,0 +1,8 @@
+  VkFFT M2NDP-adapted scratchpad resource model (N=8192 regression):
+    OK   m2ndp_resource_complex_bytes()=16 == persistent_leaf_scratchpad_bytes(1) (single-sourced from make_persistent_leaf_plan's own formula)
+    OK   N=8192: 8-byte convention -> num_passes=1 (looks feasible: bound=15360 >= N) but real M2NDP leaf needs 131072 > 122880 bytes; 16-byte-corrected convention -> num_passes=2 (correctly avoids the one-pass attempt up front)
+    OK   frozen vkfft.plan(N=8192) unchanged: still chooses one-pass (8-byte convention) and still refuses RESOURCE_INFEASIBLE once mapped onto M2NDP -- this fix does not touch the frozen baseline's own decision
+    OK   vkfft.plan_m2ndp(N=8192) now builds an OK, numerically correct plan (num_passes=2, max_err=2.066e-07) -- no more late RESOURCE_INFEASIBLE mismatch for the M2NDP-adapted baseline
+    OK   vkfft.plan()'s own default complex_size_bytes (omitted) == explicit complex_size_bytes=8 (VKFFT_COMPLEX_SIZE_BYTES) at N in (1024, 4096, 8192, 65536) -- adding this parameter did not change the frozen baseline's default behavior
+[verify] VkFFT M2NDP-adapted scratchpad resource model: all checks passed
+

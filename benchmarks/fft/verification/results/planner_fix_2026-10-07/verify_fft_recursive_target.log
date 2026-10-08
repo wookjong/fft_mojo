@@ -1,0 +1,45 @@
+......E.
+======================================================================
+ERROR: test_scratchpad_cap_and_legacy_override (__main__.RecursiveTargetTests.test_scratchpad_cap_and_legacy_override)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\james\OneDrive\바탕 화면\26-여름\M2NDP\mojo-m2ndp\benchmarks\fft\verification\verify_fft_recursive_target.py", line 65, in test_scratchpad_cap_and_legacy_override
+    self.check_groups(self.build(960, target=small, budget=512, persistent_leaf=True))
+                      ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\james\OneDrive\바탕 화면\26-여름\M2NDP\mojo-m2ndp\benchmarks\fft\verification\verify_fft_recursive_target.py", line 22, in build
+    return make_recursive_transpose_plan(n, scratchpad_byte_budget=kwargs.pop("budget", 4096),
+                                        target=kwargs.pop("target", self.target), **kwargs)
+  File "C:\Users\james\OneDrive\바탕 화면\26-여름\M2NDP\mojo-m2ndp\benchmarks\fft\planning\strategies\fft_plan_recursive.py", line 991, in make_recursive_transpose_plan
+    root = _build_recursive_node(
+        n, batch, scratchpad_byte_budget=scratchpad_byte_budget,
+    ...<11 lines>...
+        target=target,
+    )
+  File "C:\Users\james\OneDrive\바탕 화면\26-여름\M2NDP\mojo-m2ndp\benchmarks\fft\planning\strategies\fft_plan_recursive.py", line 842, in _build_recursive_node
+    far_child = _build_recursive_node(
+        a, r * b, scratchpad_byte_budget=scratchpad_byte_budget,
+    ...<19 lines>...
+        forced_worker_sequence=rest_worker_sequence,
+    )
+  File "C:\Users\james\OneDrive\바탕 화면\26-여름\M2NDP\mojo-m2ndp\benchmarks\fft\planning\strategies\fft_plan_recursive.py", line 786, in _build_recursive_node
+    kernel = _build_leaf_kernel(
+        length=m,
+    ...<11 lines>...
+        target=target,
+    )
+  File "C:\Users\james\OneDrive\바탕 화면\26-여름\M2NDP\mojo-m2ndp\benchmarks\fft\planning\strategies\fft_plan_recursive.py", line 445, in _build_leaf_kernel
+    return make_persistent_leaf_plan(
+        length=length,
+    ...<6 lines>...
+        target=target,
+    )
+  File "C:\Users\james\OneDrive\바탕 화면\26-여름\M2NDP\mojo-m2ndp\benchmarks\fft\planning\execution\fft_plan_persistent.py", line 437, in make_persistent_leaf_plan
+    raise ValueError(
+    ...<6 lines>...
+    )
+ValueError: length=32 needs 544 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=512 allows at most 30 -- this is only the byte-capacity upper bound, not a guarantee length=30 itself has a supported radix factorization/stage layout
+
+----------------------------------------------------------------------
+Ran 8 tests in 3.292s
+
+FAILED (errors=1)

@@ -1,0 +1,12 @@
+
+test_block_table_launch_sizing (__main__.RocfftLarge1DTests.test_block_table_launch_sizing) ... ok
+test_cc_source_order_and_block_settings (__main__.RocfftLarge1DTests.test_cc_source_order_and_block_settings) ... ok
+test_forward_and_inverse_numerical (__main__.RocfftLarge1DTests.test_forward_and_inverse_numerical) ... ok
+test_nested_first_child_numerical_contract (__main__.RocfftLarge1DTests.test_nested_first_child_numerical_contract) ... ok
+test_real_nested_first_child_flattens_and_generates (__main__.RocfftLarge1DTests.test_real_nested_first_child_flattens_and_generates) ... ok
+test_trtrt_forces_only_second_child (__main__.RocfftLarge1DTests.test_trtrt_forces_only_second_child) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 10.538s
+
+OK

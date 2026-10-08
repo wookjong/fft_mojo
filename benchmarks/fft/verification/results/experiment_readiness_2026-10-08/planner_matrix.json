@@ -1,0 +1,8130 @@
+{
+  "scope": "Planner only: selection, support, batch preservation, registration; no simulator/config audit",
+  "rows": [
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "fft_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "fft_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (1, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=1, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=120, gpu_global_write_bytes=120, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (1, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (1, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=1, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=120, gpu_global_write_bytes=120, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (1, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "fft_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "fft_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 32, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': True, 'local_size': (32, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=32, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=32, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=3840, gpu_global_write_bytes=3840, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', True), ('local_size', (32, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 32, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': True, 'local_size': (32, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=32, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=32, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=3840, gpu_global_write_bytes=3840, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', True), ('local_size', (32, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "fft_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "fft_radices": [
+        [
+          3,
+          5
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 128, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': True, 'local_size': (128, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=128, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=128, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=15360, gpu_global_write_bytes=15360, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', True), ('local_size', (128, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 128, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': True, 'local_size': (128, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=128, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=128, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=15360, gpu_global_write_bytes=15360, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', True), ('local_size', (128, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          3
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          5,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          6,
+          6,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=7680, gpu_global_write_bytes=7680, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=7680, gpu_global_write_bytes=7680, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=245760, gpu_global_write_bytes=245760, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=245760, gpu_global_write_bytes=245760, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          10,
+          6,
+          2,
+          2,
+          2,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          10,
+          6
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=983040, gpu_global_write_bytes=983040, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=983040, gpu_global_write_bytes=983040, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "fft_radices": [
+        [
+          16,
+          16,
+          16
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=vkfft length=8192 radices=(8, 8, 8, 8, 2) extra={'workers_per_fft': 1024, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (1024, 1, 1), 'min_registers_per_thread': 8, 'registers_per_thread': 8, 'registers_per_radix': ((2, 8), (4, 8), (8, 8)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(8, 8, 8, 8, 2), gpu_workgroup_size=1024, gpu_threads_per_transform=1024, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=65536, gpu_global_write_bytes=65536, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (1024, 1, 1)), ('min_registers_per_thread', 8), ('registers_per_thread', 8), ('registers_per_radix', ((2, 8), (4, 8), (8, 8))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=rocfft-default-m2ndp length=8192 radices=(16, 4, 4, 4, 8) extra={'scheme': 'CS_KERNEL_STOCKHAM', 'workgroup_size': 512, 'threads_per_transform': 512, 'transforms_per_block': 1, 'mechanism': 'compiled-in function_pool default (config_sbrr.py)', 'half_lds': True, 'direct_to_from_reg': True, 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='rocfft-default-m2ndp', gpu_scheme='CS_KERNEL_STOCKHAM', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(16, 4, 4, 4, 8), gpu_workgroup_size=512, gpu_threads_per_transform=512, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=2097152, gpu_global_write_bytes=2097152, gpu_memory_optimization='half_lds', gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status='NO_EQUIVALENT', gpu_metadata=(('half_lds', True), ('direct_to_from_reg', True))),)}",
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=vkfft length=8192 radices=(8, 8, 8, 8, 2) extra={'workers_per_fft': 1024, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (1024, 1, 1), 'min_registers_per_thread': 8, 'registers_per_thread': 8, 'registers_per_radix': ((2, 8), (4, 8), (8, 8)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(8, 8, 8, 8, 2), gpu_workgroup_size=1024, gpu_threads_per_transform=1024, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=2097152, gpu_global_write_bytes=2097152, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (1024, 1, 1)), ('min_registers_per_thread', 8), ('registers_per_thread', 8), ('registers_per_radix', ((2, 8), (4, 8), (8, 8))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          8,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=rocfft-default length=8192 radices=(16, 4, 4, 4, 8) extra={'scheme': 'CS_KERNEL_STOCKHAM', 'workgroup_size': 512, 'threads_per_transform': 512, 'transforms_per_block': 1, 'mechanism': 'compiled-in function_pool default (config_sbrr.py)', 'half_lds': True, 'direct_to_from_reg': True, 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='rocfft-default', gpu_scheme='CS_KERNEL_STOCKHAM', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(16, 4, 4, 4, 8), gpu_workgroup_size=512, gpu_threads_per_transform=512, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=8388608, gpu_global_write_bytes=8388608, gpu_memory_optimization='half_lds', gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status='NO_EQUIVALENT', gpu_metadata=(('half_lds', True), ('direct_to_from_reg', True))),)}",
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=rocfft-default-m2ndp length=8192 radices=(16, 4, 4, 4, 8) extra={'scheme': 'CS_KERNEL_STOCKHAM', 'workgroup_size': 512, 'threads_per_transform': 512, 'transforms_per_block': 1, 'mechanism': 'compiled-in function_pool default (config_sbrr.py)', 'half_lds': True, 'direct_to_from_reg': True, 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='rocfft-default-m2ndp', gpu_scheme='CS_KERNEL_STOCKHAM', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(16, 4, 4, 4, 8), gpu_workgroup_size=512, gpu_threads_per_transform=512, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=8388608, gpu_global_write_bytes=8388608, gpu_memory_optimization='half_lds', gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status='NO_EQUIVALENT', gpu_metadata=(('half_lds', True), ('direct_to_from_reg', True))),)}",
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=vkfft length=8192 radices=(8, 8, 8, 8, 2) extra={'workers_per_fft': 1024, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (1024, 1, 1), 'min_registers_per_thread': 8, 'registers_per_thread': 8, 'registers_per_radix': ((2, 8), (4, 8), (8, 8)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(8, 8, 8, 8, 2), gpu_workgroup_size=1024, gpu_threads_per_transform=1024, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=8388608, gpu_global_write_bytes=8388608, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (1024, 1, 1)), ('min_registers_per_thread', 8), ('registers_per_thread', 8), ('registers_per_radix', ((2, 8), (4, 8), (8, 8))))),)}",
+      "inverse": false
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          2
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          4,
+          4,
+          4,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "status": "ok",
+      "diagnostics": "",
+      "gpu_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "fft_radices": [
+        [
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          4
+        ]
+      ],
+      "inverse": false
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (1, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=1, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=120, gpu_global_write_bytes=120, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (1, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}"
+    },
+    {
+      "n": 15,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (1, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=1, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=120, gpu_global_write_bytes=120, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (1, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}"
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 32, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': True, 'local_size': (32, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=32, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=32, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=3840, gpu_global_write_bytes=3840, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', True), ('local_size', (32, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}"
+    },
+    {
+      "n": 15,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 32, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': True, 'local_size': (32, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=32, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=32, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=3840, gpu_global_write_bytes=3840, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', True), ('local_size', (32, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}"
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 128, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': True, 'local_size': (128, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=128, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=128, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=15360, gpu_global_write_bytes=15360, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', True), ('local_size', (128, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}"
+    },
+    {
+      "n": 15,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (15,) requires unsupported M2NDP butterflies [15]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=15 radices=(15,) extra={'workers_per_fft': 1, 'transforms_per_block': 128, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': True, 'local_size': (128, 1, 1), 'min_registers_per_thread': 15, 'registers_per_thread': 15, 'registers_per_radix': ((3, 15), (5, 15), (15, 15)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=15, radix_sequence=(15,), gpu_workgroup_size=128, gpu_threads_per_transform=1, gpu_transforms_per_workgroup=128, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=15360, gpu_global_write_bytes=15360, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', True), ('local_size', (128, 1, 1)), ('min_registers_per_thread', 15), ('registers_per_thread', 15), ('registers_per_radix', ((3, 15), (5, 15), (15, 15))))),)}"
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 20,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 30,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 64,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 128,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 216,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 256,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 512,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=7680, gpu_global_write_bytes=7680, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}"
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=7680, gpu_global_write_bytes=7680, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}"
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=245760, gpu_global_write_bytes=245760, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}"
+    },
+    {
+      "n": 960,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=245760, gpu_global_write_bytes=245760, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}"
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=983040, gpu_global_write_bytes=983040, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}"
+    },
+    {
+      "n": 960,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "unsupported_current_codegen",
+      "diagnostics": "[unsupported_current_codegen] Original GPU radix sequence (10, 12, 4, 2) requires unsupported M2NDP butterflies [12]; the original decision is retained without substituting a different planner choice\noriginal GPU configuration: source=vkfft length=960 radices=(10, 12, 4, 2) extra={'workers_per_fft': 96, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (96, 1, 1), 'min_registers_per_thread': 10, 'registers_per_thread': 12, 'registers_per_radix': ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=960, radix_sequence=(10, 12, 4, 2), gpu_workgroup_size=96, gpu_threads_per_transform=96, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=983040, gpu_global_write_bytes=983040, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (96, 1, 1)), ('min_registers_per_thread', 10), ('registers_per_thread', 12), ('registers_per_radix', ((2, 12), (3, 12), (4, 12), (5, 10), (6, 12), (10, 10), (12, 12), (15, 10))))),)}"
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 1024,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 2048,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 4096,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=vkfft length=8192 radices=(8, 8, 8, 8, 2) extra={'workers_per_fft': 1024, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (1024, 1, 1), 'min_registers_per_thread': 8, 'registers_per_thread': 8, 'registers_per_radix': ((2, 8), (4, 8), (8, 8)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(8, 8, 8, 8, 2), gpu_workgroup_size=1024, gpu_threads_per_transform=1024, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=65536, gpu_global_write_bytes=65536, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (1024, 1, 1)), ('min_registers_per_thread', 8), ('registers_per_thread', 8), ('registers_per_radix', ((2, 8), (4, 8), (8, 8))))),)}"
+    },
+    {
+      "n": 8192,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=rocfft-default-m2ndp length=8192 radices=(16, 4, 4, 4, 8) extra={'scheme': 'CS_KERNEL_STOCKHAM', 'workgroup_size': 512, 'threads_per_transform': 512, 'transforms_per_block': 1, 'mechanism': 'compiled-in function_pool default (config_sbrr.py)', 'half_lds': True, 'direct_to_from_reg': True, 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='rocfft-default-m2ndp', gpu_scheme='CS_KERNEL_STOCKHAM', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(16, 4, 4, 4, 8), gpu_workgroup_size=512, gpu_threads_per_transform=512, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=2097152, gpu_global_write_bytes=2097152, gpu_memory_optimization='half_lds', gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status='NO_EQUIVALENT', gpu_metadata=(('half_lds', True), ('direct_to_from_reg', True))),)}"
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=vkfft length=8192 radices=(8, 8, 8, 8, 2) extra={'workers_per_fft': 1024, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (1024, 1, 1), 'min_registers_per_thread': 8, 'registers_per_thread': 8, 'registers_per_radix': ((2, 8), (4, 8), (8, 8)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(8, 8, 8, 8, 2), gpu_workgroup_size=1024, gpu_threads_per_transform=1024, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=2097152, gpu_global_write_bytes=2097152, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (1024, 1, 1)), ('min_registers_per_thread', 8), ('registers_per_thread', 8), ('registers_per_radix', ((2, 8), (4, 8), (8, 8))))),)}"
+    },
+    {
+      "n": 8192,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=rocfft-default length=8192 radices=(16, 4, 4, 4, 8) extra={'scheme': 'CS_KERNEL_STOCKHAM', 'workgroup_size': 512, 'threads_per_transform': 512, 'transforms_per_block': 1, 'mechanism': 'compiled-in function_pool default (config_sbrr.py)', 'half_lds': True, 'direct_to_from_reg': True, 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='rocfft-default', gpu_scheme='CS_KERNEL_STOCKHAM', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(16, 4, 4, 4, 8), gpu_workgroup_size=512, gpu_threads_per_transform=512, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=8388608, gpu_global_write_bytes=8388608, gpu_memory_optimization='half_lds', gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status='NO_EQUIVALENT', gpu_metadata=(('half_lds', True), ('direct_to_from_reg', True))),)}"
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=rocfft-default-m2ndp length=8192 radices=(16, 4, 4, 4, 8) extra={'scheme': 'CS_KERNEL_STOCKHAM', 'workgroup_size': 512, 'threads_per_transform': 512, 'transforms_per_block': 1, 'mechanism': 'compiled-in function_pool default (config_sbrr.py)', 'half_lds': True, 'direct_to_from_reg': True, 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='rocfft-default-m2ndp', gpu_scheme='CS_KERNEL_STOCKHAM', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(16, 4, 4, 4, 8), gpu_workgroup_size=512, gpu_threads_per_transform=512, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=8388608, gpu_global_write_bytes=8388608, gpu_memory_optimization='half_lds', gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status='NO_EQUIVALENT', gpu_metadata=(('half_lds', True), ('direct_to_from_reg', True))),)}"
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "resource_infeasible",
+      "diagnostics": "[resource_infeasible] length=8192 needs 131104 bytes of scratchpad (16*length plus 32 private tracker bytes), but target.spad_capacity_bytes=122880 allows at most 7678 -- this is only the byte-capacity upper bound, not a guarantee length=7678 itself has a supported radix factorization/stage layout\noriginal GPU configuration: source=vkfft length=8192 radices=(8, 8, 8, 8, 2) extra={'workers_per_fft': 1024, 'transforms_per_block': 1, 'register_boost': 1, 'upload_id': 0, 'stage_start_size': 1, 'axis_swapped': False, 'local_size': (1024, 1, 1), 'min_registers_per_thread': 8, 'registers_per_thread': 8, 'registers_per_radix': ((2, 8), (4, 8), (8, 8)), 'original_gpu_plan': (GPULogicalKernelPlan(planner_name='vkfft', gpu_scheme='Stockham', gpu_kernel_id=0, pass_id=0, fft_length=8192, radix_sequence=(8, 8, 8, 8, 2), gpu_workgroup_size=1024, gpu_threads_per_transform=1024, gpu_transforms_per_workgroup=1, gpu_shared_memory_bytes=None, gpu_fused_operations=(), gpu_transpose_role=None, gpu_global_read_bytes=8388608, gpu_global_write_bytes=8388608, gpu_memory_optimization=None, gpu_logical_shared_memory_bytes=None, m2ndp_memory_optimization_status=None, gpu_metadata=(('stage_start_size', 1), ('axis_swapped', False), ('local_size', (1024, 1, 1)), ('min_registers_per_thread', 8), ('registers_per_thread', 8), ('registers_per_radix', ((2, 8), (4, 8), (8, 8))))),)}"
+    },
+    {
+      "n": 8192,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 1,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 32,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "clfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "rocfft-default",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "original",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    },
+    {
+      "n": 16384,
+      "batch": 128,
+      "planner": "vkfft",
+      "mode": "m2ndp-adapted",
+      "inverse": true,
+      "status": "ok",
+      "diagnostics": ""
+    }
+  ],
+  "checked_plan_combinations": 504
+}

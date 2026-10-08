@@ -33,7 +33,7 @@ def leaf_replicas(node) -> list[tuple[int, bool]]:
     if isinstance(node, FFTLeafPlan):
         return [(node.r, node.kernel.persistent is not None)]
     assert isinstance(node, FFTRecursiveNodePlan)
-    return [(node.near_fft.r, node.near_fft.kernel.persistent is not None)] + leaf_replicas(node.far_child)
+    return leaf_replicas(node.near_fft) + leaf_replicas(node.far_child)
 
 
 def persistent_round_increment(spec_n: int, plan_kwargs: dict) -> tuple[int, bool]:

@@ -1,0 +1,221 @@
+{
+  "config": "M2NDP_RTX3060",
+  "config_md5": "fc15d795",
+  "config_path": "/work/third_party/m2ndp-detour/config/performance/M2NDP_RTX3060/m2ndp.config",
+  "core_mhz": 1640,
+  "cycles": 30291,
+  "detour": "",
+  "dir": "/fft-work/verification/results/execution_codegen_fixes_2026-10-08/simulator/persistent_wave_rtx3060_inverse_b57/fft-execution-persistent_wave_rtx3060_inverse_b57_M2NDP_RTX3060/20261007-154132.604",
+  "dram": {
+    "channels": 28,
+    "max_pct": 0.54,
+    "mean_pct": 0.47,
+    "min_pct": 0.37
+  },
+  "exit": 0,
+  "finished": "2026-10-07T15:42:03+00:00",
+  "host_log": "host.log",
+  "kernels": [
+    {
+      "finished": 9139,
+      "launch_id": "0",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::preload()",
+      "started": 7107
+    },
+    {
+      "finished": 12148,
+      "launch_id": "1",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_0()",
+      "started": 9253
+    },
+    {
+      "finished": 12556,
+      "launch_id": "2",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_0()",
+      "started": 12367
+    },
+    {
+      "finished": 14290,
+      "launch_id": "3",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_1()",
+      "started": 12673
+    },
+    {
+      "finished": 14583,
+      "launch_id": "4",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_1()",
+      "started": 14396
+    },
+    {
+      "finished": 16024,
+      "launch_id": "5",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_2()",
+      "started": 14702
+    },
+    {
+      "finished": 16324,
+      "launch_id": "6",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_2()",
+      "started": 16137
+    },
+    {
+      "finished": 17138,
+      "launch_id": "7",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::writeback()",
+      "started": 16443
+    },
+    {
+      "finished": 18438,
+      "launch_id": "8",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::preload()",
+      "started": 17352
+    },
+    {
+      "finished": 19812,
+      "launch_id": "9",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_0()",
+      "started": 18547
+    },
+    {
+      "finished": 20107,
+      "launch_id": "10",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_0()",
+      "started": 19918
+    },
+    {
+      "finished": 20933,
+      "launch_id": "11",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_1()",
+      "started": 20217
+    },
+    {
+      "finished": 21231,
+      "launch_id": "12",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_1()",
+      "started": 21044
+    },
+    {
+      "finished": 21803,
+      "launch_id": "13",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_2()",
+      "started": 21343
+    },
+    {
+      "finished": 22214,
+      "launch_id": "14",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_2()",
+      "started": 22027
+    },
+    {
+      "finished": 22804,
+      "launch_id": "15",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::writeback()",
+      "started": 22326
+    },
+    {
+      "finished": 23998,
+      "launch_id": "16",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::preload()",
+      "started": 22913
+    },
+    {
+      "finished": 25369,
+      "launch_id": "17",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_0()",
+      "started": 24108
+    },
+    {
+      "finished": 25664,
+      "launch_id": "18",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_0()",
+      "started": 25479
+    },
+    {
+      "finished": 26474,
+      "launch_id": "19",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_1()",
+      "started": 25762
+    },
+    {
+      "finished": 26866,
+      "launch_id": "20",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_1()",
+      "started": 26683
+    },
+    {
+      "finished": 27422,
+      "launch_id": "21",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_2()",
+      "started": 26966
+    },
+    {
+      "finished": 27704,
+      "launch_id": "22",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::stage_2()",
+      "started": 27521
+    },
+    {
+      "finished": 28285,
+      "launch_id": "23",
+      "name": "persistent_wave_rtx3060_inverse_b57::PersistentFFT::writeback()",
+      "started": 27811
+    }
+  ],
+  "launch_spans": [
+    26617
+  ],
+  "launches": 24,
+  "log": "simulator.log",
+  "repo": "",
+  "stats": {
+    "ctrl.addr_issue": 1537,
+    "ctrl.cycle": 0,
+    "ctrl.exit_issue": 0,
+    "ctrl.f_issue": 0,
+    "ctrl.i_issue": 1565,
+    "ctrl.inst_issue": 3102,
+    "ctrl.ldst_issue": 228,
+    "ctrl.sf_issue": 0,
+    "ctrl.spad_issue": 1309,
+    "ctrl.spad_read": 0,
+    "ctrl.spad_write": 0,
+    "ctrl.v_addr_issue": 0,
+    "ctrl.v_issue": 0,
+    "ctrl.v_ldst_issue": 0,
+    "ctrl.v_sf_issue": 0,
+    "ctrl.v_spad_issue": 0,
+    "launches": 24,
+    "ndp.addr_issue": 60552,
+    "ndp.cycle": 0,
+    "ndp.exit_issue": 5376,
+    "ndp.f_issue": 12900,
+    "ndp.i_issue": 253271,
+    "ndp.inst_issue": 381575,
+    "ndp.ldst_issue": 20064,
+    "ndp.sf_issue": 0,
+    "ndp.spad_issue": 40488,
+    "ndp.spad_read": 0,
+    "ndp.spad_write": 0,
+    "ndp.v_addr_issue": 20520,
+    "ndp.v_issue": 28956,
+    "ndp.v_ldst_issue": 1368,
+    "ndp.v_sf_issue": 0,
+    "ndp.v_spad_issue": 19152
+  },
+  "stats_file": "stats.txt",
+  "tasks": [
+    {
+      "arrived": 4150,
+      "called": 0,
+      "finished": 28320,
+      "issued": 3116,
+      "launch": 0,
+      "notified": 29733,
+      "started": 6282,
+      "task": 0
+    }
+  ],
+  "time_us": 18.47,
+  "wall_s": 30.0,
+  "workload": "fft-execution-persistent_wave_rtx3060_inverse_b57"
+}

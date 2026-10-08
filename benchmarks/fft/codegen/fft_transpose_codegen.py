@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from planning.execution.launch_plan import resolve_fft_launch
+from codegen.common import emit_aligned_pool, emit_fft_launches, emit_execution_record
+
 """Codegen for the standalone tiled-transpose + fused large-twiddle
 boundary kernel (see fft_plan_balanced.FFTTransposePlan / make_balanced_transpose_
 plan). Separate from fft_codegen.py's FFT-stage codegen on purpose: an
@@ -52,8 +56,10 @@ from codegen.fft_codegen import emit_kernel as _emit_kernel
 from codegen.fft_persistent_codegen import emit_persistent_kernel_struct
 from planning.strategies.fft_plan_balanced import BalancedTransposeFFTPlan, FFTTransposePlan
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from planning.execution.launch_support import validate_fft_launch_granule
 from planning.strategies.fft_plan_recursive import (
     PhysicalTransposePlan,
+    FFTLeafPlan,
     RecursiveFFTPlan,
     flatten_recursive_node,
 )
@@ -669,46 +675,18 @@ def _safe_round_size(
 def _stage_round_size(
     stage: PhysicalTransposePlan, *, spread_across_units: bool, target: TargetProfile
 ) -> int:
-    """The number of microthreads one host-side launch round for `stage`
-    may safely request in a single `.launch()` call -- `stage.max_uthread`
-    (today's exact behavior) unless `spread_across_units` is on AND
-    `stage` is eligible: a `PhysicalTransposePlan` (no cooperative-worker
-    concept at all), or an `FFTCodegenPlan` with no cooperative workers
-    (`stage.cooperation is None`) -- a cooperative leaf has its own,
-    separate, not-yet-verified placement story (see fft_cooperative_
-    codegen.py and the C-track of this repo's own multi-NDP-unit plan)
-    and is never touched here.
-
-    Raises if `spread_across_units` is on for a stage whose own
-    `simd_lanes` isn't 8: `_safe_round_size`'s formula (and the address-
-    interleaving math it's built on) assumes one microthread is exactly
-    32 bytes (`simd_lanes * size_of[Float32]() == 32`) -- true at every
-    call site this project ships today (`simd_lanes` defaults to 8
-    everywhere), but `--simd-lanes` is a CLI override this function has
-    no other way to guard against silently mis-trusting.
+    """Physical width of a safe host round. Plain and cooperative FFTs
+    share a launch descriptor; persistent FFTs own their internal rounds.
+    Transpose stages retain their independent tile launch policy.
     """
     if not spread_across_units:
         return stage.max_uthread
-    if not isinstance(stage, PhysicalTransposePlan) and (
-        stage.cooperation is not None or stage.persistent is not None
-    ):
-        # A persistent stage's own max_uthread (== launch_uthreads, a
-        # target-fixed width -- see make_persistent_leaf_plan) is not a
-        # per-physical-unit scratchpad cap this formula's own widening
-        # story applies to at all (there is no "spread this launch's
-        # microthreads across more units" question for a persistent leaf
-        # -- its own preload/stage/writeback phases already dispatch
-        # every physical unit's own software group internally); a
-        # cooperative leaf has its own, separate, not-yet-verified
-        # placement story either way (see the comment this branch already
-        # carried for cooperation).
+    if not isinstance(stage, PhysicalTransposePlan) and stage.persistent is not None:
+        # Persistent dispatch already places one software group on every unit.
         return stage.max_uthread
-    if stage.simd_lanes * 4 != 32:
-        raise ValueError(
-            f"spread_across_units requires simd_lanes=8 (one microthread must be "
-            f"exactly 32 bytes, the address-interleaving granule _safe_round_size "
-            f"relies on) -- got simd_lanes={stage.simd_lanes} for {stage.kernel_name}"
-        )
+    if not isinstance(stage, PhysicalTransposePlan):
+        return resolve_fft_launch(stage, target=target, spread_across_units=True).round_uthread_capacity
+    validate_fft_launch_granule(stage.simd_lanes, spread_across_units=True)
     return _safe_round_size(
         stage.max_uthread, num_ndp_units=target.num_ndp_units,
         interleave_chunk_uthreads=target.interleave_chunk_uthreads,
@@ -720,7 +698,8 @@ def generate_recursive_fft_kernels(
     narrow_middle_stages: bool = False, loop_stages: bool = True,
     reference_check: bool = True, target: TargetProfile = DEFAULT_TARGET_PROFILE,
     spread_across_units: bool = False, debug_print_pool_alignment: bool = False,
-    persistent_mode: str = "physical",
+    persistent_mode: str | None = None,
+    persistent_copy_mode: str | None = None, persistent_vector_width: int = 4,
 ) -> str:
     """Render a full make_recursive_transpose_plan tree as a flat, ordered
     Mojo-ish kernel sequence chained through DRAM from one host main().
@@ -795,6 +774,10 @@ def generate_recursive_fft_kernels(
     call). `target`: only consulted for `num_ndp_units`/
     `interleave_chunk_uthreads` when this flag is on.
 
+    `persistent_mode`/`persistent_copy_mode`: omitted (`None`) follows each
+    persistent leaf's plan independently. Explicit values override all persistent
+    leaves for comparisons. `persistent_vector_width` controls vectorized copies.
+
     `debug_print_pool_alignment`: `False` (the default) unchanged output.
     `True` adds one `print()` per stage's own `pool{i}` right after it is
     allocated, dumping the real runtime address mod 64/128/256/2048 --
@@ -806,7 +789,28 @@ def generate_recursive_fft_kernels(
     branch that already is) -- observation only, no simulator source
     touched, no alignment behavior touched.
     """
+    if isinstance(plan.root, FFTLeafPlan) and plan.root.tail_hybrid is not None:
+        from codegen.fft_persistent_codegen import generate_persistent_tail_hybrid_kernel
+        from planning.execution.kernel_registration import validate_recursive_kernel_registration
+        validate_recursive_kernel_registration(plan, target=target, loop_stages=False)
+        return generate_persistent_tail_hybrid_kernel(
+            plan.root.tail_hybrid, compute_lanes=compute_lanes,
+            narrow_middle_stages=narrow_middle_stages, mode=persistent_mode,
+            copy_mode=persistent_copy_mode, vector_width=persistent_vector_width,
+            tail_compute_lanes=compute_lanes, tail_narrow_middle_stages=narrow_middle_stages,
+            target=target, reference_check=reference_check,
+            spread_across_units=spread_across_units,
+        )
+    from planning.execution.kernel_registration import validate_recursive_kernel_registration
+    validate_recursive_kernel_registration(plan, target=target, loop_stages=loop_stages)
     stages = flatten_recursive_node(plan.root)
+    stages = [replace(s, launch_mapping=resolve_fft_launch(s, target=target,
+                                                         spread_across_units=spread_across_units))
+              if not isinstance(s, PhysicalTransposePlan) and s.persistent is None else s
+              for s in stages]
+    # Reject unsupported launch policies before rendering any kernel bodies.
+    for stage in stages:
+        _stage_round_size(stage, spread_across_units=spread_across_units, target=target)
     e = Emitter()
     _emit_prelude(e)
     e.add(f"comptime N = {plan.n}")
@@ -871,17 +875,26 @@ def generate_recursive_fft_kernels(
                 f"{stage.host.total_elems} not a multiple of length={stage.length}"
             )
             num_logical_blocks = stage.host.total_elems // stage.length
-            emit_persistent_kernel_struct(
+            table = emit_persistent_kernel_struct(
                 e, plan=stage, num_logical_blocks=num_logical_blocks,
                 compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
-                mode=persistent_mode,
+                mode=persistent_mode, copy_mode=persistent_copy_mode,
+                vector_width=persistent_vector_width,
+                max_kernel_register=target.max_kernel_register,
+                spad_capacity_bytes=target.spad_capacity_bytes,
             )
+            stage_loops[i] = stage.persistent.loop_stages
+            if stage.persistent.loop_stages:
+                loop_twiddle_tables[i] = table
         else:
             stage_loop_stages = loop_stages
+            emit_execution_record(e, plan=stage, compute_lanes=compute_lanes,
+                                  narrow_middle_stages=narrow_middle_stages, loop_stages=stage_loop_stages)
             stage_loops[i] = stage_loop_stages
             loop_twiddle_tables[i] = _emit_kernel(
                 e, plan=stage, compute_lanes=compute_lanes,
                 narrow_middle_stages=narrow_middle_stages, loop_stages=stage_loop_stages,
+                max_kernel_register=target.max_kernel_register,
             )
 
     e.add("# " + "=" * 76)
@@ -1002,9 +1015,7 @@ def generate_recursive_fft_kernels(
     }
     for i, stage in enumerate(stages):
         e.add(f"    var pool{i}_elems = {stage.simd_lanes * round_sizes[i]}")
-        needs_chunk_alignment = not isinstance(stage, PhysicalTransposePlan) and (
-            stage.cooperation is not None or stage.persistent is not None
-        )
+        needs_chunk_alignment = not isinstance(stage, PhysicalTransposePlan)
         if needs_chunk_alignment:
             # A cooperative stage's fft_slot/worker_id grouping
             # (_emit_cooperative_stage's own docstring), or a persistent
@@ -1034,24 +1045,8 @@ def generate_recursive_fft_kernels(
             # alloc` itself, which every non-cooperative, non-persistent
             # benchmark in the repo also uses and does not need the
             # stricter alignment for.
-            chunk_bytes = target.interleave_chunk_uthreads * target.uthread_bytes
-            pad_elems = chunk_bytes // 4
-            e.add(f"    var pool{i}_raw = cxl_alloc[Float32](pool{i}_elems + {pad_elems})")
-            e.add(f"    var pool{i}_raw_addr = Int(pool{i}_raw)")
-            e.add(
-                f"    var pool{i}_addr = (pool{i}_raw_addr + {chunk_bytes - 1}) "
-                f"// {chunk_bytes} * {chunk_bytes}"
-            )
-            e.add(f"    if pool{i}_addr % {chunk_bytes} != 0:")
-            e.add(
-                f'        print("[host] stage {i} ({stage.kernel_name}) pool '
-                f'alignment assertion failed:", pool{i}_addr)'
-            )
-            e.add("        return")
-            e.add(
-                f"    var pool{i} = UnsafePointer[Float32, MutAnyOrigin]"
-                f"(unsafe_from_address=pool{i}_addr)"
-            )
+            emit_aligned_pool(e, name=f"pool{i}", elems=f"pool{i}_elems",
+                              alignment_bytes=target.mapping_stride_bytes)
         else:
             e.add(f"    var pool{i} = cxl_alloc[Float32](pool{i}_elems)")
         if debug_print_pool_alignment:
@@ -1094,8 +1089,7 @@ def generate_recursive_fft_kernels(
             # See PhysicalTransposePlan.needs_round_split: a tile's own address is a function of
             # tile_id alone (via q/t_r/t_c), so splitting rounds only needs
             # tile_id itself shifted by a per-round `round_offset` -- no
-            # DRAM pointer offsetting, unlike the FFTCodegenPlan branch
-            # below (see there for why that one's different).
+            # pointer offsetting; FFT stages use their own logical FFT range.
             fixed_args = [rn for rn in twiddle_names.get(i, ()) if rn is not None]
             fixed_args += [n for n in tile_coord_names.get(i, ()) if n is not None]
 
@@ -1130,77 +1124,14 @@ def generate_recursive_fft_kernels(
                 e.add()
             continue
 
-        # every FFTCodegenPlan a recursive node builds (leaf or near_fft) is
-        # always large_twiddle=None -- that cross-block math lives entirely
-        # in the standalone MIDDLE transpose kernel -- and always
-        # AddressMapping.contiguous(row_stride=stage.length) on both sides
-        # (see _build_recursive_node), so `global_uthread_id() * stage.length`
-        # is the whole address story: round `r`'s microthreads
-        # [r*max_uthread, r*max_uthread+round_count) read/write exactly the
-        # contiguous `round_count*stage.length`-element slice starting
-        # `r*max_uthread*stage.length` into this stage's own in/out buffers.
-        # Offsetting the pointers `Params` gets by that amount and launching
-        # over a `round_count`-sized (<= max_uthread) slice of the pool
-        # covers it -- no different, in the DRAM buffers' own terms, from
-        # this stage simply having been `rounds` separate, smaller stages.
-        #
-        # Launching the *whole* total_uthreads in one go over a scratchpad
-        # sized for only max_uthread of them (local_uthread_id() cycles
-        # 0..max_uthread-1 per physical unit, so anything that doesn't fit
-        # on one unit needs another launch) used to hang the simulator
-        # rather than error -- confirmed by hand with total_uthreads=4,
-        # max_uthread=1, *without* accounting for address-interleaving at
-        # all. `_stage_round_size` above (spread_across_units) is not that
-        # naive removal of the cap -- it's a real, proven-safe wider bound
-        # (see _safe_round_size's own docstring): no physical unit is ever
-        # asked for more than max_uthread microthreads even when a round
-        # spans several of them, so this doesn't reintroduce that hang.
-        assert stage.large_twiddle is None
-        round_size = round_sizes[i]
-        rounds = -(-stage.total_uthreads // round_size)
-        # elem_off advances by this stage's own *logical* replicas per
-        # round, not physical microthreads once workers share one
-        # replica's scratchpad -- see FFTCodegenPlan.replicas_per_round's
-        # own docstring. That method's own value is plan-time-fixed
-        # against the old max_uthread cap, so it's only reused as-is for
-        # a cooperative stage (never widened by spread_across_units, see
-        # _stage_round_size); for a non-cooperative stage, one physical
-        # microthread is already one replica (replicas_per_round() ==
-        # max_uthread whenever cooperation is None -- see that method's
-        # own docstring), so round_size itself is the right value once a
-        # round can be wider than max_uthread.
-        replicas_per_round = round_size if stage.cooperation is None else stage.replicas_per_round()
-        for r in range(rounds):
-            round_count = min(round_size, stage.total_uthreads - r * round_size)
-            elem_off = r * replicas_per_round * stage.length
-            round_in_r = in_r if elem_off == 0 else f"({in_r} + {elem_off})"
-            round_in_i = in_i if elem_off == 0 else f"({in_i} + {elem_off})"
-            round_out_r = out_r if elem_off == 0 else f"({out_r} + {elem_off})"
-            round_out_i = out_i if elem_off == 0 else f"({out_i} + {elem_off})"
-            suffix = f"{i}" if rounds == 1 else f"{i}_{r}"
-
-            e.add(f"    var rc{suffix} = {stage.kernel_name}.launch(")
-            e.add(f"        PooledRange.over(pool{i}, {stage.simd_lanes * round_count}),")
-            if stage_loops.get(i, False):
-                ltrn, ltimn = loop_twiddle_names[i]
-                e.add(
-                    f"        {stage.kernel_name}Params({round_in_r}, {round_in_i}, "
-                    f"{round_out_r}, {round_out_i}, {ltrn}, {ltimn}),"
-                )
-            else:
-                e.add(
-                    f"        {stage.kernel_name}Params({round_in_r}, {round_in_i}, "
-                    f"{round_out_r}, {round_out_i}),"
-                )
-            e.add("    )")
-            e.add(f"    if rc{suffix} != 0:")
-            round_note = "" if rounds == 1 else f" round {r}/{rounds}"
-            e.add(
-                f'        print("[host] recursive FFT stage {i} ({stage.kernel_name}'
-                f'{round_note}) failed, exit", rc{suffix})'
-            )
-            e.add("        return")
-            e.add()
+        # FFT rounds retain the full DRAM pointers. The shared descriptor
+        # supplies logical FFT base/count, including padded physical launches.
+        # Persistent leaves instead dispatch their rounds inside device_main.
+        args = [in_r, in_i, out_r, out_i]
+        if stage_loops.get(i, False):
+            args.extend(loop_twiddle_names[i])
+        emit_fft_launches(e, plan=stage, pool=f"pool{i}", args=args,
+                         rc_prefix=f"rc{i}", label=f"recursive FFT stage {i} ({stage.kernel_name})")
 
     if reference_check:
         _emit_reference_check(

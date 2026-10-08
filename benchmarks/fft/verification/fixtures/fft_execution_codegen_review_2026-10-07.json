@@ -1,0 +1,330 @@
+{
+  "scope": "Execution/codegen only; no environment setup, planner-policy audit or simulator run",
+  "source_sha256": {
+    "codegen/fft_codegen.py": "9a3dcf8eb7dac15dff433dd803bb007968d0f64292d34335c53cdbc4eafba578",
+    "codegen/fft_cooperative_codegen.py": "b510091f0cd62873bc251e6ede6a351e9592e159f8987e5dec16bb6c31b6318f",
+    "codegen/fft_persistent_codegen.py": "5c7012988c78790eac0a6d1b4e0cc751df4d9ea62eb2ba38ec5d49e88cec10c8",
+    "codegen/fft_transpose_codegen.py": "c68eda89a9750d2407ff2bc4d8367d012c5d041e5bc305ac08df9605df579383",
+    "planning/execution/fft_plan_cooperative.py": "49f36614cc881effc45ed063016e9647c82419a2d1d386f034eed5f2df4f7f7a",
+    "planning/execution/fft_plan_persistent.py": "76dc5511012f0a273470de8013202b8676377f255b3ccfc3e9c185b2a17b24ab",
+    "verification/verify_fft_persistent.py": "8a20e4bdfd6fc87aee9a7af6bb2d6673c8949db1d63ca6e4fcc6b9dc6cd92eb8"
+  },
+  "tracker_ordering": [
+    {
+      "mode": "physical",
+      "blocks": 1,
+      "workers": 16,
+      "frozen_tracker_reads": true,
+      "max_error": 2.856169989987069e-07,
+      "output_nonzero_elements": 64
+    },
+    {
+      "mode": "physical",
+      "blocks": 1,
+      "workers": 16,
+      "frozen_tracker_reads": false,
+      "max_error": 655.4132110071646,
+      "output_nonzero_elements": 8
+    },
+    {
+      "mode": "physical",
+      "blocks": 33,
+      "workers": 16,
+      "frozen_tracker_reads": true,
+      "max_error": 2.8561706545825333e-07,
+      "output_nonzero_elements": 2112
+    },
+    {
+      "mode": "physical",
+      "blocks": 33,
+      "workers": 16,
+      "frozen_tracker_reads": false,
+      "max_error": 655.4132110071646,
+      "output_nonzero_elements": 320
+    },
+    {
+      "mode": "fused",
+      "blocks": 1,
+      "workers": 16,
+      "frozen_tracker_reads": true,
+      "max_error": 2.856169989987069e-07,
+      "output_nonzero_elements": 64
+    },
+    {
+      "mode": "fused",
+      "blocks": 1,
+      "workers": 16,
+      "frozen_tracker_reads": false,
+      "max_error": 655.4132110071646,
+      "output_nonzero_elements": 8
+    },
+    {
+      "mode": "fused",
+      "blocks": 33,
+      "workers": 16,
+      "frozen_tracker_reads": true,
+      "max_error": 2.8561706545825333e-07,
+      "output_nonzero_elements": 2112
+    },
+    {
+      "mode": "fused",
+      "blocks": 33,
+      "workers": 16,
+      "frozen_tracker_reads": false,
+      "max_error": 655.4132110071646,
+      "output_nonzero_elements": 320
+    },
+    {
+      "mode": "wave",
+      "blocks": 1,
+      "workers": 16,
+      "frozen_tracker_reads": true,
+      "max_error": 2.856169989987069e-07,
+      "output_nonzero_elements": 64
+    },
+    {
+      "mode": "wave",
+      "blocks": 1,
+      "workers": 16,
+      "frozen_tracker_reads": false,
+      "max_error": 655.4132110071646,
+      "output_nonzero_elements": 8
+    },
+    {
+      "mode": "wave",
+      "blocks": 33,
+      "workers": 16,
+      "frozen_tracker_reads": true,
+      "max_error": 2.8561706545825333e-07,
+      "output_nonzero_elements": 2112
+    },
+    {
+      "mode": "wave",
+      "blocks": 33,
+      "workers": 16,
+      "frozen_tracker_reads": false,
+      "max_error": 655.4132110071646,
+      "output_nonzero_elements": 320
+    }
+  ],
+  "wave_tracker_ordering": [
+    {
+      "length": 1024,
+      "blocks": 1,
+      "mode": "wave",
+      "workers": 16,
+      "round_tracker_frozen": true,
+      "wave_tracker_frozen": true,
+      "phase_worker_order": "alternating 0,1,... and 1,0,2,... within each group",
+      "max_error": 5.641298544261981e-05
+    },
+    {
+      "length": 1024,
+      "blocks": 1,
+      "mode": "wave",
+      "workers": 16,
+      "round_tracker_frozen": true,
+      "wave_tracker_frozen": false,
+      "phase_worker_order": "alternating 0,1,... and 1,0,2,... within each group",
+      "max_error": 61899.19392560778
+    }
+  ],
+  "standalone_coverage": [
+    {
+      "length": 64,
+      "batch": 64,
+      "workers": 1,
+      "spad_capacity_bytes": 1024,
+      "total_uthreads": 64,
+      "max_uthread": 1,
+      "host_launch_count": 1,
+      "accepted_fft_ids": [
+        0,
+        8,
+        16,
+        24,
+        32,
+        40,
+        48,
+        56
+      ],
+      "omitted_fft_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63
+      ],
+      "scope": "Aligned-pool mapping and emitted guard model, not simulator execution"
+    },
+    {
+      "length": 64,
+      "batch": 64,
+      "workers": 8,
+      "spad_capacity_bytes": 1024,
+      "total_uthreads": 512,
+      "max_uthread": 8,
+      "host_launch_count": 1,
+      "accepted_fft_ids": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ],
+      "omitted_fft_ids": [
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63
+      ],
+      "scope": "Aligned-pool mapping and emitted guard model, not simulator execution"
+    }
+  ],
+  "cooperative_rounds": [
+    {
+      "length": 1024,
+      "batch": 128,
+      "workers": 2,
+      "slots_per_unit": 4,
+      "round_uthreads": 8,
+      "ffts_per_launch": 4,
+      "host_launch_count": 32,
+      "aligned_pool_units_per_round": 1,
+      "target_units": 32
+    },
+    {
+      "length": 1024,
+      "batch": 128,
+      "workers": 8,
+      "slots_per_unit": 4,
+      "round_uthreads": 32,
+      "ffts_per_launch": 4,
+      "host_launch_count": 32,
+      "aligned_pool_units_per_round": 4,
+      "target_units": 32
+    }
+  ],
+  "custom_persistent_alignment": {
+    "planned_chunk_bytes": 512,
+    "emits_256_alignment": true
+  },
+  "invalid_copy_widths": [
+    {
+      "vector_width": 0,
+      "accepted": true,
+      "emitted_loop": true
+    },
+    {
+      "vector_width": -1,
+      "accepted": true,
+      "emitted_loop": true
+    }
+  ]
+}

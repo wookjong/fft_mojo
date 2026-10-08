@@ -41,7 +41,10 @@ def check_logical_worker_count_preserved() -> None:
         assert result.status is BaselineStatus.OK, f"{label}: expected OK, got {result.status}"
         gpu_plan = reconstruct_gpu_logical_plan(result)
         m2ndp_plan = reconstruct_m2ndp_physical_plan(result, target=_T)
-        for gpu_kernel, m2ndp_kernel in zip(gpu_plan, m2ndp_plan):
+        fft_physical = [k for k in m2ndp_plan if k.strategy != "transpose"]
+        fft_gpu = [k for k in gpu_plan if k.gpu_transpose_role is None]
+        assert len(fft_gpu) == len(fft_physical)
+        for gpu_kernel, m2ndp_kernel in zip(fft_gpu, fft_physical):
             if gpu_kernel.gpu_transpose_role is not None:
                 continue  # transpose kernels have no worker-count concept
             assert gpu_kernel.gpu_threads_per_transform == m2ndp_kernel.logical_workers_per_fft, (
@@ -103,7 +106,7 @@ def check_all_logical_batches_executed_exactly_once() -> None:
     batch exactly once: `sum(physical_lane_batches counts)` must equal the
     stage's own total logical batch count, and no physical lane index
     ever exceeds the physical lane count."""
-    result = vkfft.plan_m2ndp(8192, target=_T)
+    result = vkfft.plan_m2ndp(16384, target=_T)
     assert result.status is BaselineStatus.OK
     m2ndp_plan = reconstruct_m2ndp_physical_plan(result, target=_T)
     persistent_kernels = [k for k in m2ndp_plan if k.strategy == "persistent"]
@@ -144,7 +147,7 @@ def check_all_logical_batches_executed_exactly_once() -> None:
             checked_stages += 1
     assert checked_stages > 0
     print(f"    OK   all logical batches executed exactly once across {checked_stages} persistent "
-          f"stage(s) of vkfft.plan_m2ndp(8192)'s own plan -- no physical lane exceeds the count, "
+          f"stage(s) of vkfft.plan_m2ndp(16384)'s own plan -- no physical lane exceeds the count, "
           f"no batch lost or duplicated")
 
 
@@ -159,23 +162,22 @@ def check_source_faithful_vs_adapted_differ_same_algorithm() -> None:
     different, second lowering path."""
     frozen = vkfft.plan(8192, target=_T)
     adapted = vkfft.plan_m2ndp(8192, target=_T)
-    assert frozen.status is BaselineStatus.RESOURCE_INFEASIBLE, (
-        f"expected the frozen baseline to still pick the infeasible one-pass shape "
-        f"(unchanged since docs/vkfft_m2ndp_scratchpad_resource_model.md), got {frozen.status}"
-    )
+    assert frozen.status is BaselineStatus.OK
+    assert frozen.plan.root.kernel.persistent.storage_mode == "global"
+    assert len(reconstruct_gpu_logical_plan(frozen)) == 1
     assert adapted.status is BaselineStatus.OK
     # Different scheme decision (num_passes) ...
-    frozen_num_passes = frozen.gpu_config.extra.get("workers_per_fft")  # refusal keeps GPU's own attempted config
+    frozen_num_passes = frozen.gpu_config.extra.get("workers_per_fft")
     adapted_gpu_plan = reconstruct_gpu_logical_plan(adapted)
     adapted_scheme = adapted_gpu_plan[0].gpu_scheme
-    assert "num_passes=2" in adapted_scheme or "num_passes=3" in adapted_scheme, (
+    assert len(adapted_gpu_plan) in (2, 3), (
         f"expected the M2NDP-adapted scheme to need >1 pass, got {adapted_scheme!r}"
     )
     # ... but the SAME planner/module produced both.
     assert frozen.gpu_config.source == "vkfft"
     assert adapted.gpu_config.source == "vkfft-m2ndp"
     import inspect
-    assert inspect.getsourcefile(vkfft.plan) == inspect.getsourcefile(vkfft.plan_m2ndp)
+    assert inspect.getsourcefile(inspect.unwrap(vkfft.plan)) == inspect.getsourcefile(vkfft.plan_m2ndp)
     print(
         f"    OK   vkfft.plan(8192) (frozen: {frozen.status.value}, attempted "
         f"workers_per_fft={frozen_num_passes}) and vkfft.plan_m2ndp(8192) (adapted: "

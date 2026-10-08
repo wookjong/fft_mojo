@@ -1,0 +1,12 @@
+[
+  {
+    "module": "verify_fft_execution_invariants",
+    "exit_code": 0,
+    "seconds": 5.61
+  },
+  {
+    "module": "verify_fft_planner_corrections",
+    "exit_code": 0,
+    "seconds": 3.99
+  }
+]

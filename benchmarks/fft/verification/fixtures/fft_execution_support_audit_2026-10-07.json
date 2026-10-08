@@ -1,0 +1,279 @@
+{
+  "validation": "Python planner and generated-source inspection; no binary execution",
+  "registry": {
+    "n": 729,
+    "scratchpad_byte_budget": 16384,
+    "max_kernel_register": 8,
+    "candidates": 24,
+    "violations": [
+      {
+        "candidate": 0,
+        "task": "FFTRecLeaf0",
+        "functions": [
+          "stage_0",
+          "stage_0_tail",
+          "stage_1",
+          "stage_1_tail",
+          "stage_2",
+          "stage_3",
+          "stage_4",
+          "stage_5",
+          "stage_5_tail"
+        ],
+        "workers": null,
+        "lane_variant": null
+      },
+      {
+        "candidate": 1,
+        "task": "FFTRecLeaf0",
+        "functions": [
+          "stage_0",
+          "stage_0_tail",
+          "stage_1",
+          "stage_2",
+          "stage_3",
+          "stage_4",
+          "stage_4_tail",
+          "stage_5",
+          "stage_5_tail"
+        ],
+        "workers": 8,
+        "lane_variant": null
+      },
+      {
+        "candidate": 4,
+        "task": "FFTRecLeaf0",
+        "functions": [
+          "stage_0",
+          "stage_0_tail",
+          "stage_1",
+          "stage_1_tail",
+          "stage_2",
+          "stage_3",
+          "stage_4",
+          "stage_5",
+          "stage_5_tail"
+        ],
+        "workers": 2,
+        "lane_variant": null
+      },
+      {
+        "candidate": 5,
+        "task": "FFTRecLeaf0",
+        "functions": [
+          "stage_0",
+          "stage_0_tail",
+          "stage_1",
+          "stage_1_tail",
+          "stage_2",
+          "stage_3",
+          "stage_4",
+          "stage_5",
+          "stage_5_tail"
+        ],
+        "workers": null,
+        "lane_variant": "unnarrowed"
+      },
+      {
+        "candidate": 6,
+        "task": "FFTRecLeaf0",
+        "functions": [
+          "stage_0",
+          "stage_0_tail",
+          "stage_1",
+          "stage_1_tail",
+          "stage_2",
+          "stage_3",
+          "stage_4",
+          "stage_5",
+          "stage_5_tail"
+        ],
+        "workers": null,
+        "lane_variant": "all_scalar"
+      }
+    ]
+  },
+  "target_propagation": {
+    "mixed_candidates": [
+      {
+        "worker_sequence": [
+          "persistent"
+        ],
+        "expected_units": 4,
+        "actual_groups": 32,
+        "expected_kernel_cap": 4,
+        "actual_functions": 5
+      }
+    ],
+    "requested_scratchpad_bytes": 512,
+    "accepted_scratchpad_bytes": 1024
+  },
+  "persistent_options": {
+    "plan_mode": "wave",
+    "plan_copy": "vectorized_contiguous",
+    "default_wave_tracker": false,
+    "explicit_wave_tracker": true,
+    "default_stage_calls": 6,
+    "explicit_stage_calls": 12,
+    "recursive_ignores_plan_options": true
+  },
+  "unsafe_cooperative_workers": [
+    {
+      "workers": 3,
+      "interleave_chunk": 8,
+      "leaf_uthreads": 9,
+      "tail_blocks": 3,
+      "codegen_succeeded": true
+    },
+    {
+      "workers": 16,
+      "interleave_chunk": 8,
+      "leaf_uthreads": 48,
+      "tail_blocks": 3,
+      "codegen_succeeded": true
+    }
+  ],
+  "cooperative_lane_counterexample": {
+    "global_id": 8,
+    "local_id": 0,
+    "workers": 3,
+    "emitted_worker": 0,
+    "required_worker": 2
+  },
+  "simd4": {
+    "planner_accepted": true,
+    "codegen_error": "spread_across_units requires simd_lanes=8 (one microthread must be exactly 32 bytes, the address-interleaving granule _safe_round_size relies on) -- got simd_lanes=4 for FFTRecLeaf0"
+  },
+  "default_matrix": [
+    {
+      "n": 60,
+      "batch": 1,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative",
+        "persistent"
+      ],
+      "errors": []
+    },
+    {
+      "n": 60,
+      "batch": 33,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative",
+        "persistent"
+      ],
+      "errors": []
+    },
+    {
+      "n": 128,
+      "batch": 1,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative",
+        "persistent"
+      ],
+      "errors": []
+    },
+    {
+      "n": 128,
+      "batch": 33,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative",
+        "persistent"
+      ],
+      "errors": []
+    },
+    {
+      "n": 216,
+      "batch": 1,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative",
+        "persistent"
+      ],
+      "errors": []
+    },
+    {
+      "n": 216,
+      "batch": 33,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative",
+        "persistent"
+      ],
+      "errors": []
+    },
+    {
+      "n": 630,
+      "batch": 1,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative"
+      ],
+      "errors": []
+    },
+    {
+      "n": 630,
+      "batch": 33,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative",
+        "persistent"
+      ],
+      "errors": []
+    },
+    {
+      "n": 960,
+      "batch": 1,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative"
+      ],
+      "errors": []
+    },
+    {
+      "n": 960,
+      "batch": 33,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative",
+        "persistent"
+      ],
+      "errors": []
+    },
+    {
+      "n": 1024,
+      "batch": 1,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative",
+        "persistent"
+      ],
+      "errors": []
+    },
+    {
+      "n": 1024,
+      "batch": 33,
+      "candidates": 12,
+      "strategies": [
+        "cooperative",
+        "non_cooperative",
+        "persistent"
+      ],
+      "errors": []
+    }
+  ]
+}

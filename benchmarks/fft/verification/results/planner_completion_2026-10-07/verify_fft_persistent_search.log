@@ -1,0 +1,9 @@
+  fft_plan_search.py: persistent-execution joint search (step 10):
+    OK   N=216: persistent candidate generated, radices=[4, 2, 3, 3, 3]
+    OK   N=100000: persistent infeasibility handled as an empty list, not a crash
+    OK   N=960/1024: unsplit single-leaf persistent path stays gated off (confirmed ~50x slower on real hardware) -- split+persistent is a separate, ungated path, see check_split_persistent_reachable_where_unsplit_is_gated
+    OK   N=960/1024: split+persistent candidates reachable via the per-leaf joint search, every one genuinely split (never the gated-off unsplit shape)
+    OK   N=216: persistent candidate's _plan_signature is distinct from the non-cooperative baseline's (both radices=[4, 2, 3, 3, 3])
+    OK   N=216: persistent total_worker_stage_batches=9 < non-cooperative baseline's 48, estimated_cost ranks it cheaper
+    OK   N=216: persistent candidate satisfies _probe_plan's own dispatch condition (root.kernel.persistent is not None) -- real-hardware dispatch verified separately
+[verify] fft_plan_search step-10 persistent search: all checks passed

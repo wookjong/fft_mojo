@@ -1,0 +1,12 @@
+test_batched_upload_replicas (__main__.VkfftMultipassTests.test_batched_upload_replicas) ... ok
+test_captured_upstream_cpp_decisions (__main__.VkfftMultipassTests.test_captured_upstream_cpp_decisions) ... ok
+test_invalid_split_refused_before_lowering (__main__.VkfftMultipassTests.test_invalid_split_refused_before_lowering) ... ok
+test_reported_split_regressions (__main__.VkfftMultipassTests.test_reported_split_regressions) ... ok
+test_two_three_upload_numerics_and_codegen (__main__.VkfftMultipassTests.test_two_three_upload_numerics_and_codegen) ... ok
+test_upload_order_and_stage_start_size (__main__.VkfftMultipassTests.test_upload_order_and_stage_start_size) ... ok
+test_vendor_exception_and_failed_two_upload_search (__main__.VkfftMultipassTests.test_vendor_exception_and_failed_two_upload_search) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 14.124s
+
+OK

@@ -1,0 +1,20 @@
+rocFFT tuned: phase-0 full candidate set vs. independent SupportedKernelConfigs re-derivation
+rocFFT tuned: N<64 min_wgs floor rounds DOWN to a 64-multiple (never raw `length`)
+rocFFT tuned: N=336 max_radices_size exception (min_size+2, then -1)
+rocFFT tuned: N=24 pruning is scoped to the WHOLE phase-0 call, not per-ordering
+rocFFT tuned: phase-1 pools every propagated family into ONE SupportedKernelConfigs call
+clFFT: block-compute (SBCC) eligibility gate matches an independent plan.cpp re-derivation
+clFFT: block-compute lengths lower via the proven-equivalent four-step split, never silently substituted
+VkFFT: complete base {2,3,5,7} register table vs. independent VkFFTGetRegistersPerThreadQuad re-derivation
+VkFFT: register-table fix changes min_registers_per_thread vs. the old min(radices) proxy
+rocFFT-default: get_node_token format matches a real shipped key exactly
+rocFFT-default: SOL_DUMMY root (option 0) correctly yields no override
+rocFFT-default: real non-dummy CS_L1D_TRTRT solution tree (N=16777216) resolves exactly
+rocFFT-default: exhaustive scan confirms zero out-of-place single-precision matches in gfx908 map
+rocFFT-default: plan()'s own results are unaffected by the solution-map wiring (verified, not assumed)
+VkFFT: divisibility-fix loop (lines 301-307) is a proven no-op -- exhaustive proof
+VkFFT: AxisBlockSplitter axis_upload_id==0 continuation vs. independent re-derivation
+VkFFT: AxisBlockSplitter swap + single/first/later-upload cases exercised end-to-end
+VkFFT: Rader-vs-Bluestein residual classification vs. independent InitializeApp.h re-derivation
+
+ALL SOURCE-FIDELITY CHECKS PASSED

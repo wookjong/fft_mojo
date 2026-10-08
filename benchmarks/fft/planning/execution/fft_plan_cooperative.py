@@ -56,6 +56,24 @@ from planning.core.fft_plan_core import (
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE
 
 
+def validate_cooperative_workers(
+    workers_per_fft: int, *,
+    interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
+) -> None:
+    """Workers sharing scratchpad must stay inside one hardware stripe."""
+    if (not isinstance(interleave_chunk_uthreads, int)
+            or isinstance(interleave_chunk_uthreads, bool)
+            or interleave_chunk_uthreads < 1):
+        raise ValueError("interleave_chunk_uthreads must be a positive integer")
+    if (not isinstance(workers_per_fft, int) or isinstance(workers_per_fft, bool)
+            or workers_per_fft < 1
+            or interleave_chunk_uthreads % workers_per_fft != 0):
+        raise ValueError(
+            f"workers_per_fft={workers_per_fft!r} must be a positive integer divisor "
+            f"of interleave_chunk_uthreads={interleave_chunk_uthreads}"
+        )
+
+
 def worker_candidates_per_fft(
     length: int,
     radices: tuple[int, ...],
@@ -132,6 +150,7 @@ def worker_candidates_per_fft(
     behavior for comparison -- there is no known-good reason to exclude
     this worker count from candidate generation any more.
     """
+    validate_cooperative_workers(1, interleave_chunk_uthreads=interleave_chunk_uthreads)
     if not radices:
         raise ValueError("radices must be non-empty")
     max_batches = max(-(-(length // radix) // simd_lanes) for radix in radices)
@@ -354,11 +373,16 @@ def make_cooperative_leaf_plan(
     spad_capacity_bytes: int | None = None,
     max_concurrent_scratchpad_bytes: int | None = None,
     partition_mode: PartitionMode = "round_robin",
+    interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
 ) -> FFTCodegenPlan:
     """A length-`length` leaf FFT (single fused kernel, `radices` its own
     Cooley-Tukey/Stockham stage sequence -- same contract as `_build_plan`/
     `layouts_for_radices`), executed by `workers_per_fft` cooperating
     microthreads per sub-FFT instead of one.
+
+    `workers_per_fft` must be a positive integer divisor of the target
+    `interleave_chunk_uthreads`; explicit counts are validated, never rounded.
+    Idle workers are legal, although search excludes unhelpful counts.
 
     `total_ffts`: how many independent length-`length` sub-FFTs this kernel's
     one launch covers (before multiplying by `workers_per_fft` for the
@@ -405,8 +429,7 @@ def make_cooperative_leaf_plan(
     returned plan's own `CooperationPlan.partition_mode` (metadata --
     see that field's own docstring).
     """
-    if workers_per_fft < 1:
-        raise ValueError("workers_per_fft must be >= 1")
+    validate_cooperative_workers(workers_per_fft, interleave_chunk_uthreads=interleave_chunk_uthreads)
 
     base = _build_plan(
         length=length,
@@ -460,6 +483,7 @@ def generate_partition_mode_candidates(
     inverse: bool = False, simd_lanes: int = 8, kernel_name: str = "FFTFP32Coop",
     inverse_scale: float | None | _Default = _DEFAULT, spad_capacity_bytes: int | None = None,
     max_concurrent_scratchpad_bytes: int | None = None,
+    interleave_chunk_uthreads: int = DEFAULT_TARGET_PROFILE.interleave_chunk_uthreads,
 ) -> list[FFTCodegenPlan]:
     """P2.2's own small, bounded candidate set: one `make_cooperative_
     leaf_plan` call per `PartitionMode`, deliberately NOT a larger search
@@ -484,6 +508,7 @@ def generate_partition_mode_candidates(
             inverse_scale=inverse_scale, spad_capacity_bytes=spad_capacity_bytes,
             max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
             partition_mode=mode,
+            interleave_chunk_uthreads=interleave_chunk_uthreads,
         )
         signature = tuple(
             tuple(tuple(b.batch_id for b in bucket) for bucket in stage.worker_batches)

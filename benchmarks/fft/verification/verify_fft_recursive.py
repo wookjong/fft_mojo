@@ -200,6 +200,7 @@ def verify_recursive_tree_index_only(node: FFTLeafPlan | FFTRecursiveNodePlan) -
             f"MIDDLE transpose {node.middle_transpose.kernel_name}: twiddle_modulus="
             f"{node.middle_transpose.twiddle_modulus} != this node's own m={node.m}"
         )
+    verify_recursive_tree_index_only(node.near_fft)
     verify_recursive_tree_index_only(node.far_child)
     verify_physical_transpose_shape(node.post_transpose)
 
@@ -208,6 +209,8 @@ def run_recursive_plan(
     plan: RecursiveFFTPlan, x: np.ndarray, *,
     compute_lanes: int | None = None, narrow_middle_stages: bool = False,
     loop_stages: bool = True,
+    persistent_mode: str | None = None, persistent_copy_mode: str | None = None,
+    persistent_vector_width: int = 4,
 ) -> np.ndarray:
     """Full numeric chain: every stage's *actual emitted* text is
     translated and re-executed (run_kernel for FFT leaves,
@@ -228,7 +231,23 @@ def run_recursive_plan(
     leave the runtime-loop rendering (`_try_build_loop_stage`/
     `_emit_loop_stage`) numerically unchecked.
     """
-    n = plan.n
+    if isinstance(plan.root, FFTLeafPlan) and plan.root.tail_hybrid is not None:
+        hybrid = plan.root.tail_hybrid
+        pieces = []
+        first = 0
+        for kernel, count in ((hybrid.persistent_plan, hybrid.full_blocks),
+                              (hybrid.tail_plan, hybrid.tail_blocks)):
+            if kernel is None:
+                continue
+            component = RecursiveFFTPlan(n=plan.n, inverse=plan.inverse,
+                root=FFTLeafPlan(m=plan.n, r=count, kernel=kernel), host=plan.host, batch=count)
+            pieces.append(run_recursive_plan(component, x[first:first + count * plan.n],
+                compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+                loop_stages=False, persistent_mode=persistent_mode,
+                persistent_copy_mode=persistent_copy_mode, persistent_vector_width=persistent_vector_width))
+            first += count * plan.n
+        return np.concatenate(pieces)
+    n = plan.n * plan.batch
     stages = flatten_recursive_node(plan.root)
     cur_r, cur_i = Ptr(n), Ptr(n)
     cur_r.arr[:] = x.real
@@ -258,6 +277,8 @@ def run_recursive_plan(
                 stage, num_logical_blocks=num_logical_blocks,
                 input_real=cur_r, input_imag=cur_i, output_real=next_r, output_imag=next_i,
                 compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+                mode=persistent_mode, copy_mode=persistent_copy_mode,
+                vector_width=persistent_vector_width,
             )
         else:
             assert stage.large_twiddle is None
@@ -346,7 +367,7 @@ def summarize_recursive_plan(plan: RecursiveFFTPlan) -> None:
         print(f"{pad}Node M={node.m} R={node.r}  split: A={node.a} B={node.b}")
         pt = node.pre_transpose
         print(f"{pad}  PRE    matrix={pt.rows}x{pt.cols} tile={pt.tile_rows}x{pt.tile_cols} tiles={pt.total_uthreads} elem_stride=1")
-        print(f"{pad}  FFT(B) {node.near_fft.kernel.kernel_name} M={node.near_fft.m} R={node.near_fft.r}")
+        describe(node.near_fft, depth + 1)
         mt = node.middle_transpose
         print(f"{pad}  MIDDLE matrix={mt.rows}x{mt.cols} twiddle_modulus={mt.twiddle_modulus} tile={mt.tile_rows}x{mt.tile_cols} tiles={mt.total_uthreads} elem_stride=1")
         describe(node.far_child, depth + 1)

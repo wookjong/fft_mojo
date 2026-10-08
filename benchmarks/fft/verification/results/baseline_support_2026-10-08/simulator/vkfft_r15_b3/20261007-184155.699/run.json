@@ -1,0 +1,83 @@
+{
+  "config": "M2NDP",
+  "config_md5": "33d240c5",
+  "config_path": "/work/third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config",
+  "core_mhz": 2000,
+  "cycles": 5583,
+  "detour": "",
+  "dir": "/fft-work/verification/results/baseline_support_2026-10-08/simulator/vkfft_r15_b3/20261007-184155.699",
+  "dram": {
+    "channels": 28,
+    "max_pct": 0.9,
+    "mean_pct": 0.14,
+    "min_pct": 0.0
+  },
+  "exit": 0,
+  "finished": "2026-10-07T18:42:02+00:00",
+  "host_log": "host.log",
+  "kernels": [
+    {
+      "finished": 5490,
+      "launch_id": "0",
+      "name": "vkfft_r15_b3::FFTVkfftLeaf0::stage_0()",
+      "started": 922
+    }
+  ],
+  "launch_spans": [
+    5583
+  ],
+  "launches": 1,
+  "log": "simulator.log",
+  "repo": "",
+  "stats": {
+    "ctrl.addr_issue": 304,
+    "ctrl.cycle": 0,
+    "ctrl.exit_issue": 0,
+    "ctrl.f_issue": 0,
+    "ctrl.i_issue": 310,
+    "ctrl.inst_issue": 614,
+    "ctrl.ldst_issue": 11,
+    "ctrl.sf_issue": 0,
+    "ctrl.spad_issue": 293,
+    "ctrl.spad_read": 0,
+    "ctrl.spad_write": 0,
+    "ctrl.v_addr_issue": 0,
+    "ctrl.v_issue": 0,
+    "ctrl.v_ldst_issue": 0,
+    "ctrl.v_sf_issue": 0,
+    "ctrl.v_spad_issue": 0,
+    "launches": 1,
+    "ndp.addr_issue": 186,
+    "ndp.cycle": 0,
+    "ndp.exit_issue": 3,
+    "ndp.f_issue": 51,
+    "ndp.i_issue": 879,
+    "ndp.inst_issue": 2226,
+    "ndp.ldst_issue": 90,
+    "ndp.sf_issue": 0,
+    "ndp.spad_issue": 96,
+    "ndp.spad_read": 0,
+    "ndp.spad_write": 0,
+    "ndp.v_addr_issue": 174,
+    "ndp.v_issue": 933,
+    "ndp.v_ldst_issue": 174,
+    "ndp.v_sf_issue": 0,
+    "ndp.v_spad_issue": 0
+  },
+  "stats_file": "stats.txt",
+  "tasks": [
+    {
+      "arrived": 70,
+      "called": 0,
+      "finished": 5511,
+      "issued": 0,
+      "launch": 0,
+      "notified": 5583,
+      "started": 70,
+      "task": 0
+    }
+  ],
+  "time_us": 2.792,
+  "wall_s": 6.0,
+  "workload": "fft-execution-vkfft_r15_b3"
+}

@@ -23,62 +23,36 @@ What is genuinely new here, not reused from anywhere else:
 * the round-unrolled `device_main` (one host `.launch()`, many
   `launch_parallel` phases -- see docs/persistent_leaf_design.md's
   "Exactly one host .launch()" section),
-* 256B-aligned launch-pool host allocation.
+* launch-pool allocation aligned to the target mapping stride.
 
-## ROUND STATE IS RUNTIME, NOT A COMPILE-TIME CONSTANT PER ROUND
+Round and wave indices live in worker-private scratchpad cells, one cell per
+physical worker on each unit. Every phase reads only its worker's own cell;
+writeback advances its own round cell, and a wave phase advances its own wave
+cell. The next launch_parallel starts after the preceding phase finishes.
+There is no same-phase shared-counter read/write dependency, regardless of
+worker issue order. A task registers one function per phase and reuses those
+functions across rounds, keeping registration independent of the batch size.
 
-The design doc's original text says `ROUND_BASE`/`ACTIVE_GROUPS` are
-"compile-time constants baked into each emitted round-specific phase
-function" -- i.e. one `preload_r0`/`preload_r1`/.../`stage_0_r0`/
-`stage_0_r1`/... function per (phase, round) pair. **This does not work**:
-the M2NDP-Detour simulator caps how many *distinct* kernel functions one
-`NDPTask` may register at all, ever, for the lifetime of one host
-`.launch()` -- `max_kernel_register=8` in
-third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config, enforced
-by `UThreadGenerator::can_register()` (third_party/m2ndp-detour/src/
-uthread_generator.cc) and asserted in `NdpUnit::register_ndp_kernel`
-(ndp_unit.cc:143). A task's own kernels are registered once, at
-`.launch()` time, and only unregistered when the *whole task* finishes
-(`M2NDP::unregister_task`, m2ndp.cc) -- never per `launch_parallel` call.
-Confirmed the hard way on real hardware: N=64 (3 stages) at 2 rounds
-needs `(2 + 3) * 2 = 10` distinct functions under the per-round-baked
-scheme, and the 9th registration attempt aborts the whole simulator
-(`Assertion 'can_register()' failed`), a toolchain-level crash, not a
-graceful error.
-
-**The fix, confirmed working on real hardware** (see
-`/tmp/.../round_tracker_experiment.py` in this session's own scratchpad,
-not kept in-repo): exactly one function per *phase* (`preload`,
-`stage_0`, ..., `stage_{k-1}`, `writeback` -- `2 + stage_count` distinct
-kernels total, independent of round count, comfortably under the cap for
-every N this design supports at all, since `stage_count` is small by
-construction -- see `make_persistent_leaf_plan`'s own scratchpad-capacity
-bound). Round state lives in a 1-element **scratchpad** counter
-(`round_tracker`, one independent instance per physical NDP unit, zero-
-initialized) that only `writeback` increments -- after every phase in
-that round has already read it, so within one round every phase sees the
-same `round_index`. `device_main` simply calls the *same* small function
-set `rounds` times in sequence; there is no way, and no need, for
-`device_main` itself to touch `Kernel.params[]` (a real attempt to do
-that failed with `"the M2NDP scratchpad is a kernel's, and this function
-is not launched"` -- `params[]` access appears to require the accessing
-function to itself be a `launch_parallel` target, which `device_main`
-is not). Confirmed on real hardware that repeated `launch_parallel[Kernel.
-same_fn]()` calls to the *same* target still fully barrier between calls
-(round N+1's read never races round N's write) -- this is what makes the
-whole scheme race-free.
 """
 
 from typing import Literal
+from codegen.common import emit_aligned_pool, emit_execution_record, emit_fft_launches
+from planning.execution.launch_plan import resolve_fft_launch
+from dataclasses import replace
+from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 
 from codegen.common import (
     Emitter,
     emit_prelude as _emit_prelude,
     emit_reference_check as _emit_reference_check,
+    emit_array_dump as _emit_array_dump,
     spad as _spad,
+    emit_workspace_buffers,
+    emit_loop_twiddle_table,
 )
 from codegen.fft_codegen import (
     _emit_stage_batches,
+    _emit_loop_stage,
     _stage_compute_lanes,
     emit_kernel as _emit_kernel,
     generate_fft_kernel as _generate_fft_kernel,
@@ -86,11 +60,13 @@ from codegen.fft_codegen import (
 from codegen.fft_cooperative_codegen import generate_cooperative_fft_kernel as _generate_cooperative_fft_kernel
 from planning.core.fft_plan_core import FFTCodegenPlan, FFTStagePlan, SIMDBatchPlan
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
+from codegen.lowering import try_build_loop_stage, LOOP_MIN_FULL_BATCHES
 from planning.execution.fft_plan_persistent import (
     PersistentTailHybridPlan,
     flatten_logical_workers_to_physical_lanes,
     num_rounds,
     worker_waves as _worker_waves,
+    persistent_tracker_scratchpad_bytes,
 )
 
 # REVISED 2026-09-14 (physical-lane strip-mining -- see docs/
@@ -180,6 +156,30 @@ ExecutionMode = Literal["wave", "fused", "physical"]
 CopyMode = Literal["scalar", "vectorized_contiguous"]
 
 
+def validate_copy_width(copy_mode: CopyMode, vector_width: int) -> None:
+    if copy_mode == "vectorized_contiguous" and (
+        not isinstance(vector_width, int) or isinstance(vector_width, bool)
+        or vector_width < 1
+    ):
+        raise ValueError("vector_width must be a positive integer for vectorized_contiguous copy")
+
+
+def resolve_persistent_options(
+    plan: FFTCodegenPlan, *, mode: ExecutionMode | None = None,
+    copy_mode: CopyMode | None = None,
+) -> tuple[ExecutionMode, CopyMode]:
+    """Omitted options follow this leaf's plan; explicit options override it."""
+    if plan.persistent is None:
+        raise ValueError("persistent execution options require a persistent plan")
+    resolved_mode = plan.persistent.lowering_mode if mode is None else mode
+    resolved_copy = plan.persistent.copy_mode if copy_mode is None else copy_mode
+    if resolved_mode not in ("wave", "fused", "physical"):
+        raise ValueError(f"unknown mode {resolved_mode!r}")
+    if resolved_copy not in ("scalar", "vectorized_contiguous"):
+        raise ValueError(f"unknown copy_mode {resolved_copy!r}")
+    return resolved_mode, resolved_copy
+
+
 def _worker_body(
     stage: FFTStagePlan, worker_id: int, workers_per_fft: int, vector_compute_lanes: int | None,
 ) -> tuple[tuple, int | None]:
@@ -228,9 +228,29 @@ def _worker_body(
     return stage.persistent_vector_batches[worker_id], vector_compute_lanes
 
 
+def _emit_persistent_batches(e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan,
+                             batches: tuple[SIMDBatchPlan, ...], compute_lanes: int | None,
+                             twiddle_table: list[tuple[float, float]] | None) -> None:
+    if plan.persistent.loop_stages:
+        assert twiddle_table is not None
+        # Workers within a stage write disjoint locations in another bank;
+        # sorting changes only their local visit order, never ownership.
+        loop = try_build_loop_stage(tuple(sorted(batches,key=lambda b:b.batch_id)),
+            simd_lanes=plan.simd_lanes,min_full_batches=LOOP_MIN_FULL_BATCHES,
+            twiddle_table=twiddle_table)
+        if loop is not None:
+            _emit_loop_stage(e,plan=plan,stage=stage,loop_plan=loop,compute_lanes=compute_lanes,
+                             compact_residues=True)
+            if loop.tail_batch is not None:
+                _emit_stage_batches(e,plan=plan,stage=stage,batches=(loop.tail_batch,),compute_lanes=compute_lanes)
+            return
+    _emit_stage_batches(e,plan=plan,stage=stage,batches=batches,compute_lanes=compute_lanes)
+
+
 def _emit_worker_dispatch(
     e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, workers_per_fft: int,
     vector_compute_lanes: int | None, dispatch_var: str = "worker_id",
+    twiddle_table: list[tuple[float, float]] | None = None,
 ) -> None:
     """`if {dispatch_var} == 0: ... elif {dispatch_var} == 1: ... else: ...`
     -- one branch per LOGICAL worker (`0 .. workers_per_fft - 1`), each
@@ -278,8 +298,9 @@ def _emit_worker_dispatch(
         emitted_any = True
         e.add(f"        {keyword} {dispatch_var} == {worker_id}:")
         sub = Emitter()
-        _emit_stage_batches(
-            sub, plan=plan, stage=stage, batches=batches, compute_lanes=compute_lanes
+        _emit_persistent_batches(
+            sub, plan=plan, stage=stage, batches=batches, compute_lanes=compute_lanes,
+            twiddle_table=twiddle_table,
         )
         for line in sub.lines:
             e.add("    " + line if line else "")
@@ -348,6 +369,7 @@ def _flatten_to_physical_lanes(
 def _emit_physical_lane_dispatch(
     e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, workers_per_fft: int,
     workers_per_group: int, vector_compute_lanes: int | None,
+    twiddle_table: list[tuple[float, float]] | None = None,
 ) -> None:
     """Mode C's own dispatch emission: `if worker_id == 0: ... elif
     worker_id == 1: ... ` over exactly `workers_per_group` (8) PHYSICAL
@@ -373,8 +395,9 @@ def _emit_physical_lane_dispatch(
         emitted_any = True
         e.add(f"        {keyword} worker_id == {worker_id}:")
         sub = Emitter()
-        _emit_stage_batches(
-            sub, plan=plan, stage=stage, batches=batches, compute_lanes=vector_compute_lanes
+        _emit_persistent_batches(
+            sub, plan=plan, stage=stage, batches=batches, compute_lanes=vector_compute_lanes,
+            twiddle_table=twiddle_table,
         )
         for line in sub.lines:
             e.add("    " + line if line else "")
@@ -385,27 +408,21 @@ def _wave_tracker_name(plan: FFTCodegenPlan) -> str:
 
 
 def _emit_wave_prelude(e: Emitter, *, plan: FFTCodegenPlan, workers_per_group: int) -> None:
-    """Mode A ("wave") only -- reads this physical unit's own `wave_
-    tracker` (mirrors `round_tracker`: one independent zero-initialized
-    scratchpad cell per physical unit) and derives `logical_worker_id`
-    for THIS call. Race-free the same way `round_tracker` is: every
-    worker of every active group reads `wave_tracker` here before any of
-    them reaches `_emit_wave_bump` below, so every worker in one
-    `launch_parallel[stage_N]()` call sees the SAME `wave_index`."""
+    """Read this physical worker's private wave counter."""
     tracker = _wave_tracker_name(plan)
-    e.add(f"        var wave_index = Int({tracker}.load[DType.float32, 1](0)[0])")
+    e.add(f"        var wave_index = Int({tracker}.load[DType.float32, 1](worker_id)[0])")
     e.add(f"        var logical_worker_id = wave_index * {workers_per_group} + worker_id")
 
 
 def _emit_wave_bump(e: Emitter, *, plan: FFTCodegenPlan, worker_waves: int) -> None:
-    """Mode A ("wave") only -- advance this physical unit's own `wave_
-    tracker` by one, modulo `worker_waves`, gated to exactly one physical
-    worker per active software group (`worker_id == 0`), the same
-    discipline `writeback`'s own `round_tracker` bump uses."""
+    """Advance the caller's counter, including lanes idle in a ragged wave.
+
+    Each worker owns its cell. The phase completion synchronizes these
+    counters for the next invocation without same-phase shared-cell races.
+    """
     tracker = _wave_tracker_name(plan)
-    e.add("        if worker_id == 0:")
-    e.add(f"            var next_wave = (wave_index + 1) % {worker_waves}")
-    e.add(f"            {tracker}.store(0, Float32(next_wave))")
+    e.add(f"        var next_wave = (wave_index + 1) % {worker_waves}")
+    e.add(f"        {tracker}.store(worker_id, Float32(next_wave))")
 
 
 def _round_tracker_name(plan: FFTCodegenPlan) -> str:
@@ -416,22 +433,15 @@ def _emit_dispatch_prelude(
     e: Emitter, *, plan: FFTCodegenPlan, workers_per_group: int,
     software_group_count: int, num_logical_blocks: int, bump_round: bool,
 ) -> None:
-    """Every phase function's shared entry sequence: derive `gid`/
-    `software_group_id`/`worker_id` (unchanged), then read this round's
-    own `round_base`/`active_groups` from the per-unit scratchpad
-    `round_tracker` instead of a compile-time-baked literal -- see this
-    module's own top-of-file docstring for why. `bump_round=True`
-    (writeback only) advances the tracker for the *next* round, gated the
-    same way every other worker-disjoint write in this design is (exactly
-    one worker per active group, after that group's own real work for
-    this round is done -- appended by the caller, not here; this only
-    emits the read side, common to every phase).
+    """Derive the software group and worker, then read this worker's
+    private round cell. Writeback advances the same private cell; phase
+    completion orders the next round after every worker has finished.
     """
     tracker = _round_tracker_name(plan)
     e.add("        var gid = global_uthread_id()")
     e.add(f"        var software_group_id = gid // {workers_per_group}")
     e.add(f"        var worker_id = gid % {workers_per_group}")
-    e.add(f"        var round_index = Int({tracker}.load[DType.float32, 1](0)[0])")
+    e.add(f"        var round_index = Int({tracker}.load[DType.float32, 1](worker_id)[0])")
     e.add(f"        var round_base = round_index * {software_group_count}")
     e.add(f"        var active_groups = {software_group_count}")
     e.add(f"        var remaining_blocks = {num_logical_blocks} - round_base")
@@ -452,6 +462,7 @@ def emit_stage_phase(
     compute_lanes: int | None = 4,
     narrow_middle_stages: bool = True,
     mode: ExecutionMode = "physical",
+    twiddle_table: list[tuple[float, float]] | None = None,
 ) -> tuple[str, list[str]]:
     """Builds this phase's own fresh `Emitter` and returns `(name, lines)`
     -- the same "translate exactly what would be emitted, from a small
@@ -524,6 +535,8 @@ def emit_stage_phase(
     if workers_per_fft is None:
         workers_per_fft = workers_per_group
     waves = _worker_waves(workers_per_fft, workers_per_group)
+    if twiddle_table is None and plan.persistent.loop_stages:
+        twiddle_table = []
 
     e = Emitter()
     name = f"stage_{stage.stage_id}"
@@ -536,7 +549,13 @@ def emit_stage_phase(
         software_group_count=software_group_count, num_logical_blocks=num_logical_blocks,
         bump_round=False,
     )
-    e.add("        var spad_base = 0")
+    if plan.persistent.storage_mode == "global":
+        e.add("        var logical_block = round_base + software_group_id")
+        e.add(f"        var in_batch_base = logical_block * {plan.length}")
+        e.add("        var out_batch_base = in_batch_base")
+        e.add(f"        var spad_base = software_group_id * {2 * plan.length}")
+    else:
+        e.add("        var spad_base = 0")
     e.add()
     if waves <= 1:
         # All three modes collapse to this one shape when there is only
@@ -544,12 +563,14 @@ def emit_stage_phase(
         _emit_worker_dispatch(
             e, plan=plan, stage=stage, workers_per_fft=workers_per_fft,
             vector_compute_lanes=vector_compute_lanes, dispatch_var="worker_id",
+            twiddle_table=twiddle_table,
         )
     elif mode == "physical":
         # Mode C: flattened at codegen time, no runtime logical id at all.
         _emit_physical_lane_dispatch(
             e, plan=plan, stage=stage, workers_per_fft=workers_per_fft,
             workers_per_group=workers_per_group, vector_compute_lanes=vector_compute_lanes,
+            twiddle_table=twiddle_table,
         )
     elif mode == "fused":
         # Mode B: one physical lane visits several logical workers in a
@@ -561,6 +582,7 @@ def emit_stage_phase(
         _emit_worker_dispatch(
             sub, plan=plan, stage=stage, workers_per_fft=workers_per_fft,
             vector_compute_lanes=vector_compute_lanes, dispatch_var="logical_worker_id",
+            twiddle_table=twiddle_table,
         )
         for line in sub.lines:
             e.add("    " + line if line else "")
@@ -576,6 +598,7 @@ def emit_stage_phase(
         _emit_worker_dispatch(
             e, plan=plan, stage=stage, workers_per_fft=workers_per_fft,
             vector_compute_lanes=vector_compute_lanes, dispatch_var="logical_worker_id",
+            twiddle_table=twiddle_table,
         )
         e.add()
         _emit_wave_bump(e, plan=plan, worker_waves=waves)
@@ -643,14 +666,11 @@ def emit_bulk_copy_phase(
     parameter -- it only changes the ADDRESS PATTERN and INSTRUCTION
     WIDTH of one bulk copy, nothing about the FFT math around it.
 
-    `bump_round`: writeback only -- after this group's own real copy work
-    is done, worker 0 advances the *this physical unit's own* round
-    tracker by one, so the next call to `preload`/`stage_*`/`writeback`
-    (device_main's next round in sequence) sees `round_index + 1`. Every
-    other phase in the *same* round already read the old value before
-    this runs (writeback is always last), so this is race-free -- see
-    this module's own top docstring.
+    `bump_round`: writeback advances this worker's private round cell after
+    its copy. Other workers read separate cells, and phase completion orders
+    the next preload after every worker has completed its writeback.
     """
+    validate_copy_width(copy_mode, vector_width)
     e = Emitter()
     e.add("    @staticmethod")
     e.add(f"    def {name}():")
@@ -660,6 +680,17 @@ def emit_bulk_copy_phase(
         software_group_count=software_group_count, num_logical_blocks=num_logical_blocks,
         bump_round=bump_round,
     )
+    if plan.persistent.storage_mode == "global":
+        # Stages access input/output directly. The only extra phase advances
+        # private counters, including inactive logical workers, after every
+        # final-stage worker wave has completed.
+        if not bump_round:
+            raise ValueError("global persistent execution has no preload phase")
+        tracker = _round_tracker_name(plan)
+        e.add(f"        {tracker}.store(worker_id, Float32(round_index) + Float32(1))")
+        e.add()
+        e.add()
+        return name, e.lines
     e.add("        var logical_block = round_base + software_group_id")
     e.add(f"        var block_base = logical_block * {plan.length}")
     buf = _spad(plan.kernel_name, buffer_name)
@@ -714,8 +745,7 @@ def emit_bulk_copy_phase(
 
     if bump_round:
         tracker = _round_tracker_name(plan)
-        e.add("        if worker_id == 0:")
-        e.add(f"            {tracker}.store(0, Float32(round_index) + Float32(1))")
+        e.add(f"        {tracker}.store(worker_id, Float32(round_index) + Float32(1))")
     e.add()
     e.add()
     return name, e.lines
@@ -728,6 +758,11 @@ def _emit_params_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
     e.add("    var input_imag_base: UnsafePointer[Float32, MutAnyOrigin]")
     e.add("    var output_real_base: UnsafePointer[Float32, MutAnyOrigin]")
     e.add("    var output_imag_base: UnsafePointer[Float32, MutAnyOrigin]")
+    if plan.persistent.loop_stages:
+        e.add("    var loop_twiddle_real_base: UnsafePointer[Float32, MutAnyOrigin]")
+        e.add("    var loop_twiddle_imag_base: UnsafePointer[Float32, MutAnyOrigin]")
+    for buffer in plan.workspace_buffers:
+        e.add(f"    var {buffer.name}: UnsafePointer[Float32, MutAnyOrigin]")
     e.add()
     e.add()
 
@@ -735,9 +770,11 @@ def _emit_params_struct(e: Emitter, *, plan: FFTCodegenPlan) -> None:
 def emit_persistent_kernel_struct(
     e: Emitter, *, plan: FFTCodegenPlan, num_logical_blocks: int,
     compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
-    mode: ExecutionMode = "physical",
-    copy_mode: CopyMode = "scalar", vector_width: int = 4,
-) -> None:
+    mode: ExecutionMode | None = None,
+    copy_mode: CopyMode | None = None, vector_width: int = 4,
+    max_kernel_register: int = DEFAULT_TARGET_PROFILE.max_kernel_register,
+    spad_capacity_bytes: int | None = None,
+) -> list[tuple[float, float]]:
     """Append one `NDPTask` struct for a persistent-software-workgroup FFT
     leaf to `e`: `Params`, `buf_a`/`buf_b`/`round_tracker` scratchpad,
     exactly `2 + len(plan.stages)` distinct kernel functions (`preload`,
@@ -763,6 +800,9 @@ def emit_persistent_kernel_struct(
     below, not re-derived, since `plan.host.total_elems` only encodes
     `length * num_logical_blocks` jointly).
 
+    `mode`/`copy_mode`: omitted (`None`) uses this leaf's planned settings.
+    Explicit values override independently without mutating the plan.
+
     `compute_lanes`/`narrow_middle_stages`: forwarded to `emit_stage_
     phase` -- see its own docstring for why the defaults (`4`/`True`,
     make_fft_kernel.py's own shipped defaults) are load-bearing here, not
@@ -776,28 +816,37 @@ def emit_persistent_kernel_struct(
             f"plan.host.total_elems={plan.host.total_elems} for length={plan.length}"
         )
 
+    mode, copy_mode = resolve_persistent_options(plan, mode=mode, copy_mode=copy_mode)
+    validate_copy_width(copy_mode, vector_width)
     pw = plan.persistent
     workers_per_group = pw.workers_per_group
     workers_per_fft = pw.workers_per_fft
     waves = _worker_waves(workers_per_fft, workers_per_group)
     software_group_count = pw.software_group_count
     rounds = num_rounds(num_logical_blocks, software_group_count)
-    # Defense in depth: `make_persistent_leaf_plan` already rejects this
-    # (target-aware, via `target.max_kernel_register`) before a plan ever
-    # reaches codegen; this hardcodes that field's own default (8) as a
-    # backstop for a plan constructed some other way, since this function
-    # takes no `target` of its own to check against.
-    num_kernels = 2 + len(plan.stages)
-    if num_kernels > 8:
-        raise ValueError(
-            f"this plan needs {num_kernels} distinct kernel functions "
-            f"(preload + {len(plan.stages)} stages + writeback), but the M2NDP-"
-            f"Detour simulator's max_kernel_register=8 caps one task's total "
-            f"registered kernels regardless of round count -- see this module's "
-            f"own top-of-file docstring"
-        )
+    uses_spad = pw.storage_mode == "scratchpad"
+    extra_phases = 2 if uses_spad else 1
+    tracker_bytes = persistent_tracker_scratchpad_bytes(workers_per_group, mode=mode,
+                                                       workers_per_fft=workers_per_fft)
+    scratchpad_bytes = sum(b.elements * 4 for b in plan.scratchpad_buffers) + tracker_bytes
+    if spad_capacity_bytes is not None and scratchpad_bytes > spad_capacity_bytes:
+        raise ValueError(f"persistent execution needs {scratchpad_bytes} scratchpad bytes including private trackers; "
+                         f"capacity is {spad_capacity_bytes}")
+    emit_execution_record(e, plan=plan, persistent_mode=mode, copy_mode=copy_mode,
+                          vector_width=vector_width if copy_mode == "vectorized_contiguous" else 1,
+                          compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+                          scratchpad_bytes=scratchpad_bytes, tracker_bytes=tracker_bytes,
+                          host_launches=1, internal_rounds=rounds,
+                          storage_mode=pw.storage_mode,
+                          loop_stages=pw.loop_stages,
+                          workspace_bytes=sum(b.elements * 4 for b in plan.workspace_buffers),
+                          dram_bytes=plan.estimated_dram_bytes,
+                          registered_functions=extra_phases + len(plan.stages),
+                          phase_launches=rounds * (extra_phases + len(plan.stages) * (waves if mode == "wave" else 1)))
+    from planning.execution.kernel_registration import validate_kernel_registration
+    validate_kernel_registration(plan, max_kernel_register=max_kernel_register)
 
-    buffer_names = tuple(b.name for b in plan.scratchpad_buffers)
+    buffer_names = tuple(b.name for b in plan.scratchpad_buffers) if uses_spad else ("buf_a", "buf_b")
     assert buffer_names == ("buf_a", "buf_b"), buffer_names
     final_buffer = buffer_names[len(plan.stages) % 2]
 
@@ -817,7 +866,7 @@ def emit_persistent_kernel_struct(
     # write returns 0, matching every other scratchpad buffer's own
     # zero-init behavior in this codebase.
     e.add(
-        f'    comptime round_tracker = scratchpad[1, Float32, '
+        f'    comptime round_tracker = scratchpad[{workers_per_group}, Float32, '
         f'name="{plan.kernel_name.lower()}_round_tracker"]()'
     )
     # `wave_tracker` only exists for Mode A ("wave") with more than one
@@ -827,20 +876,22 @@ def emit_persistent_kernel_struct(
     # neither needs any cross-call state persisted in scratchpad.
     if mode == "wave" and waves > 1:
         e.add(
-            f'    comptime wave_tracker = scratchpad[1, Float32, '
+            f'    comptime wave_tracker = scratchpad[{workers_per_group}, Float32, '
             f'name="{plan.kernel_name.lower()}_wave_tracker"]()'
         )
     e.add()
 
-    preload_name, lines = emit_bulk_copy_phase(
-        plan=plan, name="preload", software_group_count=software_group_count,
-        num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
-        to_scratchpad=True, buffer_name=buffer_names[0], bump_round=False,
-        copy_mode=copy_mode, vector_width=vector_width,
-    )
-    e.lines.extend(lines)
+    if uses_spad:
+        preload_name, lines = emit_bulk_copy_phase(
+            plan=plan, name="preload", software_group_count=software_group_count,
+            num_logical_blocks=num_logical_blocks, workers_per_group=workers_per_group,
+            to_scratchpad=True, buffer_name=buffer_names[0], bump_round=False,
+            copy_mode=copy_mode, vector_width=vector_width,
+        )
+        e.lines.extend(lines)
 
     stage_names: list[str] = []
+    twiddle_table: list[tuple[float, float]] = []
     for stage in plan.stages:
         name, lines = emit_stage_phase(
             plan=plan, stage=stage, software_group_count=software_group_count,
@@ -848,6 +899,7 @@ def emit_persistent_kernel_struct(
             workers_per_fft=workers_per_fft,
             compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
             mode=mode,
+            twiddle_table=twiddle_table,
         )
         e.lines.extend(lines)
         stage_names.append(name)
@@ -870,20 +922,23 @@ def emit_persistent_kernel_struct(
     e.add("    @staticmethod")
     e.add("    def device_main():")
     for _ in range(rounds):
-        e.add(f"        launch_parallel[{plan.kernel_name}.{preload_name}]()")
+        if uses_spad:
+            e.add(f"        launch_parallel[{plan.kernel_name}.{preload_name}]()")
         for stage_name in stage_names:
             for _ in range(stage_repeat):
                 e.add(f"        launch_parallel[{plan.kernel_name}.{stage_name}]()")
         e.add(f"        launch_parallel[{plan.kernel_name}.{writeback_name}]()")
     e.add()
     e.add()
+    return twiddle_table
 
 
 def generate_persistent_fft_kernel(
     plan: FFTCodegenPlan, *, num_logical_blocks: int,
     compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
-    mode: ExecutionMode = "physical",
-    copy_mode: CopyMode = "scalar", vector_width: int = 4,
+    mode: ExecutionMode | None = None,
+    copy_mode: CopyMode | None = None, vector_width: int = 4,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE, reference_check: bool = True,
 ) -> str:
     """Render a full persistent-software-workgroup FFT: `emit_persistent_
     kernel_struct`'s one `NDPTask` struct, plus this function's own
@@ -894,23 +949,26 @@ def generate_persistent_fft_kernel(
     half of this, now shared with `fft_transpose_codegen.
     generate_recursive_fft_kernels`.
 
-    `mode`: forwarded to `emit_persistent_kernel_struct`/`emit_stage_
-    phase` -- see this module's own top-of-file `ExecutionMode` docstring
+    `mode`: omitted (`None`) follows `plan.persistent.lowering_mode`; an
+    explicit value overrides it. Forwarded to `emit_persistent_kernel_struct`/
+    `emit_stage_phase` -- see this module's own top-of-file `ExecutionMode` docstring
     for what `"wave"`/`"fused"`/`"physical"` each render.
 
     `copy_mode`/`vector_width` (P2.3): forwarded to `emit_persistent_
     kernel_struct`/`emit_bulk_copy_phase` -- see that function's own
-    docstring for `"scalar"` (default, unchanged) vs. `"vectorized_
-    contiguous"`.
+    docstring for `"scalar"` vs. `"vectorized_contiguous"`. Omitted
+    `copy_mode` follows the plan independently of the execution-mode override.
     """
     e = Emitter()
     _emit_prelude(e)
     e.add(f"comptime N = {plan.length}")
     e.add()
-    emit_persistent_kernel_struct(
+    loop_table = emit_persistent_kernel_struct(
         e, plan=plan, num_logical_blocks=num_logical_blocks,
         compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         mode=mode, copy_mode=copy_mode, vector_width=vector_width,
+        max_kernel_register=target.max_kernel_register,
+        spad_capacity_bytes=target.spad_capacity_bytes,
     )
 
     host = plan.host
@@ -936,30 +994,20 @@ def generate_persistent_fft_kernel(
     e.add("        ref_imag[i] = Float32(0)")
     e.add()
 
-    # Pool.alloc (src/m2ndp_host.mojo) only aligns individual allocations
-    # to 64 bytes even though the pool's own base is 256B-aligned -- a
-    # given cxl_alloc address is therefore not guaranteed 256B-aligned.
-    # Over-allocate by 64 extra Float32 elements (256 bytes) and advance
-    # to the next 256B boundary by hand, the same ceil-to-multiple formula
-    # Pool.alloc's own _POOL_ALIGN rounding uses -- see
-    # docs/persistent_leaf_design.md's "uthread pool alignment" section.
+    # Individual cxl_alloc buffers only promise 64-byte alignment. Align
+    # the launch pool to this target's interleave chunk before mapping IDs.
     e.add(f"    var pool_elems = {host.pool_elems}")
-    e.add("    var raw_pool = cxl_alloc[Float32](pool_elems + 64)")
-    e.add("    var raw_addr = Int(raw_pool)")
-    e.add("    var aligned_addr = (raw_addr + 255) // 256 * 256")
-    e.add("    if aligned_addr % 256 != 0:")
-    e.add('        print("[host] persistent pool alignment assertion failed:", aligned_addr)')
-    e.add("        return")
-    e.add(
-        "    var uthread_pool = UnsafePointer[Float32, MutAnyOrigin]"
-        "(unsafe_from_address=aligned_addr)"
-    )
+    emit_aligned_pool(e, name="uthread_pool", elems="pool_elems",
+                      alignment_bytes=target.mapping_stride_bytes)
     e.add()
 
+    loop_args = _emit_persistent_loop_table(e,plan=plan,table=loop_table)
+    workspace_args = emit_workspace_buffers(e, plan=plan)
+    params_args = ["input_real", "input_imag", "output_real", "output_imag", *loop_args, *workspace_args]
     e.add(f"    var rc = {plan.kernel_name}.launch(")
     e.add("        PooledRange.over(uthread_pool, pool_elems),")
     e.add(
-        f"        {plan.kernel_name}Params(input_real, input_imag, output_real, output_imag),"
+        f"        {plan.kernel_name}Params({', '.join(params_args)}),"
     )
     e.add("    )")
     e.add()
@@ -968,26 +1016,41 @@ def generate_persistent_fft_kernel(
     e.add("        return")
     e.add()
 
-    _emit_reference_check(
-        e,
-        n=plan.length,
-        batch_count=num_logical_blocks,
-        inverse=plan.inverse,
-        input_real="input_real",
-        input_imag="input_imag",
-        output_real="output_real",
-        output_imag="output_imag",
-        ref_real="ref_real",
-        ref_imag="ref_imag",
-        tolerance=host.tolerance,
-        label="persistent FFT",
-    )
+    if reference_check:
+        _emit_reference_check(
+            e,
+            n=plan.length,
+            batch_count=num_logical_blocks,
+            inverse=plan.inverse,
+            input_real="input_real",
+            input_imag="input_imag",
+            output_real="output_real",
+            output_imag="output_imag",
+            ref_real="ref_real",
+            ref_imag="ref_imag",
+            tolerance=host.tolerance,
+            label="persistent FFT",
+        )
+    else:
+        _emit_array_dump(e, n=host.total_elems, real_name="input_real", imag_name="input_imag", marker="INPUT")
+        _emit_array_dump(e, n=host.total_elems, real_name="output_real", imag_name="output_imag", marker="OUTPUT")
+
 
     return e.text()
 
 
+def _emit_persistent_loop_table(e: Emitter, *, plan: FFTCodegenPlan,
+                                table: list[tuple[float,float]], prefix: str = "") -> list[str]:
+    if not plan.persistent.loop_stages:
+        return []
+    real, imag = f"{prefix}loop_twiddle_real", f"{prefix}loop_twiddle_imag"
+    return emit_loop_twiddle_table(e,table=table,real_name=real,imag_name=imag)
+
+
 def _emit_persistent_buffers_and_launch(
-    e: Emitter, *, plan: FFTCodegenPlan, num_logical_blocks: int, prefix: str,
+    e: Emitter, *, plan: FFTCodegenPlan, num_logical_blocks: int, prefix: str, reference_check: bool = True,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    loop_table: list[tuple[float,float]] | None = None,
 ) -> None:
     """The exact buffer-alloc/pool-alignment/launch/reference-check block
     `generate_persistent_fft_kernel`'s own host `main()` already emits,
@@ -1016,23 +1079,18 @@ def _emit_persistent_buffers_and_launch(
     e.add()
 
     e.add(f"    var {prefix}pool_elems = {host.pool_elems}")
-    e.add(f"    var {prefix}raw_pool = cxl_alloc[Float32]({prefix}pool_elems + 64)")
-    e.add(f"    var {prefix}raw_addr = Int({prefix}raw_pool)")
-    e.add(f"    var {prefix}aligned_addr = ({prefix}raw_addr + 255) // 256 * 256")
-    e.add(f"    if {prefix}aligned_addr % 256 != 0:")
-    e.add(f'        print("[host] persistent pool alignment assertion failed:", {prefix}aligned_addr)')
-    e.add("        return")
-    e.add(
-        f"    var {prefix}uthread_pool = UnsafePointer[Float32, MutAnyOrigin]"
-        f"(unsafe_from_address={prefix}aligned_addr)"
-    )
+    emit_aligned_pool(e, name=f"{prefix}uthread_pool", elems=f"{prefix}pool_elems",
+                      alignment_bytes=target.mapping_stride_bytes)
     e.add()
 
+    workspace_args = emit_workspace_buffers(e, plan=plan, prefix=prefix)
+    params_args = [f"{prefix}{name}" for name in ("input_real", "input_imag", "output_real", "output_imag")]
+    params_args.extend(_emit_persistent_loop_table(e,plan=plan,table=loop_table or [],prefix=prefix))
+    params_args.extend(workspace_args)
     e.add(f"    var {prefix}rc = {plan.kernel_name}.launch(")
     e.add(f"        PooledRange.over({prefix}uthread_pool, {prefix}pool_elems),")
     e.add(
-        f"        {plan.kernel_name}Params({prefix}input_real, {prefix}input_imag, "
-        f"{prefix}output_real, {prefix}output_imag),"
+        f"        {plan.kernel_name}Params({', '.join(params_args)}),"
     )
     e.add("    )")
     e.add()
@@ -1041,18 +1099,19 @@ def _emit_persistent_buffers_and_launch(
     e.add("        return")
     e.add()
 
-    _emit_reference_check(
-        e, n=plan.length, batch_count=num_logical_blocks, inverse=plan.inverse,
-        input_real=f"{prefix}input_real", input_imag=f"{prefix}input_imag",
-        output_real=f"{prefix}output_real", output_imag=f"{prefix}output_imag",
-        ref_real=f"{prefix}ref_real", ref_imag=f"{prefix}ref_imag",
-        tolerance=host.tolerance, label="persistent-tail-hybrid: full rounds (persistent)",
-        var_prefix=prefix,
-    )
+    if reference_check:
+        _emit_reference_check(
+            e, n=plan.length, batch_count=num_logical_blocks, inverse=plan.inverse,
+            input_real=f"{prefix}input_real", input_imag=f"{prefix}input_imag",
+            output_real=f"{prefix}output_real", output_imag=f"{prefix}output_imag",
+            ref_real=f"{prefix}ref_real", ref_imag=f"{prefix}ref_imag",
+            tolerance=host.tolerance, label="persistent-tail-hybrid: full rounds (persistent)",
+            var_prefix=prefix,
+        )
 
 
 def _emit_plain_tail_buffers_and_launch(
-    e: Emitter, *, plan: FFTCodegenPlan, batch_count: int, prefix: str, target: TargetProfile,
+    e: Emitter, *, plan: FFTCodegenPlan, batch_count: int, prefix: str, reference_check: bool = True, target: TargetProfile,
 ) -> None:
     """Host body for a `tail_plan` kernel (P2.4): mirrors `codegen.
     fft_codegen.generate_fft_kernel`'s own host block (non-cooperative
@@ -1084,59 +1143,34 @@ def _emit_plain_tail_buffers_and_launch(
     e.add(f"        {prefix}ref_real[i] = Float32(0)")
     e.add(f"        {prefix}ref_imag[i] = Float32(0)")
     e.add()
-    e.add(f"    var {prefix}pool_elems = {host.pool_elems}")
-
-    if plan.cooperation is not None:
-        chunk_bytes = target.interleave_chunk_uthreads * target.uthread_bytes
-        pad_elems = chunk_bytes // 4
-        e.add(f"    var {prefix}pool_raw = cxl_alloc[Float32]({prefix}pool_elems + {pad_elems})")
-        e.add(f"    var {prefix}pool_raw_addr = Int({prefix}pool_raw)")
-        e.add(
-            f"    var {prefix}pool_addr = ({prefix}pool_raw_addr + {chunk_bytes - 1}) "
-            f"// {chunk_bytes} * {chunk_bytes}"
-        )
-        e.add(f"    if {prefix}pool_addr % {chunk_bytes} != 0:")
-        e.add(f'        print("[host] tail pool alignment assertion failed:", {prefix}pool_addr)')
-        e.add("        return")
-        e.add(
-            f"    var {prefix}uthread_pool = UnsafePointer[Float32, MutAnyOrigin]"
-            f"(unsafe_from_address={prefix}pool_addr)"
-        )
-    else:
-        e.add(f"    var {prefix}uthread_pool = cxl_alloc[Float32]({prefix}pool_elems)")
-    e.add()
-
-    e.add(f"    var {prefix}rc = {plan.kernel_name}.launch(")
-    e.add(f"        PooledRange.over({prefix}uthread_pool, {prefix}pool_elems),")
-    e.add(
-        f"        {plan.kernel_name}Params({prefix}input_real, {prefix}input_imag, "
-        f"{prefix}output_real, {prefix}output_imag),"
-    )
-    e.add("    )")
-    e.add()
-    e.add(f"    if {prefix}rc != 0:")
-    e.add(f'        print("[host] tail FFT failed, exit", {prefix}rc)')
-    e.add("        return")
-    e.add()
+    e.add(f"    var {prefix}pool_elems = {max(r.pool_elems for r in plan.launch_mapping.rounds())}")
+    emit_aligned_pool(e, name=f"{prefix}uthread_pool", elems=f"{prefix}pool_elems",
+                      alignment_bytes=plan.launch_mapping.alignment_bytes)
+    emit_fft_launches(e, plan=plan, pool=f"{prefix}uthread_pool",
+                     args=[f"{prefix}input_real", f"{prefix}input_imag",
+                           f"{prefix}output_real", f"{prefix}output_imag"],
+                     rc_prefix=f"{prefix}rc", label="tail FFT")
 
     label = "persistent-tail-hybrid: tail (cooperative)" if plan.cooperation is not None else \
         "persistent-tail-hybrid: tail (non-cooperative)"
-    _emit_reference_check(
-        e, n=plan.length, batch_count=batch_count, inverse=plan.inverse,
-        input_real=f"{prefix}input_real", input_imag=f"{prefix}input_imag",
-        output_real=f"{prefix}output_real", output_imag=f"{prefix}output_imag",
-        ref_real=f"{prefix}ref_real", ref_imag=f"{prefix}ref_imag",
-        tolerance=host.tolerance, label=label,
-        var_prefix=prefix,
-    )
+    if reference_check:
+        _emit_reference_check(
+            e, n=plan.length, batch_count=batch_count, inverse=plan.inverse,
+            input_real=f"{prefix}input_real", input_imag=f"{prefix}input_imag",
+            output_real=f"{prefix}output_real", output_imag=f"{prefix}output_imag",
+            ref_real=f"{prefix}ref_real", ref_imag=f"{prefix}ref_imag",
+            tolerance=host.tolerance, label=label,
+            var_prefix=prefix,
+        )
 
 
 def generate_persistent_tail_hybrid_kernel(
     hybrid: PersistentTailHybridPlan, *,
     compute_lanes: int | None = 4, narrow_middle_stages: bool = True,
-    mode: ExecutionMode = "physical", copy_mode: CopyMode = "scalar", vector_width: int = 4,
+    mode: ExecutionMode | None = None, copy_mode: CopyMode | None = None, vector_width: int = 4,
     tail_compute_lanes: int | None = 4, tail_narrow_middle_stages: bool = True,
-    target: TargetProfile = DEFAULT_TARGET_PROFILE,
+    target: TargetProfile = DEFAULT_TARGET_PROFILE, reference_check: bool = True,
+    spread_across_units: bool = True,
 ) -> str:
     """P2.4: render `hybrid` (`planning.execution.fft_plan_persistent.
     make_persistent_tail_hybrid_plan`'s own output) as ONE standalone
@@ -1170,9 +1204,10 @@ def generate_persistent_tail_hybrid_kernel(
             hybrid.persistent_plan, num_logical_blocks=hybrid.full_blocks,
             compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
             mode=mode, copy_mode=copy_mode, vector_width=vector_width,
+            target=target, reference_check=reference_check,
         )
 
-    if hybrid.persistent_plan is None:
+    if hybrid.persistent_plan is None and reference_check:
         # `full_blocks == 0` (fewer than target.num_ndp_units logical
         # blocks total): no persistent portion at all -- render `tail_
         # plan` as an ordinary standalone kernel via whichever existing
@@ -1182,25 +1217,37 @@ def generate_persistent_tail_hybrid_kernel(
         if hybrid.tail_plan.cooperation is not None:
             return _generate_cooperative_fft_kernel(
                 hybrid.tail_plan, compute_lanes=tail_compute_lanes, target=target,
+                spread_across_units=spread_across_units,
             )
         return _generate_fft_kernel(
             hybrid.tail_plan, compute_lanes=tail_compute_lanes,
             narrow_middle_stages=tail_narrow_middle_stages,
+            target=target, spread_across_units=spread_across_units,
         )
 
+    hybrid = replace(hybrid, tail_plan=replace(
+        hybrid.tail_plan, launch_mapping=resolve_fft_launch(
+            hybrid.tail_plan, target=target, spread_across_units=spread_across_units)))
     e = Emitter()
     _emit_prelude(e)
-    e.add(f"comptime N = {hybrid.persistent_plan.length}")
+    active_plan = hybrid.persistent_plan or hybrid.tail_plan
+    e.add(f"comptime N = {active_plan.length}")
     e.add()
-    emit_persistent_kernel_struct(
-        e, plan=hybrid.persistent_plan, num_logical_blocks=hybrid.full_blocks,
-        compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
-        mode=mode, copy_mode=copy_mode, vector_width=vector_width,
-    )
+    if hybrid.persistent_plan is not None:
+        persistent_loop_table = emit_persistent_kernel_struct(
+            e, plan=hybrid.persistent_plan, num_logical_blocks=hybrid.full_blocks,
+            compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+            mode=mode, copy_mode=copy_mode, vector_width=vector_width,
+            max_kernel_register=target.max_kernel_register,
+            spad_capacity_bytes=target.spad_capacity_bytes,
+        )
     _emit_kernel(
         e, plan=hybrid.tail_plan, compute_lanes=tail_compute_lanes,
         narrow_middle_stages=tail_narrow_middle_stages,
+        max_kernel_register=target.max_kernel_register,
     )
+    emit_execution_record(e, plan=hybrid.tail_plan, compute_lanes=tail_compute_lanes,
+                          narrow_middle_stages=tail_narrow_middle_stages, loop_stages=False)
 
     if hybrid.tail_plan.cooperation is not None:
         tail_batch_count = hybrid.tail_plan.total_uthreads // hybrid.tail_plan.cooperation.workers_per_fft
@@ -1212,20 +1259,33 @@ def generate_persistent_tail_hybrid_kernel(
     )
 
     e.add("def main() raises:")
-    e.add(f"    if {hybrid.persistent_plan.kernel_name}.emit_ir_if_asked():")
-    e.add("        return")
+    if hybrid.persistent_plan is not None:
+        e.add(f"    if {hybrid.persistent_plan.kernel_name}.emit_ir_if_asked():")
+        e.add("        return")
     e.add(f"    if {hybrid.tail_plan.kernel_name}.emit_ir_if_asked():")
     e.add("        return")
     e.add()
     e.add("    seed(0)")
     e.add()
 
-    _emit_persistent_buffers_and_launch(
-        e, plan=hybrid.persistent_plan, num_logical_blocks=hybrid.full_blocks, prefix="p_",
-    )
+    if hybrid.persistent_plan is not None:
+        _emit_persistent_buffers_and_launch(
+            e, plan=hybrid.persistent_plan, num_logical_blocks=hybrid.full_blocks, prefix="p_", reference_check=reference_check,
+            target=target,
+            loop_table=persistent_loop_table,
+        )
     e.add()
     _emit_plain_tail_buffers_and_launch(
-        e, plan=hybrid.tail_plan, batch_count=hybrid.tail_blocks, prefix="t_", target=target,
+        e, plan=hybrid.tail_plan, batch_count=hybrid.tail_blocks, prefix="t_", target=target, reference_check=reference_check,
     )
 
+    if not reference_check:
+        prefixes = (["p_"] if hybrid.persistent_plan is not None else []) + ["t_"]
+        for kind, marker in (("input", "INPUT"), ("output", "OUTPUT")):
+            e.add(f'    print("{marker}_BEGIN")')
+            for prefix in prefixes:
+                e.add(f"    for i in range({prefix}total_elems):")
+                e.add(f"        print({prefix}{kind}_real[i], {prefix}{kind}_imag[i])")
+            e.add(f'    print("{marker}_END")')
+            e.add()
     return e.text()
