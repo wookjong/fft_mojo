@@ -62,10 +62,11 @@ class FFTBoundaryFusionPlan:
                     synchronization='kernel_completion')
 
 
-def make_boundary_fusion_plan(plan, *, mode='off', boundary_layout='legacy', near_group=1, far_group=1):
+def make_boundary_fusion_plan(plan, *, mode='off', boundary_layout='legacy', near_group=1, far_group=1, defer_leaf_budget=False):
     if boundary_layout == 'grouped':
         from planning.execution.fft_grouped_boundary import make_grouped_boundary_plan
-        return make_grouped_boundary_plan(plan,mode=mode,near_group=near_group,far_group=far_group)
+        return make_grouped_boundary_plan(plan,mode=mode,near_group=near_group,far_group=far_group,
+                                          defer_leaf_budget=defer_leaf_budget)
     if boundary_layout != 'legacy' or near_group != 1 or far_group != 1:
         raise ValueError('nondefault leaf groups require boundary_layout=grouped')
     if mode not in BOUNDARY_FUSION_MODES:

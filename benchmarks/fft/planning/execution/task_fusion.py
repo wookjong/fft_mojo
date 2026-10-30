@@ -70,7 +70,8 @@ def resolve_task_execution(plan, fusion):
     from planning.execution.fft_boundary_fusion import make_boundary_fusion_plan
     execution = window_execution_plan(plan, fusion.window_batch) if fusion.window_batch else plan
     boundary = make_boundary_fusion_plan(execution, mode=fusion.boundary_fusion,
-        boundary_layout=fusion.boundary_layout,near_group=fusion.near_group,far_group=fusion.far_group)
+        boundary_layout=fusion.boundary_layout,near_group=fusion.near_group,far_group=fusion.far_group,
+        defer_leaf_budget=fusion.spad_allocation != 'declared')
     if not boundary.supported:
         raise ValueError(boundary.reason)
     if fusion.memory_allocation is not None:
@@ -220,8 +221,11 @@ def make_task_fusion_plan(plan, *, target=DEFAULT_TARGET_PROFILE, compute_lanes=
                               for child in (root.near_fft, root.far_child)):
         return unsupported("tail hybrids are not supported by task fusion")
     if boundary_fusion != 'off' or boundary_layout == 'grouped':
+        # A compact allocation re-checks the real reservation below, so the
+        # declared-bank estimate of the grouped ownership is deferred to it.
         boundary = make_boundary_fusion_plan(plan, mode=boundary_fusion,
-            boundary_layout=boundary_layout,near_group=near_group,far_group=far_group)
+            boundary_layout=boundary_layout,near_group=near_group,far_group=far_group,
+            defer_leaf_budget=spad_allocation != 'declared')
         if not boundary.supported:
             return unsupported(boundary.reason)
         nodes = boundary.nodes

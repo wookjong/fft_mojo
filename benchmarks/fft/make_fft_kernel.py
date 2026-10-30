@@ -153,7 +153,7 @@ def _make_gpu_baseline_fft_kernel(
     task_fusion: str = "off", leaf_storage: str = "cxl", batch_window: str | int = "off",
     boundary_fusion: str = "off",
     boundary_layout: str = "legacy", near_group: int = 1, far_group: int = 1,
-    leaf_phase_policy: str = "stages", leaf_codegen_schedule: str = "existing", spad_allocation: str = "declared", far12_codelet: str = "off",
+    leaf_phase_policy: str = "stages", leaf_codegen_schedule: str = "existing", spad_allocation: str = "declared", far12_codelet: str = "off", layout_rewrite: str = "off",
 ) -> Path:
     """`make_fft_kernel`'s own GPU-baseline path -- see that function's
     `planner` docstring. Builds the baseline plan via planning.
@@ -175,7 +175,7 @@ def _make_gpu_baseline_fft_kernel(
         plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         reference_check=reference_check, target=target, spread_across_units=spread_across_units,
         task_fusion=task_fusion, leaf_storage=leaf_storage, batch_window=batch_window,
-        boundary_fusion=boundary_fusion,boundary_layout=boundary_layout,near_group=near_group,far_group=far_group,leaf_phase_policy=leaf_phase_policy,leaf_codegen_schedule=leaf_codegen_schedule,spad_allocation=spad_allocation,far12_codelet=far12_codelet,
+        boundary_fusion=boundary_fusion,boundary_layout=boundary_layout,near_group=near_group,far_group=far_group,leaf_phase_policy=leaf_phase_policy,leaf_codegen_schedule=leaf_codegen_schedule,spad_allocation=spad_allocation,far12_codelet=far12_codelet,layout_rewrite=layout_rewrite,
     )
 
     if output_path is None:
@@ -223,7 +223,7 @@ def make_fft_kernel(
     batch_window: str | int = "off",
     boundary_fusion: str = "off",
     boundary_layout: str = "legacy", near_group: int = 1, far_group: int = 1,
-    leaf_phase_policy: str = "stages", leaf_codegen_schedule: str = "existing", spad_allocation: str = "declared", far12_codelet: str = "off",
+    leaf_phase_policy: str = "stages", leaf_codegen_schedule: str = "existing", spad_allocation: str = "declared", far12_codelet: str = "off", layout_rewrite: str = "off",
 ) -> Path:
     """Plan and render a length-`n` FFT kernel, write it to `output_path`
     (default: `fft_fp32_N{n}{_inverse}_generated.mojo` next to this file),
@@ -461,6 +461,8 @@ def make_fft_kernel(
         raise ValueError("unit and fusion options require distributed execution")
     if (far12_codelet != 'off' or spad_allocation != 'declared' or leaf_phase_policy != 'stages' or leaf_codegen_schedule != 'existing') and planner != 'gpu-vkfft-m2ndp':
         raise ValueError('leaf phase/schedule requires gpu-vkfft-m2ndp')
+    if layout_rewrite != 'off' and planner != 'gpu-vkfft-m2ndp':
+        raise ValueError('layout_rewrite requires gpu-vkfft-m2ndp')
     if boundary_layout == 'grouped' and planner != 'gpu-vkfft-m2ndp':
         raise ValueError('grouped ownership requires gpu-vkfft-m2ndp')
     if boundary_fusion != 'off' and planner != 'gpu-vkfft-m2ndp':
@@ -488,7 +490,7 @@ def make_fft_kernel(
             units_per_leaf=units_per_leaf, fuse_stages=fuse_stages,
             fusion_max_elements=fusion_max_elements,
             task_fusion=task_fusion, leaf_storage=leaf_storage, batch_window=batch_window,
-            boundary_fusion=boundary_fusion,boundary_layout=boundary_layout,near_group=near_group,far_group=far_group,leaf_phase_policy=leaf_phase_policy,leaf_codegen_schedule=leaf_codegen_schedule,spad_allocation=spad_allocation,far12_codelet=far12_codelet,
+            boundary_fusion=boundary_fusion,boundary_layout=boundary_layout,near_group=near_group,far_group=far_group,leaf_phase_policy=leaf_phase_policy,leaf_codegen_schedule=leaf_codegen_schedule,spad_allocation=spad_allocation,far12_codelet=far12_codelet,layout_rewrite=layout_rewrite,
         )
 
     if n < 2:
@@ -792,6 +794,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--middle-placement', choices=('store','load'), default=None,
                         help='explicit MIDDLE placement; normalized into the boundary mode')
     parser.add_argument('--spad-allocation',choices=('declared','live-banks','phase-packed'),default='declared')
+    parser.add_argument('--layout-rewrite',default='off',
+                        help="opt-in data-layout rewrite of the fused grouped task: off (default) or '+'-joined "
+                             "tokens n8/a/f8/s/sn/sm/sf/sp; selected path n8+f8+sp (see codegen/layout_rewrite)")
     parser.add_argument('--far12-codelet',choices=('off','peel','forward1','loop-forward1','loop-forward-packed','native4-control','native4-forward','native4-static-control','native4-static-forward','native4-compact-control','native4-compact-forward','native4-latch-forward'),default='off')
     parser.add_argument('--leaf-phase-policy',choices=('stages','far12-private'),default='stages')
     parser.add_argument('--leaf-codegen-schedule',choices=('existing','far0-short-live'),default='existing')
@@ -898,7 +903,7 @@ def main() -> None:
         leaf_storage=args.leaf_storage,
         batch_window=args.batch_window,
         boundary_fusion=args.boundary_fusion,boundary_layout=args.boundary_layout,
-        near_group=args.near_group,far_group=args.far_group,leaf_phase_policy=args.leaf_phase_policy,leaf_codegen_schedule=args.leaf_codegen_schedule,spad_allocation=args.spad_allocation,far12_codelet=args.far12_codelet,
+        near_group=args.near_group,far_group=args.far_group,leaf_phase_policy=args.leaf_phase_policy,leaf_codegen_schedule=args.leaf_codegen_schedule,spad_allocation=args.spad_allocation,far12_codelet=args.far12_codelet,layout_rewrite=args.layout_rewrite,
     )
     print(f"generated: {path}")
 

@@ -5,7 +5,7 @@ from planning.execution.fft_boundary_simd import make_boundary_simd_plan, extrac
 from planning.strategies.fft_plan_recursive import FFTRecursiveNodePlan, FFTLeafPlan, flatten_recursive_node
 
 
-def make_grouped_boundary_plan(plan,*,mode,near_group,far_group):
+def make_grouped_boundary_plan(plan,*,mode,near_group,far_group,defer_leaf_budget=False):
     from planning.execution.fft_boundary_fusion import FFTBoundaryFusionPlan,BoundaryBufferBinding
     def unsupported(reason):return FFTBoundaryFusionPlan(mode,False,reason)
     root=plan.root
@@ -27,7 +27,8 @@ def make_grouped_boundary_plan(plan,*,mode,near_group,far_group):
             ownership=LeafOwnershipPlan(m,k.length,c,plan.batch,k.distributed.num_units,
                 k.distributed.workers_per_unit,tuple(x.name for x in k.workspace_buffers))
             special=(make_boundary_simd_plan(k,boundary=boundary,a=root.a,b=root.b,
-                total_batch=plan.batch,group_leaves=c,window_batch=plan.batch) if boundary in mode else None)
+                total_batch=plan.batch,group_leaves=c,window_batch=plan.batch,
+                defer_leaf_budget=defer_leaf_budget) if boundary in mode else None)
             nodes[index]=replace(k,leaf_ownership=ownership,boundary_simd=special)
     except ValueError as error:return unsupported(str(error))
     removed=tuple(i for i,name in ((0,'pre'),(4,'post')) if name in mode)

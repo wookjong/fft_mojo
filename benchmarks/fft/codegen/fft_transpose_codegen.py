@@ -715,7 +715,7 @@ def _stage_round_size(
     )
 
 
-def generate_recursive_fft_kernels(
+def _render_recursive_fft_kernels(
     plan: RecursiveFFTPlan, *, compute_lanes: int | None = None,
     narrow_middle_stages: bool = False, loop_stages: bool = True,
     reference_check: bool = True, target: TargetProfile = DEFAULT_TARGET_PROFILE,
@@ -1284,3 +1284,28 @@ def generate_recursive_fft_kernels(
     else:
         _emit_array_dump(e, n=plan.n * plan.batch, real_name="output_real", imag_name="output_imag", marker="OUTPUT")
     return e.text()
+
+
+def generate_recursive_fft_kernels(plan: RecursiveFFTPlan, *, layout_rewrite: str = "off", **options) -> str:
+    """Render the recursive plan (see `_render_recursive_fft_kernels`), then
+    optionally apply an opt-in data-layout rewrite of the fused grouped task.
+
+    `layout_rewrite`: "off" (the default) returns the rendered source
+    unchanged, byte for byte. Otherwise a '+'-joined token list defined in
+    codegen.layout_rewrite (selected path: "n8+f8+sp"). The rewrite is
+    rejected with a reason unless the rendered configuration is the one the
+    rewrites were built and verified for (fused grouped VkFFT task, PRE fusion,
+    near C4 / far C1, leaf SPAD, far12-private, far0-short-live, compact SPAD
+    allocation, forward N=16384); every rewrite step also proves the shape of
+    the code it replaces and refuses a mismatch.
+    """
+    from codegen.layout_rewrite import (apply_layout_rewrite, check_layout_rewrite_support,
+                                        normalize_layout_rewrite)
+    tokens = normalize_layout_rewrite(layout_rewrite)
+    if tokens:
+        import inspect
+        defaults = {k: v.default for k, v in inspect.signature(_render_recursive_fft_kernels).parameters.items()
+                    if v.default is not inspect.Parameter.empty}
+        check_layout_rewrite_support(plan, dict(defaults, **options))
+    source = _render_recursive_fft_kernels(plan, **options)
+    return apply_layout_rewrite(source, layout_rewrite) if tokens else source

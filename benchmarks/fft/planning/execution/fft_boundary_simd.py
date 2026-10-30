@@ -256,8 +256,15 @@ class BoundarySIMDPlan:
                 yield self.resolve_job(tile,job.job_id,window_base=window_base,live_batch=live)
 
 
-def make_boundary_simd_plan(kernel, *, boundary, a, b, total_batch, group_leaves, window_batch=1):
-    """Build an opt-in executable planning IR, without changing legacy kernels."""
+def make_boundary_simd_plan(kernel, *, boundary, a, b, total_batch, group_leaves, window_batch=1, defer_leaf_budget=False):
+    """Build an opt-in executable planning IR, without changing legacy kernels.
+
+    `defer_leaf_budget`: the resident estimate below sums every declared bank
+    of the ownership. A compact physical allocator (live-banks/phase-packed)
+    later drops unused banks, reuses arena across phases and checks the real
+    reservation against the planner and concurrent SPAD budgets
+    (task_fusion.make_task_fusion_plan). When that allocator will run, the
+    caller passes True and this declared-bank estimate is not a rejection."""
     if boundary not in ('pre','post'):
         raise ValueError('boundary must be pre or post')
     for name,value in (('a',a),('b',b),('total_batch',total_batch),('window_batch',window_batch)):
@@ -278,7 +285,7 @@ def make_boundary_simd_plan(kernel, *, boundary, a, b, total_batch, group_leaves
     ownership = LeafOwnershipPlan(m,length,group_leaves,window_batch,
         distribution.num_units,distribution.workers_per_unit,
         tuple(x.name for x in kernel.workspace_buffers))
-    if ownership.arena_bytes > distribution.scratchpad_budget_bytes:
+    if not defer_leaf_budget and ownership.arena_bytes > distribution.scratchpad_budget_bytes:
         raise ValueError('grouped resident banks exceed the leaf scratchpad budget')
     stage = scalar[0] if boundary=='pre' else scalar[-1]
     if any(x.scale is not None for s in scalar for j in s.butterflies for x in j.outputs):
