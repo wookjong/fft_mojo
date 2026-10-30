@@ -5,6 +5,36 @@ Radices, layouts, twiddle values and launch ranges are supplied by plans.
 """
 
 from planning.core.fft_plan_core import LargeTwiddlePlan
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class TaskKernelBinding:
+    """A phase's owner/ABI and physical dispatch, independent of FFT math."""
+    task_name: str
+    params_field: str
+    function_name: str
+    active_uthreads: int
+    local_slot_expr: str
+    arena_name: str = "arena"
+    window_batch: int = 0
+    total_batch: int = 0
+    window_n: int = 0
+
+    def emit_window_prelude(self, e):
+        if self.window_batch:
+            e.add(f'        var batch_base = Int({self.task_name}.batch_base.load[DType.int32, 1](0)[0])')
+            if self.total_batch % self.window_batch:
+                e.add(f'        var live_batch = min({self.window_batch}, {self.total_batch} - batch_base)')
+            e.add(f'        var window_base = batch_base * {self.window_n}')
+
+    @property
+    def params_expr(self):
+        return f"{self.task_name}.params[].{self.params_field}"
+
+    @property
+    def arena_expr(self):
+        return f"{self.task_name}.{self.arena_name}"
 
 
 class Emitter:
@@ -64,7 +94,7 @@ def emit_fft_launches(e: Emitter, *, plan, pool: str, args: list[str], rc_prefix
     args = [*args, *emit_workspace_buffers(e, plan=plan, prefix=f"{rc_prefix}_")]
     launch = plan.launch_mapping
     if launch is None:
-        if plan.persistent is None:
+        if plan.persistent is None and plan.distributed is None:
             raise ValueError("FFT launch descriptor has not been resolved")
         from planning.execution.launch_plan import FFTLaunchRound
         rounds = (FFTLaunchRound(0, plan.host.total_elems // plan.length,
@@ -90,7 +120,15 @@ def emit_fft_launches(e: Emitter, *, plan, pool: str, args: list[str], rc_prefix
 
 
 def emit_workspace_buffers(e: Emitter, *, plan, prefix: str = "") -> list[str]:
-    """Allocate the plan's CXL staging buffers once before launching its task."""
+    """Allocate the plan's CXL staging buffers once before launching its task.
+
+    A leaf-resident buffer (plan.leaf_storage is not None -- see
+    LeafResidentSpadPlan) needs no CXL allocation or Params argument at all:
+    it lives in the owning task's own shared arena instead (see
+    fft_codegen._emit_params_struct, which drops the matching Params field).
+    """
+    if plan.leaf_storage is not None:
+        return []
     names = []
     for buffer in plan.workspace_buffers:
         name = f"{prefix}{buffer.name}"
@@ -171,7 +209,7 @@ def emit_prelude(e: Emitter) -> None:
     e.add(
         "from m2ndp import VECTOR_WIDTH, NDPTask, PooledRange, "
         "global_uthread_id, local_uthread_id, group_id, num_groups, "
-        "launch_parallel, scratchpad"
+        "launch_parallel, scratchpad, spad_addr"
     )
     e.add("from m2ndp_host import cxl_alloc")
     e.add()

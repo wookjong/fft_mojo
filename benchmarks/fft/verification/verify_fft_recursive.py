@@ -263,6 +263,13 @@ def run_recursive_plan(
                 run_physical_transpose(stage, src_real=cur_r, src_imag=cur_i, dst_real=next_r, dst_imag=next_i, tw_real=tw_r, tw_imag=tw_i)
             else:
                 run_physical_transpose(stage, src_real=cur_r, src_imag=cur_i, dst_real=next_r, dst_imag=next_i)
+        elif stage.distributed is not None:
+            from verification.verify_fft_unit_parallel import run_distributed_kernel
+            values, _ = run_distributed_kernel(stage, cur_r.arr + 1j * cur_i.arr,
+                                               compute_lanes=compute_lanes,
+                                               narrow_middle_stages=narrow_middle_stages)
+            next_r.arr[:] = values.real
+            next_i.arr[:] = values.imag
         elif stage.persistent is not None:
             # A persistent leaf cannot go through run_kernel at all (see
             # verify_fft_persistent.run_persistent_kernel's own docstring:

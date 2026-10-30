@@ -102,7 +102,7 @@ cost model과 lowering-overhead 보고서에도 같은 array traffic을 반영�
 실제 compiler는 검증한 커널에서 register spill을 보고했다. N=8192의 stage별
 spill frame은 16/320/368/400/320 bytes였으며, 이미지의 compiler는 spill이 DRAM으로
 간다고 명시한다. 경고 원문은 실행 결과의 `spill_warnings`에 보존했다.
-따라서 실험에서는 global staging traffic과 register spill을 함께 확인해야 한다.
+따라서 실험에서ㅜ는 global staging traffic과 register spill을 함께 확인해야 한다.
 
 GPU fused transpose/twiddle을 별도 M2NDP pass로 펼치는 기존 multi-pass lowering은
 계속 별도의 overhead로 보고한다. 이번 추가로 **해당 범위의 실행 미지원**은

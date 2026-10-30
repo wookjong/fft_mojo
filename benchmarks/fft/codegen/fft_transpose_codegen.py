@@ -405,7 +405,9 @@ def _emit_physical_transpose_params_struct(e: Emitter, *, plan: PhysicalTranspos
 
 
 def _emit_tile_transfer(
-    e: Emitter, *, plan: PhysicalTransposePlan, valid_rows: int, valid_cols: int
+    e: Emitter, *, plan: PhysicalTransposePlan, valid_rows: int, valid_cols: int,
+    tile_buffer_ref: str | None = None,
+    global_offset: str = "",
 ) -> None:
     """One valid_rows x valid_cols tile's worth of: contiguous vector
     loads from the source (+ matching twiddle rows, same addressing, if
@@ -425,7 +427,7 @@ def _emit_tile_transfer(
     for i in range(valid_rows):
         e.add(f"{indent}var src_row_{i} = t_r * {tile_rows} + {i}")
         e.add(
-            f"{indent}var src_base_{i} = q * {rows * cols} + src_row_{i} * {cols} + "
+            f"{indent}var src_base_{i} = {global_offset}q * {rows * cols} + src_row_{i} * {cols} + "
             f"t_c * {tile_cols}"
         )
         e.add(f"{indent}var rr{i} = p.src_real_base.load[width={valid_cols}](src_base_{i})")
@@ -445,7 +447,7 @@ def _emit_tile_transfer(
             rr_name, ii_name = f"tr{i}", f"ti{i}"
         else:
             rr_name, ii_name = f"rr{i}", f"ii{i}"
-        tile_buf = _spad(plan.kernel_name, "tile_buf")
+        tile_buf = tile_buffer_ref or _spad(plan.kernel_name, "tile_buf")
         for j in range(valid_cols):
             spad_off = f"spad_base + {j * tile_rows + i}"
             spad_off_i = f"spad_base + {tile_elems + j * tile_rows + i}"
@@ -457,11 +459,11 @@ def _emit_tile_transfer(
     if plan.apply_inverse_scale:
         scale = 1.0 / (rows * cols)
 
-    tile_buf = _spad(plan.kernel_name, "tile_buf")
+    tile_buf = tile_buffer_ref or _spad(plan.kernel_name, "tile_buf")
     for j in range(valid_cols):
         e.add(f"{indent}var dst_row_{j} = t_c * {tile_cols} + {j}")
         e.add(
-            f"{indent}var dst_base_{j} = q * {rows * cols} + dst_row_{j} * {rows} + "
+            f"{indent}var dst_base_{j} = {global_offset}q * {rows * cols} + dst_row_{j} * {rows} + "
             f"t_r * {tile_rows}"
         )
         spad_row = f"spad_base + {j * tile_rows}"
@@ -476,7 +478,7 @@ def _emit_tile_transfer(
     e.add()
 
 
-def _emit_physical_transpose_stage(e: Emitter, *, plan: PhysicalTransposePlan) -> None:
+def _emit_physical_transpose_stage(e: Emitter, *, plan: PhysicalTransposePlan, binding=None) -> None:
     rows, cols, tile_rows, tile_cols = plan.rows, plan.cols, plan.tile_rows, plan.tile_cols
     grid_rows, grid_cols = plan.grid_rows, plan.grid_cols
     has_row_tail = rows % tile_rows != 0
@@ -485,11 +487,22 @@ def _emit_physical_transpose_stage(e: Emitter, *, plan: PhysicalTransposePlan) -
     tail_valid_cols = cols - (grid_cols - 1) * tile_cols
 
     e.add("    @staticmethod")
-    e.add("    def stage_0():")
-    e.add(f"        ref p = {plan.kernel_name}.params[]")
-    e.add("        var local_id = local_uthread_id()")
-    e.add(f"        if local_id >= MAX_UTHREAD_{plan.kernel_name}:")
-    e.add("            return")
+    e.add(f"    def {binding.function_name if binding else 'stage_0'}():")
+    if binding is None:
+        e.add(f"        ref p = {plan.kernel_name}.params[]")
+        e.add("        var local_id = local_uthread_id()")
+        e.add(f"        if local_id >= MAX_UTHREAD_{plan.kernel_name}:")
+        e.add("            return")
+    else:
+        e.add("        var gid = global_uthread_id()")
+        e.add(f"        if gid >= {binding.active_uthreads}:")
+        e.add("            return")
+        e.add(f"        ref p = {binding.params_expr}")
+        e.add(f"        var local_id = {binding.local_slot_expr}")
+        binding.emit_window_prelude(e)
+        if binding.window_batch and binding.total_batch % binding.window_batch:
+            e.add(f'        if gid >= live_batch * {plan.total_uthreads // binding.window_batch}:')
+            e.add('            return')
     e.add(f"        var spad_base = local_id * {plan.scratchpad_elements}")
     e.add()
     if plan.needs_round_split:
@@ -526,7 +539,9 @@ def _emit_physical_transpose_stage(e: Emitter, *, plan: PhysicalTransposePlan) -
     e.add()
 
     if not has_row_tail and not has_col_tail:
-        _emit_tile_transfer(e, plan=plan, valid_rows=tile_rows, valid_cols=tile_cols)
+        _emit_tile_transfer(e, plan=plan, valid_rows=tile_rows, valid_cols=tile_cols,
+                            tile_buffer_ref=binding.arena_expr if binding else None,
+                            global_offset='window_base + ' if binding and binding.window_batch else '')
         return
 
     # One branch per (row-tail?, col-tail?) combination that can actually
@@ -552,7 +567,9 @@ def _emit_physical_transpose_stage(e: Emitter, *, plan: PhysicalTransposePlan) -
         else:
             e.add(f"        {'if' if i == 0 else 'elif'} {cond}:")
         sub = Emitter()
-        _emit_tile_transfer(sub, plan=plan, valid_rows=valid_rows, valid_cols=valid_cols)
+        _emit_tile_transfer(sub, plan=plan, valid_rows=valid_rows, valid_cols=valid_cols,
+                            tile_buffer_ref=binding.arena_expr if binding else None,
+                            global_offset='window_base + ' if binding and binding.window_batch else '')
         for line in sub.lines:
             e.add("    " + line if line else "")
 
@@ -679,6 +696,11 @@ def _stage_round_size(
     share a launch descriptor; persistent FFTs own their internal rounds.
     Transpose stages retain their independent tile launch policy.
     """
+    if not isinstance(stage, PhysicalTransposePlan) and stage.distributed is not None:
+        if (stage.distributed.num_units != target.num_ndp_units
+                or stage.distributed.workers_per_unit != target.interleave_chunk_uthreads):
+            raise ValueError("distributed execution must match the physical target unit/worker mapping")
+        return stage.total_uthreads
     if not spread_across_units:
         return stage.max_uthread
     if not isinstance(stage, PhysicalTransposePlan) and stage.persistent is not None:
@@ -700,6 +722,12 @@ def generate_recursive_fft_kernels(
     spread_across_units: bool = False, debug_print_pool_alignment: bool = False,
     persistent_mode: str | None = None,
     persistent_copy_mode: str | None = None, persistent_vector_width: int = 4,
+    task_fusion: str = "off", task_fusion_control: bool = False,
+    leaf_storage: str = "cxl",
+    batch_window: str | int = "off",
+    boundary_fusion: str = "off",
+    boundary_layout: str = "legacy", near_group: int = 1, far_group: int = 1,
+    leaf_phase_policy: str = "stages", leaf_codegen_schedule: str = "existing", spad_allocation: str = "declared", far12_codelet: str = "off",
 ) -> str:
     """Render a full make_recursive_transpose_plan tree as a flat, ordered
     Mojo-ish kernel sequence chained through DRAM from one host main().
@@ -778,6 +806,18 @@ def generate_recursive_fft_kernels(
     persistent leaf's plan independently. Explicit values override all persistent
     leaves for comparisons. `persistent_vector_width` controls vectorized copies.
 
+    `leaf_storage`: `"cxl"` (the default) keeps every leaf's intermediate
+    ping-pong bank in the existing shared CXL allocation, byte-identical
+    output. `"spad"` instead places it in the fused task's own shared
+    scratchpad arena (see planning.execution.task_fusion.
+    resolve_leaf_resident_storage / LeafResidentSpadPlan) -- only sound
+    when every leaf has `units_per_leaf=1`; raises with a reason otherwise,
+    or when `task_fusion` is not `"auto"` (there is no fused task's arena
+    to bind to without it). `"auto"` takes the SPAD placement wherever it
+    is sound and silently keeps CXL elsewhere -- never a hard failure.
+    Radix, boundary mappings, twiddles and scale are identical either way;
+    only where the middle-stage values physically live changes.
+
     `debug_print_pool_alignment`: `False` (the default) unchanged output.
     `True` adds one `print()` per stage's own `pool{i}` right after it is
     allocated, dumping the real runtime address mod 64/128/256/2048 --
@@ -789,6 +829,25 @@ def generate_recursive_fft_kernels(
     branch that already is) -- observation only, no simulator source
     touched, no alignment behavior touched.
     """
+    if task_fusion not in ("off", "auto"):
+        raise ValueError("task_fusion must be off or auto")
+    from planning.execution.fft_boundary_fusion import BOUNDARY_FUSION_MODES
+    if boundary_fusion not in BOUNDARY_FUSION_MODES:
+        raise ValueError(f'boundary_fusion must be one of {BOUNDARY_FUSION_MODES}')
+    if boundary_fusion != 'off' and (task_fusion != 'auto' or task_fusion_control):
+        raise ValueError('POST boundary fusion requires task_fusion=auto without task_fusion_control')
+    if task_fusion_control and task_fusion != "auto":
+        raise ValueError("layout-matched task fusion control requires task_fusion=auto")
+    from planning.execution.task_fusion import LEAF_STORAGE_MODES
+    if leaf_storage not in LEAF_STORAGE_MODES:
+        raise ValueError(f"unknown leaf_storage {leaf_storage!r}; choose {LEAF_STORAGE_MODES}")
+    if leaf_storage != "cxl" and task_fusion != "auto":
+        # leaf_storage only ever binds a resident bank to a fused task's own
+        # shared arena (see task_fusion.resolve_leaf_resident_storage) --
+        # without task fusion there is no shared arena to bind it to.
+        raise ValueError("leaf_storage requires task_fusion=auto")
+    if batch_window != 'off' and task_fusion != 'auto':
+        raise ValueError('batch_window requires task_fusion=auto')
     if isinstance(plan.root, FFTLeafPlan) and plan.root.tail_hybrid is not None:
         from codegen.fft_persistent_codegen import generate_persistent_tail_hybrid_kernel
         from planning.execution.kernel_registration import validate_recursive_kernel_registration
@@ -802,17 +861,62 @@ def generate_recursive_fft_kernels(
             spread_across_units=spread_across_units,
         )
     from planning.execution.kernel_registration import validate_recursive_kernel_registration
-    validate_recursive_kernel_registration(plan, target=target, loop_stages=loop_stages)
+    validate_recursive_kernel_registration(plan, target=target, loop_stages=loop_stages,
+                                           compute_lanes=compute_lanes,
+                                           narrow_middle_stages=narrow_middle_stages)
     stages = flatten_recursive_node(plan.root)
     stages = [replace(s, launch_mapping=resolve_fft_launch(s, target=target,
                                                          spread_across_units=spread_across_units))
-              if not isinstance(s, PhysicalTransposePlan) and s.persistent is None else s
+              if not isinstance(s, PhysicalTransposePlan) and s.persistent is None and s.distributed is None else s
               for s in stages]
+    fusion = None
+    if (far12_codelet != 'off' or spad_allocation != 'declared' or leaf_phase_policy != 'stages' or leaf_codegen_schedule != 'existing') and task_fusion != 'auto':
+        raise ValueError('leaf phase/schedule requires task_fusion=auto')
+    if boundary_layout == 'grouped' and task_fusion != 'auto':
+        raise ValueError('grouped ownership requires task_fusion=auto')
+    fusion_candidate = None
+    boundary = None
+    if task_fusion == "auto":
+        from planning.execution.task_fusion import make_task_fusion_plan
+        fusion_candidate = make_task_fusion_plan(plan, target=target, compute_lanes=compute_lanes,
+                         narrow_middle_stages=narrow_middle_stages, control=task_fusion_control,
+                         leaf_storage=leaf_storage, batch_window=batch_window,
+                         boundary_fusion=boundary_fusion,boundary_layout=boundary_layout,
+                         near_group=near_group,far_group=far_group,leaf_phase_policy=leaf_phase_policy,leaf_codegen_schedule=leaf_codegen_schedule,spad_allocation=spad_allocation,far12_codelet=far12_codelet)
+        if far12_codelet != 'off' and not fusion_candidate.supported:
+            raise ValueError(f'far12_codelet={far12_codelet!r} is not supported: {fusion_candidate.reason}')
+        if spad_allocation != 'declared' and not fusion_candidate.supported:
+            raise ValueError(f'spad_allocation={spad_allocation!r} is not supported: {fusion_candidate.reason}')
+        if boundary_fusion != 'off' and not fusion_candidate.supported:
+            raise ValueError(f'boundary_fusion={boundary_fusion!r} is not supported: {fusion_candidate.reason}')
+        if leaf_storage == "spad" and not fusion_candidate.supported:
+            # "spad" is a hard requirement -- reject with a reason instead of
+            # silently falling back to the non-fused CXL rendering below
+            # (which "auto" leaf_storage/task_fusion both do deliberately).
+            raise ValueError(f"leaf_storage='spad' is not supported for this plan: {fusion_candidate.reason}")
+        if fusion_candidate.supported:
+            fusion = fusion_candidate
+            if fusion.window_batch:
+                from planning.execution.task_fusion import window_execution_plan
+                stages = flatten_recursive_node(window_execution_plan(plan, fusion.window_batch).root)
+            if boundary_fusion != 'off' or boundary_layout == 'grouped':
+                from planning.execution.task_fusion import resolve_task_execution
+                boundary = resolve_task_execution(plan, fusion)
+                stages = list(boundary.nodes)
+        elif batch_window != 'off':
+            raise ValueError(f'batch_window is not supported: {fusion_candidate.reason}')
     # Reject unsupported launch policies before rendering any kernel bodies.
     for stage in stages:
         _stage_round_size(stage, spread_across_units=spread_across_units, target=target)
     e = Emitter()
     _emit_prelude(e)
+    if boundary is not None:
+        import json
+        e.add('# FFT_BOUNDARY_FUSION ' + json.dumps(boundary.metadata(), sort_keys=True))
+    if fusion_candidate is not None and fusion is None:
+        from dataclasses import asdict
+        import json
+        e.add("# FFT_TASK_FUSION " + json.dumps(asdict(fusion_candidate), sort_keys=True))
     e.add(f"comptime N = {plan.n}")
     e.add()
 
@@ -855,10 +959,22 @@ def generate_recursive_fft_kernels(
     # (`add_loop_twiddle` inside _emit_kernel got the same value), not the
     # caller's blanket `loop_stages` argument.
     stage_loops: dict[int, bool] = {}
-    for i, stage in enumerate(stages):
+    if fusion is not None:
+        from codegen.fft_task_fusion_codegen import emit_fused_task_structs
+        loop_twiddle_tables = emit_fused_task_structs(e, nodes=stages, fusion=fusion,
+            compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages, target=target)
+        stage_loops = {index: True for index in loop_twiddle_tables}
+    for i, stage in enumerate(stages if fusion is None else ()):
         e.add(f"# ---- stage {i}: {stage.kernel_name} ----")
         if isinstance(stage, PhysicalTransposePlan):
             _emit_physical_transpose_kernel(e, plan=stage)
+        elif stage.distributed is not None:
+            from codegen.fft_distributed_codegen import emit_distributed_kernel_struct
+            loop_twiddle_tables[i] = emit_distributed_kernel_struct(
+                e, plan=stage, compute_lanes=compute_lanes,
+                narrow_middle_stages=narrow_middle_stages,
+                max_kernel_register=target.max_kernel_register)
+            stage_loops[i] = True
         elif stage.persistent is not None:
             # A persistent leaf renders its own preload/stage_N/writeback
             # struct + round-unrolled device_main (emit_persistent_kernel_
@@ -916,7 +1032,7 @@ def generate_recursive_fft_kernels(
         return f"work{idx % 2}_{part}"
 
     e.add("def main() raises:")
-    first_kernel_name = stages[0].kernel_name
+    first_kernel_name = fusion.groups[0].name if fusion is not None else stages[0].kernel_name
     e.add(f"    if {first_kernel_name}.emit_ir_if_asked():")
     e.add("        return")
     e.add()
@@ -938,6 +1054,16 @@ def generate_recursive_fft_kernels(
     e.add("    var ref_real = cxl_alloc[Float32](total_elems)")
     e.add("    var ref_imag = cxl_alloc[Float32](total_elems)")
     e.add()
+
+    if any(not isinstance(s, PhysicalTransposePlan) and s.boundary_twiddle for s in stages):
+        rn, imn = 'boundary_twiddle_real', 'boundary_twiddle_imag'
+        e.add(f"    var {rn} = cxl_alloc[Float32]({plan.n})")
+        e.add(f"    var {imn} = cxl_alloc[Float32]({plan.n})")
+        _emit_physical_transpose_twiddle_table_precompute(e, plan=plan.root.middle_transpose,
+            real_name=rn, imag_name=imn, index='boundary')
+        for i, s in enumerate(stages):
+            if not isinstance(s, PhysicalTransposePlan) and s.boundary_twiddle:
+                twiddle_names[i] = (rn, imn)
 
     for i, stage in enumerate(stages):
         if isinstance(stage, PhysicalTransposePlan) and stage.twiddle_modulus is not None:
@@ -989,6 +1115,10 @@ def generate_recursive_fft_kernels(
     for i, table in loop_twiddle_tables.items():
         rn, imn = f"looptw{i}_real", f"looptw{i}_imag"
         loop_twiddle_names[i] = (rn, imn)
+        if stages[i].distributed is not None:
+            from codegen.common import emit_loop_twiddle_table
+            emit_loop_twiddle_table(e, table=table, real_name=rn, imag_name=imn)
+            continue
         table_size = max(1, len(table))
         e.add(f"    var {rn} = cxl_alloc[Float32]({table_size})")
         e.add(f"    var {imn} = cxl_alloc[Float32]({table_size})")
@@ -1013,7 +1143,10 @@ def generate_recursive_fft_kernels(
         i: _stage_round_size(stage, spread_across_units=spread_across_units, target=target)
         for i, stage in enumerate(stages)
     }
-    for i, stage in enumerate(stages):
+    if fusion is not None:
+        from codegen.fft_task_fusion_codegen import emit_fused_pools
+        emit_fused_pools(e, fusion=fusion, simd_lanes=8, target=target, debug=debug_print_pool_alignment)
+    for i, stage in enumerate(stages if fusion is None else ()):
         e.add(f"    var pool{i}_elems = {stage.simd_lanes * round_sizes[i]}")
         needs_chunk_alignment = not isinstance(stage, PhysicalTransposePlan)
         if needs_chunk_alignment:
@@ -1051,6 +1184,7 @@ def generate_recursive_fft_kernels(
             e.add(f"    var pool{i} = cxl_alloc[Float32](pool{i}_elems)")
         if debug_print_pool_alignment:
             kind = "transpose" if isinstance(stage, PhysicalTransposePlan) else (
+                "distributed" if stage.distributed is not None else
                 "persistent" if stage.persistent is not None
                 else "cooperative" if stage.cooperation is not None
                 else "non_cooperative"
@@ -1081,7 +1215,13 @@ def generate_recursive_fft_kernels(
     if not reference_check:
         _emit_array_dump(e, n=plan.n * plan.batch, real_name="input_real", imag_name="input_imag", marker="INPUT")
 
-    for i, stage in enumerate(stages):
+    if fusion is not None:
+        from codegen.fft_task_fusion_codegen import emit_fused_host_launches
+        emit_fused_host_launches(e, nodes=stages, fusion=fusion, buffer_names=buf_name,
+            twiddle_names=twiddle_names, tile_coord_names=tile_coord_names,
+            loop_twiddle_names=loop_twiddle_names,
+            buffer_bindings=boundary.bindings if boundary is not None else None)
+    for i, stage in enumerate(stages if fusion is None else ()):
         in_r, in_i = buf_name(i - 1, "real"), buf_name(i - 1, "imag")
         out_r, out_i = buf_name(i, "real"), buf_name(i, "imag")
 

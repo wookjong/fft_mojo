@@ -74,7 +74,8 @@ from planning.execution.fft_plan_lanes import (
 )
 
 
-def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
+def _mapping_base_expr(mapping: AddressMapping, kernel_length: int,
+                       row_index: str = "global_uthread_id()") -> str:
     """`global_uthread_id() * row_stride [+ base]` -- the one runtime
     multiply a CONTIGUOUS/STRIDED AddressMapping ever costs. `elem*elem_stride`
     is folded into each load/store's own offset at plan time (see
@@ -104,35 +105,87 @@ def _mapping_base_expr(mapping: AddressMapping, kernel_length: int) -> str:
     PEELED, since this is a transpose to the *other* side's benefit, not
     a within-side digit rotation.
     """
+    if mapping.kind == AddressMappingKind.BATCHED_STRIDED:
+        expr = (f"({row_index} // {mapping.batch_rows}) * {mapping.batch_stride} + "
+                f"({row_index} % {mapping.batch_rows}) * {mapping.row_stride}")
+        return expr + (f" + {mapping.base}" if mapping.base else "")
     if mapping.kind == AddressMappingKind.PEELED:
         a = mapping.peel_a
         k_next = mapping.peel_k_next
         tail = mapping.peel_tail_size
         return (
-            f"(((global_uthread_id() // {a}) % {tail}) * {a * kernel_length * k_next}) + "
-            f"((global_uthread_id() % {a}) * {k_next}) + "
-            f"((global_uthread_id() // {a}) // {tail})"
+            f"((({row_index} // {a}) % {tail}) * {a * kernel_length * k_next}) + "
+            f"(({row_index} % {a}) * {k_next}) + "
+            f"(({row_index} // {a}) // {tail})"
         )
     if mapping.kind == AddressMappingKind.CROSSED:
         batch_count = mapping.peel_a
         side_length = mapping.row_stride
         return (
-            f"(global_uthread_id() % {batch_count}) * {side_length} + "
-            f"(global_uthread_id() // {batch_count})"
+            f"({row_index} % {batch_count}) * {side_length} + "
+            f"({row_index} // {batch_count})"
         )
-    expr = f"global_uthread_id() * {mapping.row_stride}"
+    expr = f"{row_index} * {mapping.row_stride}"
     if mapping.base:
         expr += f" + {mapping.base}"
     return expr
 
 
 def _buffer_ref(plan: FFTCodegenPlan, name: str, storage: str) -> str:
+    if storage == "scratchpad" and plan.phase_scratch_ref:
+        return plan.phase_scratch_ref
+    if storage == "workspace" and plan.leaf_storage is not None:
+        # Leaf-resident SPAD: the named CXL pointer field never exists for
+        # this buffer (see LeafResidentSpadPlan) -- every access goes
+        # through the owning task's own shared arena instead.
+        return plan.leaf_storage.arena_ref
     return f"p.{name}" if storage == "workspace" else _spad(plan.kernel_name, name)
 
 
 def _buffer_load(plan: FFTCodegenPlan, name: str, storage: str, width: int) -> str:
     ref = _buffer_ref(plan, name, storage)
-    return f"{ref}.load[width={width}]" if storage == "workspace" else f"{ref}.load[DType.float32, {width}]"
+    cxl_pointer = storage == "workspace" and plan.leaf_storage is None
+    return f"{ref}.load[width={width}]" if cxl_pointer else f"{ref}.load[DType.float32, {width}]"
+
+
+def _buffer_index(plan, storage, offset, *, name=None, imag=False):
+    if storage == "workspace" and plan.leaf_storage is not None:
+        # spad_base is this leaf's own resident-slot base (see
+        # fft_distributed_codegen.emit_distributed_stage); bank_offset
+        # separates this named buffer's own disjoint region within it.
+        base = f"{plan.leaf_storage.bank_offset(name)} + spad_base"
+    else:
+        local = storage == "scratchpad" and plan.distributed is not None
+        base = "local_base" if local else "spad_base"
+    stride = (plan.scratchpad_uthread_stride // 2
+              if storage == "scratchpad" and plan.distributed is not None and (plan.leaf_storage is None or plan.phase_scratch_ref)
+              else plan.length)
+    return f"{base} + {stride} + {offset}" if imag else f"{base} + {offset}"
+
+
+def _emit_boundary_product(e, *, plan, index, real, imag, offsets, stride):
+    """LUT coordinates are local logical indices, never global/batch addresses.
+
+    Offsets are exact lowered access offsets, without row base. A nonunit
+    stride is a proved factor of each logical lane offset (power-of-two).
+    """
+    placement,a,b = plan.boundary_twiddle
+    lut_indices = []
+    for offset in offsets:
+        if offset is None:
+            lut_indices.append(None)
+        elif placement == 'store':
+            lut_indices.append(f'(fft_index % {a}) * {b} + ({offset}) // {stride}')
+        else:
+            lut_indices.append(f'({offset}) // {stride} * {b} + fft_index % {b}')
+    for part in ('real','imag'):
+        vals = [('Float32(1)' if part == 'real' else 'Float32(0)') if off is None else
+                f'p.boundary_twiddle_{part}_base.load[width=1]({off})[0]' for off in lut_indices]
+        e.add(f'        var bt_{part}{index} = SIMD[DType.float32, {len(vals)}](' + ', '.join(vals) + ')')
+    e.add(f'        var bt_r{index} = {real} * bt_real{index} - {imag} * bt_imag{index}')
+    e.add(f'        var bt_i{index} = {real} * bt_imag{index} + {imag} * bt_real{index}')
+    e.add(f'        {real} = bt_r{index}')
+    e.add(f'        {imag} = bt_i{index}')
 
 
 def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan, width: int) -> None:
@@ -160,11 +213,11 @@ def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan, width: int) 
             buf_load = _buffer_load(plan, load.buffer_name, load.source, width)
             e.add(
                 f"        var rr{j} = {buf_load}("
-                f"spad_base + {load.base_offset})"
+                f"{_buffer_index(plan, load.source, load.base_offset, name=load.buffer_name)})"
             )
             e.add(
                 f"        var ii{j} = {buf_load}("
-                f"spad_base + {plan.length} + {load.base_offset})"
+                f"{_buffer_index(plan, load.source, load.base_offset, name=load.buffer_name, imag=True)})"
             )
         return
 
@@ -192,11 +245,11 @@ def _emit_load(e: Emitter, *, plan: FFTCodegenPlan, load: LoadPlan, width: int) 
             buf_load = _buffer_load(plan, load.buffer_name, load.source, 1)
             e.add(
                 f"        var {rr_scalar} = {buf_load}("
-                f"spad_base + {offset})"
+                f"{_buffer_index(plan, load.source, offset, name=load.buffer_name)})"
             )
             e.add(
                 f"        var {ii_scalar} = {buf_load}("
-                f"spad_base + {plan.length} + {offset})"
+                f"{_buffer_index(plan, load.source, offset, name=load.buffer_name, imag=True)})"
             )
         rr_lanes.append(f"{rr_scalar}[0]")
         ii_lanes.append(f"{ii_scalar}[0]")
@@ -352,10 +405,10 @@ def _emit_store(
             assert store.buffer_name is not None
             buf = _buffer_ref(plan, store.buffer_name, store.destination)
             e.add(
-                f"        {buf}.store(spad_base + {store.base_offset}, or{output})"
+                f"        {buf}.store({_buffer_index(plan, store.destination, store.base_offset, name=store.buffer_name)}, or{output})"
             )
             e.add(
-                f"        {buf}.store(spad_base + {plan.length} + {store.base_offset}, oi{output})"
+                f"        {buf}.store({_buffer_index(plan, store.destination, store.base_offset, name=store.buffer_name, imag=True)}, oi{output})"
             )
         return
 
@@ -373,10 +426,10 @@ def _emit_store(
             assert store.buffer_name is not None
             buf = _buffer_ref(plan, store.buffer_name, store.destination)
             e.add(
-                f"        {buf}.store(spad_base + {offset}, or{output}[{lane}])"
+                f"        {buf}.store({_buffer_index(plan, store.destination, offset, name=store.buffer_name)}, or{output}[{lane}])"
             )
             e.add(
-                f"        {buf}.store(spad_base + {plan.length} + {offset}, oi{output}[{lane}])"
+                f"        {buf}.store({_buffer_index(plan, store.destination, offset, name=store.buffer_name, imag=True)}, oi{output}[{lane}])"
             )
 
 
@@ -395,6 +448,11 @@ def _emit_output(
     if output_plan.large_twiddle:
         _emit_large_twiddle(e, output=k, store=output_plan.store, width=width)
 
+    if plan.boundary_twiddle and plan.boundary_twiddle[0] == 'store' and output_plan.store.destination == 'output':
+        store = output_plan.store
+        offsets = ([store.base_offset+i for i in range(width)] if store.mode == 'vector' else store.lane_offsets)
+        _emit_boundary_product(e, plan=plan, index=k, real=f'or{k}', imag=f'oi{k}',
+            offsets=offsets, stride=plan.output_mapping.elem_stride)
     _emit_store(e, plan=plan, output=k, store=output_plan.store)
     e.add()
 
@@ -417,11 +475,11 @@ def _emit_load_loop(
         buf_load = _buffer_load(plan, load.buffer_name, load.source, width)
         e.add(
             f"        var rr{j} = {buf_load}("
-            f"spad_base + {offset_expr})"
+            f"{_buffer_index(plan, load.source, offset_expr, name=load.buffer_name)})"
         )
         e.add(
             f"        var ii{j} = {buf_load}("
-            f"spad_base + {plan.length} + {offset_expr})"
+            f"{_buffer_index(plan, load.source, offset_expr, name=load.buffer_name, imag=True)})"
         )
 
 
@@ -470,6 +528,13 @@ def _emit_store_loop(
     residue: int | str, chunk_offset: int, width: int,
 ) -> None:
     k = output
+    if plan.boundary_twiddle and plan.boundary_twiddle[0] == 'store' and store.destination == 'output':
+        if store.mode == 'vector':
+            offsets = [f'({_residue_base(store.bases,residue,chunk_offset+i)} + outer_it * {store.stride})' for i in range(width)]
+        else:
+            offsets = [f'({_residue_base(store.lane_bases[chunk_offset+i],residue)} + outer_it * {store.lane_stride[chunk_offset+i]})' for i in range(width)]
+        _emit_boundary_product(e, plan=plan, index=k, real=f'or{k}', imag=f'oi{k}',
+            offsets=offsets, stride=plan.output_mapping.elem_stride)
     if store.mode == "vector":
         assert store.bases is not None and store.stride is not None
         base = _residue_base(store.bases,residue,chunk_offset)
@@ -480,8 +545,8 @@ def _emit_store_loop(
         else:
             assert store.buffer_name is not None
             buf = _buffer_ref(plan, store.buffer_name, store.destination)
-            e.add(f"        {buf}.store(spad_base + {offset_expr}, or{k})")
-            e.add(f"        {buf}.store(spad_base + {plan.length} + {offset_expr}, oi{k})")
+            e.add(f"        {buf}.store({_buffer_index(plan, store.destination, offset_expr, name=store.buffer_name)}, or{k})")
+            e.add(f"        {buf}.store({_buffer_index(plan, store.destination, offset_expr, name=store.buffer_name, imag=True)}, oi{k})")
         return
 
     assert store.lane_bases is not None and store.lane_stride is not None
@@ -513,8 +578,8 @@ def _emit_store_loop(
         else:
             assert store.buffer_name is not None
             buf = _buffer_ref(plan, store.buffer_name, store.destination)
-            e.add(f"        {buf}.store(spad_base + {offset_expr}, or{k})")
-            e.add(f"        {buf}.store(spad_base + {plan.length} + {offset_expr}, oi{k})")
+            e.add(f"        {buf}.store({_buffer_index(plan, store.destination, offset_expr, name=store.buffer_name)}, or{k})")
+            e.add(f"        {buf}.store({_buffer_index(plan, store.destination, offset_expr, name=store.buffer_name, imag=True)}, oi{k})")
         return
 
     for lane in range(width):
@@ -527,13 +592,15 @@ def _emit_store_loop(
         else:
             assert store.buffer_name is not None
             buf = _buffer_ref(plan, store.buffer_name, store.destination)
-            e.add(f"        {buf}.store(spad_base + {offset_expr}, or{k}[{lane}])")
-            e.add(f"        {buf}.store(spad_base + {plan.length} + {offset_expr}, oi{k}[{lane}])")
+            e.add(f"        {buf}.store({_buffer_index(plan, store.destination, offset_expr, name=store.buffer_name)}, or{k}[{lane}])")
+            e.add(f"        {buf}.store({_buffer_index(plan, store.destination, offset_expr, name=store.buffer_name, imag=True)}, oi{k}[{lane}])")
 
 
 def _emit_loop_chunk(
     e: Emitter, *, plan: FFTCodegenPlan, stage: FFTStagePlan, loop_plan: _LoopStagePlan,
     residue: int | str, chunk_offset: int, width: int,
+    load_values: dict[int, tuple[str,str]] | None = None,
+    store_values: dict[int, tuple[str,str]] | None = None,
 ) -> None:
     e.add(
         f"        # ===== stage {stage.stage_id}, loop residue {residue} chunk offset "
@@ -542,7 +609,16 @@ def _emit_loop_chunk(
     for load in loop_plan.loads:
         base = _residue_base(load.bases,residue,chunk_offset)
         offset_expr = f"({base} + outer_it * {load.stride})"
-        _emit_load_loop(e, plan=plan, load=load, offset_expr=offset_expr, width=width)
+        if load_values is not None and load.operand in load_values:
+            real,imag=load_values[load.operand]
+            e.add(f'        var rr{load.operand} = {real}')
+            e.add(f'        var ii{load.operand} = {imag}')
+        else:
+            _emit_load_loop(e, plan=plan, load=load, offset_expr=offset_expr, width=width)
+        if plan.boundary_twiddle and plan.boundary_twiddle[0] == 'load' and load.source == 'input':
+            _emit_boundary_product(e, plan=plan, index=load.operand, real=f'rr{load.operand}',
+                imag=f'ii{load.operand}', offsets=[f'({offset_expr}+{i})' for i in range(width)],
+                stride=plan.input_mapping.elem_stride)
     e.add()
 
     stores_by_k = {s.output: s for s in loop_plan.stores}
@@ -561,10 +637,15 @@ def _emit_loop_chunk(
             e.add(f"        or{k} *= {_f32(scale)}")
             e.add(f"        oi{k} *= {_f32(scale)}")
 
-        _emit_store_loop(
-            e, plan=plan, output=k, store=stores_by_k[k],
-            residue=residue, chunk_offset=chunk_offset, width=width,
-        )
+        if store_values is not None and k in store_values:
+            real,imag=store_values[k]
+            e.add(f'        {real} = or{k}')
+            e.add(f'        {imag} = oi{k}')
+        else:
+            _emit_store_loop(
+                e, plan=plan, output=k, store=stores_by_k[k],
+                residue=residue, chunk_offset=chunk_offset, width=width,
+            )
         e.add()
 
     emit_butterfly(e, indent="        ", radix=stage.radix, inverse=stage.inverse, on_output=on_output)
@@ -653,6 +734,12 @@ def _emit_batch(
 
     for load in batch.loads:
         _emit_load(e, plan=plan, load=load, width=width)
+        if plan.boundary_twiddle and plan.boundary_twiddle[0] == 'load' and load.source == 'input':
+            offsets = ([load.base_offset+i for i in range(width)] if load.mode == 'vector'
+                       else load.packed_lane_offsets)
+            _emit_boundary_product(e, plan=plan, index=load.operand,
+                real=f'rr{load.operand}', imag=f'ii{load.operand}', offsets=offsets,
+                stride=plan.input_mapping.elem_stride)
     e.add()
 
     outputs_by_k = {output_plan.output: output_plan for output_plan in batch.outputs}
@@ -883,6 +970,9 @@ def _emit_params_struct(
     if plan.large_twiddle is not None:
         e.add("    var large_twiddle_real_base: UnsafePointer[Float32, MutAnyOrigin]")
         e.add("    var large_twiddle_imag_base: UnsafePointer[Float32, MutAnyOrigin]")
+    if plan.boundary_twiddle:
+        e.add("    var boundary_twiddle_real_base: UnsafePointer[Float32, MutAnyOrigin]")
+        e.add("    var boundary_twiddle_imag_base: UnsafePointer[Float32, MutAnyOrigin]")
     if add_loop_twiddle:
         # Shared per-kernel table pooling every looped stage's twiddle rows
         # (see the runtime-loop stage rendering note above _try_build_loop_stage)
@@ -894,6 +984,12 @@ def _emit_params_struct(
     if plan.launch_mapping is not None and plan.launch_mapping.uses_bounds_params:
         e.add("    var launch_fft_base: Int")
         e.add("    var launch_fft_count: Int")
+    if plan.leaf_storage is None:
+        # A leaf-resident buffer (LeafResidentSpadPlan) never gets a CXL
+        # pointer field: every access goes through the owning task's own
+        # shared arena instead (see fft_codegen._buffer_ref).
+        for buffer in plan.workspace_buffers:
+            e.add(f"    var {buffer.name}: UnsafePointer[Float32, MutAnyOrigin]")
     e.add()
     e.add()
 

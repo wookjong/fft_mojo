@@ -563,8 +563,18 @@ def _build_physical_transpose(
     scratchpad_elements = 2 * tile_rows * tile_cols
     tiles_per_replica = grid_rows * grid_cols
 
+    # RV64 task ABI: Params are 8-byte fields in the same reservation as
+    # tile_buf. Include optional lookup pointers and an additional 8-byte
+    # alignment/runtime margin. Conservatively reserve round_offset even when
+    # this particular launch ultimately fits in one round.
+    parameter_fields = (4 + 2 * (twiddle_modulus is not None)
+                        + (replica_count > 1 and not _is_pow2(tiles_per_replica))
+                        + (grid_cols > 1 and not _is_pow2(grid_cols)) + 1)
+    overhead_bytes = 8 * (parameter_fields + 1)
+    tile_capacity = (None if spad_capacity_bytes is None
+                     else spad_capacity_bytes - overhead_bytes)
     max_uthread = _cap_max_uthread(
-        total_uthreads, scratchpad_elements * 4, spad_capacity_bytes,
+        total_uthreads, scratchpad_elements * 4, tile_capacity,
         context=f"a single {tile_rows}x{tile_cols} transpose tile",
         max_concurrent_scratchpad_bytes=max_concurrent_scratchpad_bytes,
     )

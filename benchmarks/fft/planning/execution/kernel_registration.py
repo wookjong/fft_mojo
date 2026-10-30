@@ -12,8 +12,13 @@ class KernelRegistrationError(ValueError):
 
 
 def registered_kernel_names(plan, *, loop_stages=False,
-                            min_loop_batches=LOOP_MIN_FULL_BATCHES):
+                            min_loop_batches=LOOP_MIN_FULL_BATCHES,
+                            compute_lanes=None, narrow_middle_stages=False):
     names = []
+    if plan.distributed is not None:
+        from planning.execution.distributed_phases import resolve_distributed_phases
+        return tuple(p.name for p in resolve_distributed_phases(plan,
+                     compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages))
     if plan.persistent is not None:
         if plan.persistent.storage_mode == "global":
             return (*(f"stage_{s.stage_id}" for s in plan.stages), "writeback")
@@ -40,9 +45,11 @@ def registered_kernel_names(plan, *, loop_stages=False,
 
 
 def validate_kernel_registration(plan, *, max_kernel_register=DEFAULT_TARGET_PROFILE.max_kernel_register,
-                                 loop_stages=False, min_loop_batches=LOOP_MIN_FULL_BATCHES):
+                                 loop_stages=False, min_loop_batches=LOOP_MIN_FULL_BATCHES,
+                                 compute_lanes=None, narrow_middle_stages=False):
     names = registered_kernel_names(plan, loop_stages=loop_stages,
-                                    min_loop_batches=min_loop_batches)
+                                    min_loop_batches=min_loop_batches, compute_lanes=compute_lanes,
+                                    narrow_middle_stages=narrow_middle_stages)
     if len(names) > max_kernel_register:
         raise KernelRegistrationError(
             f"{plan.kernel_name} needs {len(names)} distinct registered kernel functions "
@@ -53,7 +60,8 @@ def validate_kernel_registration(plan, *, max_kernel_register=DEFAULT_TARGET_PRO
 
 
 def validate_recursive_kernel_registration(plan, *, target=DEFAULT_TARGET_PROFILE,
-                                           loop_stages=True):
+                                           loop_stages=True, compute_lanes=None,
+                                           narrow_middle_stages=False):
     from planning.strategies.fft_plan_recursive import flatten_recursive_node, PhysicalTransposePlan
     hybrid = getattr(plan.root, "tail_hybrid", None)
     for node in flatten_recursive_node(plan.root):
@@ -62,4 +70,6 @@ def validate_recursive_kernel_registration(plan, *, target=DEFAULT_TARGET_PROFIL
                 raise KernelRegistrationError(f"{node.kernel_name} needs one registered transpose function")
             continue
         validate_kernel_registration(node, max_kernel_register=target.max_kernel_register,
-                                     loop_stages=(False if hybrid is not None else loop_stages))
+                                     loop_stages=(False if hybrid is not None else loop_stages),
+                                     compute_lanes=compute_lanes,
+                                     narrow_middle_stages=narrow_middle_stages)

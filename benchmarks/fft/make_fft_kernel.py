@@ -55,6 +55,7 @@ from planning.search.fft_plan_search import (
 )
 from planning.core.target_profile import DEFAULT_TARGET_PROFILE, TargetProfile
 from planning.execution.launch_support import validate_fft_launch_granule
+from planning.execution.fft_unit_parallel import GPU_EXECUTION_MODES, apply_gpu_execution
 
 
 def _no_tail_tile_suggestions(plan: RecursiveFFTPlan) -> str:
@@ -108,6 +109,9 @@ GPU_BASELINE_PLANNERS = (
     "gpu-rocfft-tuned",
     "gpu-rocfft-default",
     "gpu-vkfft",
+    "gpu-clfft-m2ndp",
+    "gpu-rocfft-default-m2ndp",
+    "gpu-vkfft-m2ndp",
 )
 
 
@@ -121,10 +125,35 @@ class GPUBaselineUnsupportedError(RuntimeError):
     swallowed into a fallback plan."""
 
 
+def _plan_gpu_baseline_fft(n, *, planner, inverse, batch, target,
+                           gpu_execution="worker-wave", split_leaf_byte_budget=4096,
+                           units_per_leaf=None, fuse_stages=1, fusion_max_elements=256):
+    from planning.gpu_baseline import clfft, rocfft, rocfft_default, vkfft
+    from planning.gpu_baseline.common import BaselineStatus
+    module = {"gpu-clfft": clfft, "gpu-rocfft": rocfft, "gpu-rocfft-tuned": rocfft,
+              "gpu-rocfft-default": rocfft_default, "gpu-vkfft": vkfft}[planner.removesuffix("-m2ndp")]
+    entry = module.plan_m2ndp if planner.endswith("-m2ndp") else module.plan
+    result = entry(n, batch=batch, inverse=inverse, target=target)
+    if result.status is not BaselineStatus.OK:
+        raise GPUBaselineUnsupportedError(
+            f"planner={planner!r} cannot represent n={n} (batch={batch}, inverse={inverse}):\n{result.diagnostics}")
+    return apply_gpu_execution(result.plan, mode=gpu_execution, leaf_planner=entry,
+                               leaf_byte_budget=split_leaf_byte_budget, target=target,
+                               units_per_leaf=units_per_leaf, fuse_stages=fuse_stages,
+                               fusion_max_elements=fusion_max_elements)
+
+
 def _make_gpu_baseline_fft_kernel(
     n: int, *, planner: str, inverse: bool, batch: int, target: TargetProfile,
     output_path: str | Path | None, reference_check: bool, compute_lanes: int | None,
     narrow_middle_stages: bool, simd_lanes: int, spread_across_units: bool,
+    gpu_execution: str = "worker-wave", split_leaf_byte_budget: int = 4096,
+    units_per_leaf: int | str | None = None, fuse_stages: int = 1,
+    fusion_max_elements: int = 256,
+    task_fusion: str = "off", leaf_storage: str = "cxl", batch_window: str | int = "off",
+    boundary_fusion: str = "off",
+    boundary_layout: str = "legacy", near_group: int = 1, far_group: int = 1,
+    leaf_phase_policy: str = "stages", leaf_codegen_schedule: str = "existing", spad_allocation: str = "declared", far12_codelet: str = "off",
 ) -> Path:
     """`make_fft_kernel`'s own GPU-baseline path -- see that function's
     `planner` docstring. Builds the baseline plan via planning.
@@ -134,35 +163,26 @@ def _make_gpu_baseline_fft_kernel(
     planning still decides everything (this project's pre-existing
     invariant, unchanged); codegen only ever emits an already-fully-
     decided plan, GPU baseline or not."""
-    from planning.gpu_baseline import clfft, rocfft, rocfft_default, vkfft
-    from planning.gpu_baseline.common import BaselineStatus
-
-    baseline_module = {
-        "gpu-clfft": clfft,
-        "gpu-rocfft": rocfft,
-        "gpu-rocfft-tuned": rocfft,
-        "gpu-rocfft-default": rocfft_default,
-        "gpu-vkfft": vkfft,
-    }[planner]
-    result = baseline_module.plan(n, batch=batch, inverse=inverse, target=target)
-    if result.status is not BaselineStatus.OK:
-        raise GPUBaselineUnsupportedError(
-            f"planner={planner!r} cannot represent n={n} (batch={batch}, "
-            f"inverse={inverse}) on this M2NDP target:\n{result.diagnostics}"
-        )
+    plan = _plan_gpu_baseline_fft(n, planner=planner, inverse=inverse, batch=batch, target=target,
+                                 gpu_execution=gpu_execution, split_leaf_byte_budget=split_leaf_byte_budget,
+                                 units_per_leaf=units_per_leaf, fuse_stages=fuse_stages,
+                                 fusion_max_elements=fusion_max_elements)
 
     if compute_lanes is None:
         compute_lanes = min(simd_lanes, target.lmul1_float32_lanes)
 
     source = generate_recursive_fft_kernels(
-        result.plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
+        plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         reference_check=reference_check, target=target, spread_across_units=spread_across_units,
+        task_fusion=task_fusion, leaf_storage=leaf_storage, batch_window=batch_window,
+        boundary_fusion=boundary_fusion,boundary_layout=boundary_layout,near_group=near_group,far_group=far_group,leaf_phase_policy=leaf_phase_policy,leaf_codegen_schedule=leaf_codegen_schedule,spad_allocation=spad_allocation,far12_codelet=far12_codelet,
     )
 
     if output_path is None:
         suffix = "_inverse" if inverse else ""
         planner_suffix = planner.replace("gpu-", "_")
-        output_path = Path(__file__).resolve().parent / f"fft_fp32_N{n}{suffix}{planner_suffix}_generated.mojo"
+        execution_suffix = "" if gpu_execution == "worker-wave" else "_" + gpu_execution.replace("-", "_")
+        output_path = Path(__file__).resolve().parent / f"fft_fp32_N{n}{suffix}{planner_suffix}{execution_suffix}_generated.mojo"
     else:
         output_path = Path(output_path)
 
@@ -193,6 +213,17 @@ def make_fft_kernel(
     mojo_root: str | None = None,
     m2ndp_root: str | None = None,
     planner: str = "current",
+    gpu_execution: str = "worker-wave",
+    split_leaf_byte_budget: int = 4096,
+    units_per_leaf: int | str | None = None,
+    fuse_stages: int = 1,
+    fusion_max_elements: int = 256,
+    task_fusion: str = "off",
+    leaf_storage: str = "cxl",
+    batch_window: str | int = "off",
+    boundary_fusion: str = "off",
+    boundary_layout: str = "legacy", near_group: int = 1, far_group: int = 1,
+    leaf_phase_policy: str = "stages", leaf_codegen_schedule: str = "existing", spad_allocation: str = "declared", far12_codelet: str = "off",
 ) -> Path:
     """Plan and render a length-`n` FFT kernel, write it to `output_path`
     (default: `fft_fp32_N{n}{_inverse}_generated.mojo` next to this file),
@@ -421,6 +452,19 @@ def make_fft_kernel(
     than silently falling back to `"current"`.
     """
     validate_fft_launch_granule(simd_lanes, spread_across_units=spread_across_units)
+    if gpu_execution not in GPU_EXECUTION_MODES:
+        raise ValueError(f"unknown gpu_execution {gpu_execution!r}")
+    if planner not in GPU_BASELINE_PLANNERS and gpu_execution != "worker-wave":
+        raise ValueError("gpu_execution alternatives require a GPU planner")
+    if gpu_execution != "distributed" and (units_per_leaf is not None or fuse_stages != 1
+                                            or fusion_max_elements != 256):
+        raise ValueError("unit and fusion options require distributed execution")
+    if (far12_codelet != 'off' or spad_allocation != 'declared' or leaf_phase_policy != 'stages' or leaf_codegen_schedule != 'existing') and planner != 'gpu-vkfft-m2ndp':
+        raise ValueError('leaf phase/schedule requires gpu-vkfft-m2ndp')
+    if boundary_layout == 'grouped' and planner != 'gpu-vkfft-m2ndp':
+        raise ValueError('grouped ownership requires gpu-vkfft-m2ndp')
+    if boundary_fusion != 'off' and planner != 'gpu-vkfft-m2ndp':
+        raise ValueError('POST boundary fusion is initially supported only for gpu-vkfft-m2ndp')
     if planner in GPU_BASELINE_PLANNERS:
         conflicting = {
             "scratchpad_byte_budget": scratchpad_byte_budget,
@@ -440,6 +484,11 @@ def make_fft_kernel(
             output_path=output_path, reference_check=reference_check,
             compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
             simd_lanes=simd_lanes, spread_across_units=spread_across_units,
+            gpu_execution=gpu_execution, split_leaf_byte_budget=split_leaf_byte_budget,
+            units_per_leaf=units_per_leaf, fuse_stages=fuse_stages,
+            fusion_max_elements=fusion_max_elements,
+            task_fusion=task_fusion, leaf_storage=leaf_storage, batch_window=batch_window,
+            boundary_fusion=boundary_fusion,boundary_layout=boundary_layout,near_group=near_group,far_group=far_group,leaf_phase_policy=leaf_phase_policy,leaf_codegen_schedule=leaf_codegen_schedule,spad_allocation=spad_allocation,far12_codelet=far12_codelet,
         )
 
     if n < 2:
@@ -542,6 +591,7 @@ def make_fft_kernel(
     source = generate_recursive_fft_kernels(
         plan, compute_lanes=compute_lanes, narrow_middle_stages=narrow_middle_stages,
         reference_check=reference_check, target=target, spread_across_units=spread_across_units,
+        task_fusion=task_fusion, leaf_storage=leaf_storage, batch_window=batch_window,
     )
 
     if output_path is None:
@@ -592,6 +642,18 @@ def _ad_hoc_candidate(n: int, inverse: bool, plan: RecursiveFFTPlan) -> FFTPlanC
     )
 
 
+def _parse_leaf_units(value):
+    if value == "auto":
+        return value
+    try:
+        units = int(value)
+    except (ValueError, TypeError):
+        raise argparse.ArgumentTypeError("units per leaf must be a positive integer or auto") from None
+    if units < 1:
+        raise argparse.ArgumentTypeError("units per leaf must be positive")
+    return units
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate a working M2NDP FFT Mojo kernel for length N."
@@ -607,6 +669,27 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "if the requested baseline cannot represent this N on this target at all.",
     )
     parser.add_argument("--inverse", action="store_true", help="generate the inverse FFT")
+    parser.add_argument("--gpu-execution", choices=GPU_EXECUTION_MODES, default="worker-wave",
+                        help="GPU leaf execution: existing worker waves, cross-unit CXL stages, or smaller GPU-planned leaves")
+    parser.add_argument("--split-leaf-byte-budget", type=int, default=4096,
+                        help="leaf budget for --gpu-execution split-leaves (changes GPU decomposition)")
+    parser.add_argument("--units-per-leaf", type=_parse_leaf_units, default=None,
+                        help="distributed only: units per FFT leaf, or auto (throughput heuristic); default: all physical units")
+    parser.add_argument("--fuse-stages", type=int, choices=(1, 2), default=1,
+                        help="distributed only: fuse up to two stages when dependencies fit one worker's private scratchpad")
+    parser.add_argument("--task-fusion", choices=("off", "auto"), default="off",
+                        help="group supported recursive distributed phases into resource-checked host tasks; default off")
+    parser.add_argument("--fusion-max-elements", type=int, default=256,
+                        help="maximum complex elements in one local fusion component (default: 256)")
+    parser.add_argument("--batch-window", default="off", help="task-fusion batch window: off, auto, or positive integer")
+    parser.add_argument('--boundary-fusion', choices=('off', 'pre', 'middle', 'post', 'pre-middle', 'pre-post', 'middle-post', 'all', 'middle-load', 'pre-middle-load', 'middle-post-load', 'all-load'), default='off',
+                        help='absorb the root POST into the far final store; requires VkFFT-derived distributed task fusion')
+    parser.add_argument("--leaf-storage", choices=("cxl", "spad", "auto"), default="cxl",
+                        help="task-fusion only (requires --task-fusion auto): place a leaf's own "
+                        "intermediate ping-pong bank in the fused task's shared scratchpad arena "
+                        "instead of CXL. 'spad' requires units_per_leaf=1 for every leaf and rejects "
+                        "with a reason otherwise; 'auto' keeps CXL wherever that does not hold; "
+                        "default: cxl (today's unchanged placement)")
     parser.add_argument(
         "--scratchpad-byte-budget", type=int, default=None,
         help="bytes of one NDP unit's own scratchpad one leaf kernel may use "
@@ -706,7 +789,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "reference_check docstring; O(N^2) dominates wall-clock well before N "
         "reaches the range plan comparison needs)",
     )
+    parser.add_argument('--middle-placement', choices=('store','load'), default=None,
+                        help='explicit MIDDLE placement; normalized into the boundary mode')
+    parser.add_argument('--spad-allocation',choices=('declared','live-banks','phase-packed'),default='declared')
+    parser.add_argument('--far12-codelet',choices=('off','peel','forward1','loop-forward1','loop-forward-packed','native4-control','native4-forward','native4-static-control','native4-static-forward','native4-compact-control','native4-compact-forward','native4-latch-forward'),default='off')
+    parser.add_argument('--leaf-phase-policy',choices=('stages','far12-private'),default='stages')
+    parser.add_argument('--leaf-codegen-schedule',choices=('existing','far0-short-live'),default='existing')
+    parser.add_argument('--boundary-layout',choices=('legacy','grouped'),default='legacy')
+    parser.add_argument('--near-group',type=int,choices=(1,4),default=1)
+    parser.add_argument('--far-group',type=int,choices=(1,2,4),default=1)
     args = parser.parse_args(argv)
+    from planning.execution.fft_boundary_fusion import normalize_boundary_mode
+    try:
+        args.boundary_fusion = normalize_boundary_mode(args.boundary_fusion, args.middle_placement)
+    except ValueError as error:
+        parser.error(str(error))
     try:
         validate_fft_launch_granule(args.simd_lanes, spread_across_units=not args.no_spread_across_units)
     except ValueError as exc:
@@ -716,6 +813,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
+    if args.dump_candidates and args.planner in GPU_BASELINE_PLANNERS:
+        raise ValueError("--dump-candidates requires the current planner; use --dump-plan for a GPU execution mode")
+    if args.dump_plan and args.planner in GPU_BASELINE_PLANNERS:
+        import json
+        plan = _plan_gpu_baseline_fft(args.n, planner=args.planner, inverse=args.inverse,
+                    batch=args.batch, target=DEFAULT_TARGET_PROFILE,
+                    gpu_execution=args.gpu_execution, split_leaf_byte_budget=args.split_leaf_byte_budget,
+                    units_per_leaf=args.units_per_leaf, fuse_stages=args.fuse_stages,
+                    fusion_max_elements=args.fusion_max_elements)
+        print(json.dumps(dataclasses.asdict(plan), indent=2, default=str))
+        return
+    if args.gpu_execution != "worker-wave" and args.planner == "current":
+        raise ValueError("--gpu-execution alternatives require a GPU planner")
     cooperative_workers: int | str | None = args.cooperative_workers
     if cooperative_workers is not None and cooperative_workers != "auto":
         cooperative_workers = int(cooperative_workers)
@@ -779,6 +889,16 @@ def main() -> None:
         rank_by_cycles=args.rank_by_cycles,
         spread_across_units=not args.no_spread_across_units,
         planner=args.planner,
+        gpu_execution=args.gpu_execution,
+        split_leaf_byte_budget=args.split_leaf_byte_budget,
+        units_per_leaf=args.units_per_leaf,
+        fuse_stages=args.fuse_stages,
+        fusion_max_elements=args.fusion_max_elements,
+        task_fusion=args.task_fusion,
+        leaf_storage=args.leaf_storage,
+        batch_window=args.batch_window,
+        boundary_fusion=args.boundary_fusion,boundary_layout=args.boundary_layout,
+        near_group=args.near_group,far_group=args.far_group,leaf_phase_policy=args.leaf_phase_policy,leaf_codegen_schedule=args.leaf_codegen_schedule,spad_allocation=args.spad_allocation,far12_codelet=args.far12_codelet,
     )
     print(f"generated: {path}")
 

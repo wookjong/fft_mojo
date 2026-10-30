@@ -429,6 +429,20 @@ def _round_tracker_name(plan: FFTCodegenPlan) -> str:
     return _spad(plan.kernel_name, "round_tracker")
 
 
+def emit_tracker_initialization(e: Emitter, *, plan: FFTCodegenPlan, mode: ExecutionMode) -> None:
+    """Controller initializes every unit before dispatch, without a kernel slot."""
+    pw = plan.persistent
+    trackers = ["round_tracker"]
+    if mode == "wave" and _worker_waves(pw.workers_per_fft, pw.workers_per_group) > 1:
+        trackers.append("wave_tracker")
+    e.add(f"        for tracker_group in range({pw.software_group_count}):")
+    for tracker in trackers:
+        e.add(f"            var {tracker}_ptr = spad_addr({plan.kernel_name}.{tracker}, tracker_group)")
+    e.add(f"            for tracker_worker in range({pw.workers_per_group}):")
+    for tracker in trackers:
+        e.add(f"                {tracker}_ptr.store(tracker_worker, Float32(0))")
+
+
 def _emit_dispatch_prelude(
     e: Emitter, *, plan: FFTCodegenPlan, workers_per_group: int,
     software_group_count: int, num_logical_blocks: int, bump_round: bool,
@@ -860,11 +874,8 @@ def emit_persistent_kernel_struct(
             f'    comptime {buffer.name} = scratchpad[{buffer.elements}, Float32, '
             f'name="{plan.kernel_name.lower()}_{buffer.name}"]()'
         )
-    # One instance per physical NDP unit (like buf_a/buf_b), zero-
-    # initialized -- confirmed real-hardware (a from-scratch experiment,
-    # not kept in this repo): every unit's own first read before any
-    # write returns 0, matching every other scratchpad buffer's own
-    # zero-init behavior in this codebase.
+    # Scratchpad is reused by other tasks; initialize private counters on
+    # every task entry rather than relying on simulator startup contents.
     e.add(
         f'    comptime round_tracker = scratchpad[{workers_per_group}, Float32, '
         f'name="{plan.kernel_name.lower()}_round_tracker"]()'
@@ -921,6 +932,7 @@ def emit_persistent_kernel_struct(
 
     e.add("    @staticmethod")
     e.add("    def device_main():")
+    emit_tracker_initialization(e, plan=plan, mode=mode)
     for _ in range(rounds):
         if uses_spad:
             e.add(f"        launch_parallel[{plan.kernel_name}.{preload_name}]()")

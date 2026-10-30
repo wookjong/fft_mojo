@@ -44,11 +44,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codegen.fft_persistent_codegen import (
     emit_bulk_copy_phase,
+    emit_tracker_initialization,
     resolve_persistent_options,
     emit_stage_phase,
     generate_persistent_fft_kernel,
 )
 from planning.core.fft_plan_core import FFTCodegenPlan
+from codegen.common import Emitter
 from planning.execution.fft_plan_persistent import (
     make_persistent_leaf_plan,
     num_rounds,
@@ -87,12 +89,14 @@ def run_persistent_kernel(
         ns = types.SimpleNamespace()
         for buf in plan.scratchpad_buffers:
             setattr(ns, buf.name, Ptr(buf.elements))
-        # One private cell per worker, zero-initialized, on each physical unit.
+        # Poison reused scratchpad: generated initialization must clear it.
         ns.round_tracker = Ptr(workers_per_group)
         # Only referenced by mode="wave"'s own translated source -- see
         # this module's own top docstring for why it's harmless to always
         # allocate regardless of mode.
         ns.wave_tracker = Ptr(workers_per_group)
+        ns.round_tracker.arr[:] = 37
+        ns.wave_tracker.arr[:] = 19
         group_namespaces.append(ns)
 
     p_ns = types.SimpleNamespace(
@@ -183,6 +187,14 @@ def run_persistent_kernel(
         copy_mode=copy_mode, vector_width=vector_width,
     ))
 
+    initialization = Emitter()
+    initialization.add("    def initialize_trackers():")
+    emit_tracker_initialization(initialization, plan=plan, mode=mode)
+    namespace, initialize = compile_phase("initialize_trackers", initialization.lines)
+    namespace[plan.kernel_name] = types.SimpleNamespace(
+        round_tracker="round_tracker", wave_tracker="wave_tracker")
+    namespace["spad_addr"] = lambda handle, group: getattr(group_namespaces[group], handle)
+    initialize()
     for _ in range(rounds):
         if preload_phase is not None:
             run_phase(*preload_phase)

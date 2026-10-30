@@ -36,11 +36,9 @@ DEFAULT_TARGET_PROFILE = TargetProfile(
     # third_party/m2ndp-detour/config/performance/M2NDP/m2ndp.config and
     # `spad (rw) : ORIGIN = 0, LENGTH = 128K` in scripts/m2ndp.lds (both
     # 131072). A margin below the real 131072 (rather than that exact
-    # figure) leaves room for a kernel's own Params struct and other
-    # scratchpad-resident globals (see scripts/m2ndp.lds's own docstring:
-    # "the globals are laid out from" the scratchpad base), which
-    # _cap_max_uthread has no visibility into and so cannot budget for
-    # itself.
+    # figure) matches the simulator's 8 KiB L1D reservation. This is the
+    # TOTAL task budget, not a buffer-only budget: planners must separately
+    # deduct Params and other scratchpad globals before sizing buffers.
     spad_capacity_bytes=120 * 1024,
     # A cap on `max_uthread * bytes_per_uthread` -- how many bytes of
     # scratchpad may be concurrently active across every uthread resident on

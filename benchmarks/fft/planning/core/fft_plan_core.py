@@ -37,7 +37,7 @@ rather than in any one strategy's own module). Every make_*_plan entry point
 itself lives in its own sibling module.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from math import cos, pi, sin
 from typing import Literal, TYPE_CHECKING
@@ -136,6 +136,7 @@ class AddressMappingKind(Enum):
     SPLIT = "split"
     PEELED = "peeled"
     CROSSED = "crossed"
+    BATCHED_STRIDED = "batched_strided"
 
 
 @dataclass(frozen=True)
@@ -169,6 +170,26 @@ class AddressMapping:
     peel_a: int = 0
     peel_k_next: int = 0
     peel_tail_size: int = 0
+    batch_rows: int = 0
+    batch_stride: int = 0
+
+    @staticmethod
+    def batched_strided(*, rows_per_batch: int, batch_stride: int,
+                        row_stride: int, elem_stride: int, base: int = 0) -> "AddressMapping":
+        """Keep independent batch blocks while interleaving a leaf's outputs."""
+        if min(rows_per_batch, batch_stride, row_stride, elem_stride) < 1:
+            raise ValueError("batched mapping dimensions and strides must be positive")
+        return AddressMapping(AddressMappingKind.BATCHED_STRIDED, row_stride, elem_stride,
+                              base, batch_rows=rows_per_batch, batch_stride=batch_stride)
+
+    def batched_element_index(self, row: int, elem: int) -> int:
+        """Integer evaluator of the explicit batched mapping contract."""
+        if self.kind != AddressMappingKind.BATCHED_STRIDED:
+            raise ValueError("batched_element_index requires a batched_strided mapping")
+        if row < 0 or elem < 0:
+            raise ValueError("row and element indices must be nonnegative")
+        return (self.base + (row // self.batch_rows) * self.batch_stride
+                + (row % self.batch_rows) * self.row_stride + elem * self.elem_stride)
 
     @staticmethod
     def contiguous(row_stride: int, base: int = 0) -> "AddressMapping":
@@ -641,6 +662,98 @@ class HostPlan:
 
 
 @dataclass(frozen=True)
+class DistributedExecutionPlan:
+    """One leaf's butterflies share CXL banks across physical NDP units.
+
+    Kernel completion is the global stage barrier. Work slots enumerate
+    units before lanes so small stages do not all land on one unit.
+    """
+
+    num_units: int
+    workers_per_unit: int
+    units_per_leaf: int | None = None
+    fuse_stages: int = 1
+    fusion_max_elements: int = 256
+    scratchpad_budget_bytes: int = 65536
+
+    def __post_init__(self):
+        units = self.num_units if self.units_per_leaf is None else self.units_per_leaf
+        for name, value in (("num_units", self.num_units),
+                            ("workers_per_unit", self.workers_per_unit),
+                            ("units_per_leaf", units),
+                            ("fusion_max_elements", self.fusion_max_elements),
+                            ("scratchpad_budget_bytes", self.scratchpad_budget_bytes)):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        if units > self.num_units:
+            raise ValueError("units_per_leaf cannot exceed physical num_units")
+        if type(self.fuse_stages) is not int or self.fuse_stages not in (1, 2):
+            raise ValueError("fuse_stages must be 1 or 2")
+
+    @property
+    def leaf_units(self) -> int:
+        return self.num_units if self.units_per_leaf is None else self.units_per_leaf
+
+    @property
+    def leaf_groups(self) -> int:
+        return self.num_units // self.leaf_units
+
+    @property
+    def workers_per_leaf(self) -> int:
+        return self.leaf_units * self.workers_per_unit
+
+    @property
+    def launch_uthreads(self) -> int:
+        return self.num_units * self.workers_per_unit
+
+    def work_slot(self, gid: int) -> int:
+        return ((gid // self.workers_per_unit) % self.leaf_units
+                + (gid % self.workers_per_unit) * self.leaf_units)
+
+
+@dataclass(frozen=True)
+class LeafResidentSpadPlan:
+    """Keeps a leaf's intermediate ping-pong banks on the owning unit's own
+    scratchpad instead of a shared CXL allocation (see DistributedExecutionPlan,
+    planning.execution.task_fusion.make_task_fusion_plan). Only valid when
+    `distributed.leaf_units == 1`: one unit must own a whole leaf across every
+    stage for "the same slot" to mean the same FFT replica throughout.
+
+    A unit holds up to `slots` (= ceil(replicas / leaf_groups)) different
+    resident leaves at once, rotating as `fft_index` advances by
+    `leaf_groups` each pass (see fft_distributed_codegen.emit_distributed_stage).
+    Each named buffer gets its own disjoint `slots * slot_elements`-element
+    bank (`bank_base`); within a bank, resident leaf `slot = fft_index //
+    leaf_groups` owns elements `[slot*slot_elements, (slot+1)*slot_elements)`
+    -- worker-shared (every worker assigned to that leaf writes/reads the
+    same region across stage barriers), never worker-private.
+
+    `arena_ref` is empty until a task-fusion group binds this leaf to its own
+    shared `comptime arena` (fft_task_fusion_codegen.emit_fused_task_structs);
+    codegen never renders this plan without that binding.
+    """
+
+    slots: int
+    slot_elements: int
+    bank_base: tuple[tuple[str, int], ...]
+    arena_ref: str = ""
+
+    def __post_init__(self):
+        if self.slots < 1 or self.slot_elements < 1:
+            raise ValueError("slots and slot_elements must be positive")
+        names = [name for name, _ in self.bank_base]
+        if len(set(names)) != len(names):
+            raise ValueError("bank_base must not repeat a buffer name")
+
+    @property
+    def total_elements(self) -> int:
+        return len(self.bank_base) * self.slots * self.slot_elements
+
+    def bank_offset(self, name: str) -> int:
+        return dict(self.bank_base)[name]
+
+
+@dataclass(frozen=True)
 class FFTCodegenPlan:
     """Fully lowered plan consumed by fft_codegen.py.
 
@@ -720,11 +833,30 @@ class FFTCodegenPlan:
     # Resolved only for rendering. The original planning object stays immutable.
     launch_mapping: FFTLaunchPlan | None = None
     workspace_buffers: tuple[WorkspaceBufferPlan, ...] = ()
+    distributed: DistributedExecutionPlan | None = None
+
+    # None (every leaf except an explicit --leaf-storage=spad/auto choice):
+    # intermediate ping-pong banks stay in CXL `workspace_buffers`, unchanged.
+    # See `LeafResidentSpadPlan` -- set only together with `distributed`.
+    leaf_storage: LeafResidentSpadPlan | None = None
+    boundary_twiddle: tuple[str, int, int] | None = None  # placement, a, b
+    leaf_ownership: object | None = None
+    boundary_simd: object | None = None
+    phase_scratch_ref: str = ""
 
     @property
     def estimated_dram_bytes(self) -> int:
-        """Array traffic, excluding twiddle tables, cache effects and spills."""
-        passes = len(self.stages) if self.persistent is not None and self.persistent.storage_mode == "global" else 1
+        """Array traffic, excluding twiddle tables, cache effects and spills.
+
+        For optional distributed fusion this is the unfused upper bound;
+        FFT_EXECUTION records the estimate for the resolved phase schedule.
+        A leaf-resident bank (`leaf_storage`) only ever touches global
+        arrays on its first/last stage -- one pass, not one per stage.
+        """
+        if self.leaf_storage is not None:
+            passes = 1
+        else:
+            passes = len(self.stages) if self.distributed is not None or (self.persistent is not None and self.persistent.storage_mode == "global") else 1
         return 16 * self.host.total_elems * passes
 
     def replicas_per_round(self) -> int:
@@ -1222,6 +1354,51 @@ def _lower_stages(
         )
 
     return tuple(stages)
+
+
+def rebind_first_input(plan: FFTCodegenPlan, *, input_mapping: AddressMapping) -> FFTCodegenPlan:
+    """Re-lower exact first-stage global accesses; preserve radix and workers."""
+    first = plan.stages[0]
+    if plan.input_mapping.elem_stride != 1:
+        raise ValueError('input rebinding requires canonical original accesses')
+    stride = input_mapping.elem_stride
+    batches = []
+    for batch in first.batches:
+        loads = []
+        for load in batch.loads:
+            if load.source != 'input':
+                raise ValueError('first-stage input must be global')
+            offsets = (tuple(load.base_offset + i if i < batch.valid_lanes else None
+                             for i in range(plan.simd_lanes)) if load.mode == 'vector'
+                       else load.packed_lane_offsets)
+            loads.append(replace(load, mode='scalar_pack', base_offset=None,
+                packed_lane_offsets=tuple(None if x is None else x*stride for x in offsets)))
+        batches.append(replace(batch, loads=tuple(loads)))
+    return replace(plan, input_mapping=input_mapping,
+        stages=(replace(first, batches=tuple(batches)), *plan.stages[1:]))
+
+
+def rebind_final_output(plan: FFTCodegenPlan, *, output_mapping: AddressMapping,
+                        inverse_scale: float | None) -> FFTCodegenPlan:
+    """Re-lower the final global stores, preserving distributed placement/math."""
+    last = plan.stages[-1]
+    if (last.worker_batches is not None or last.persistent_vector_batches is not None
+            or last.persistent_scalar_batches is not None or plan.large_twiddle is not None):
+        raise ValueError('final output rebinding requires an unpartitioned distributed stage')
+    layout = layouts_for_radices(plan.length, tuple(s.radix for s in plan.stages), plan.simd_lanes)[-1]
+    batches = []
+    for batch in last.batches:
+        outputs = []
+        for output in batch.outputs:
+            if output.store.destination != 'output':
+                raise ValueError('final output rebinding requires global output stores')
+            store = _make_store(last_stage=True, write_buffer=None, layout=layout,
+                simd_it=batch.batch_id, output=output.output, valid_lanes=batch.valid_lanes,
+                simd_lanes=plan.simd_lanes, dram_elem_stride=output_mapping.elem_stride)
+            outputs.append(replace(output, store=store, scale=inverse_scale))
+        batches.append(replace(batch, outputs=tuple(outputs)))
+    return replace(plan, output_mapping=output_mapping,
+                   stages=(*plan.stages[:-1], replace(last, batches=tuple(batches))))
 
 
 def _make_host_plan(

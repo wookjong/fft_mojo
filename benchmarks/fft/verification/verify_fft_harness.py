@@ -30,6 +30,7 @@ _VAR_RE = re.compile(r"^(\s*)var ")
 _COMPTIME_RE = re.compile(r"^(\s*)comptime ")
 _LOAD_CALL_RE = re.compile(r"\.load\[(?:width=|DType\.float32,\s*)(\w+)\]\(")
 _SIMD_RE = re.compile(r"SIMD\[DType\.float32,\s*\w+\]\(")
+_UNINITIALIZED_SIMD_RE = re.compile(r'^(\s*)var (\w+): SIMD\[DType\.float32,\s*\d+\]$')
 
 
 def _translate_emitted_lines(lines: list[str]) -> str:
@@ -50,6 +51,10 @@ def _translate_emitted_lines(lines: list[str]) -> str:
             continue
         if s.startswith("ref p ="):
             continue
+        # A declaration has no device initialization. The interpreter uses
+        # None so an accidental read before assignment cannot reuse an old
+        # component's value (Python lacks Mojo's block-local namespaces).
+        line = _UNINITIALIZED_SIMD_RE.sub(r'\1\2 = None', line)
         line = _VAR_RE.sub(r"\1", line)
         line = _COMPTIME_RE.sub(r"\1", line)
         # Runtime loop offsets can contain arbitrarily nested parentheses.
