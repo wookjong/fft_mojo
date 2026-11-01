@@ -1286,11 +1286,12 @@ def _render_recursive_fft_kernels(
     return e.text()
 
 
-def generate_recursive_fft_kernels(plan: RecursiveFFTPlan, *, layout_rewrite: str = "off", **options) -> str:
+def generate_recursive_fft_kernels(plan: RecursiveFFTPlan, *, layout_rewrite: str = "off",
+                                   length_tuning: str = "auto", **options) -> str:
     """Render the recursive plan (see `_render_recursive_fft_kernels`), then
-    optionally apply an opt-in data-layout rewrite of the fused grouped task.
+    apply the optional data-layout rewrite and the per-length tuning.
 
-    `layout_rewrite`: "off" (the default) returns the rendered source
+    `layout_rewrite`: "off" (the default) leaves the rendered source
     unchanged, byte for byte. Otherwise a '+'-joined token list defined in
     codegen.layout_rewrite (selected path: "n8+f8+sp"). The rewrite is
     rejected with a reason unless the rendered configuration is the one the
@@ -1298,14 +1299,27 @@ def generate_recursive_fft_kernels(plan: RecursiveFFTPlan, *, layout_rewrite: st
     near C4 / far C1, leaf SPAD, far12-private, far0-short-live, compact SPAD
     allocation, forward N=16384); every rewrite step also proves the shape of
     the code it replaces and refuses a mismatch.
+
+    `length_tuning`: "auto" (the default) rewrites the kernel with the
+    configuration measured fastest for the plan's (N, batch) when the
+    rendered configuration is the one it was measured on, and leaves every
+    other configuration unchanged; "off" disables it; an explicit spec is
+    applied or rejected with a reason. See codegen.length_tuning.
     """
+    import inspect
     from codegen.layout_rewrite import (apply_layout_rewrite, check_layout_rewrite_support,
                                         normalize_layout_rewrite)
+    from codegen.length_tuning import apply_length_tuning, resolve_length_tuning
+    defaults = {k: v.default for k, v in inspect.signature(_render_recursive_fft_kernels).parameters.items()
+                if v.default is not inspect.Parameter.empty}
+    resolved = dict(defaults, **options)
     tokens = normalize_layout_rewrite(layout_rewrite)
     if tokens:
-        import inspect
-        defaults = {k: v.default for k, v in inspect.signature(_render_recursive_fft_kernels).parameters.items()
-                    if v.default is not inspect.Parameter.empty}
-        check_layout_rewrite_support(plan, dict(defaults, **options))
+        check_layout_rewrite_support(plan, resolved)
+    tuning, _ = resolve_length_tuning(plan, dict(resolved, layout_rewrite=layout_rewrite), length_tuning)
     source = _render_recursive_fft_kernels(plan, **options)
-    return apply_layout_rewrite(source, layout_rewrite) if tokens else source
+    if tokens:
+        source = apply_layout_rewrite(source, layout_rewrite)
+    if tuning:
+        source = apply_length_tuning(source, plan, tuning, dict(resolved, layout_rewrite=layout_rewrite))
+    return source
