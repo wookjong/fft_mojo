@@ -2,7 +2,8 @@
 
 The SHA-256 values are those of the sources built and timed on 2026-10-31 /
 2026-11-01 (implementations/all_lengths_20261031, verification/generated/
-<experiment>/variant.original.mojo; rounds 16-21 bests, report_r16_ko.md),
+<experiment>/variant.original.mojo; rounds 16-21 bests, report_r16_ko.md;
+16384x8 round 25, report_r25_ko.md),
 rendered here with the measurement harness's options.
 """
 import hashlib
@@ -33,7 +34,7 @@ MEASURED_SHA256 = {
     (4096, 4): '537e3240a2bcc39bdafc791fdb7c7257fa05c9073df811081d3d5139e663c997',
     (8192, 1): '7586adbea181cd4ac207fde8b6076d46235de22b8bedfdfe222127b1b7ee18d5',
     (16384, 1): 'e58e1d88e6d0e882a22c88477dbcd1bba6f51306b37b8d08ad4b394a9f09c6fd',
-    (16384, 8): '2c3753546154f17c147a7a98927029f7ec5159eb09f532833695436f2d428858',
+    (16384, 8): '5d5af64e5e5480f013a961d872e01543bdd8cfc4093c3d5343f766c892d1a627',  # round 25 (+PBR+AL+IP)
 }
 
 
@@ -108,6 +109,26 @@ class LengthTuningTests(unittest.TestCase):
             generate_recursive_fft_kernels(plan_for(256, 1), length_tuning='Q3', **options)
         spec, reason = resolve_length_tuning(plan_for(256, 1), dict(options, task_fusion='off'), 'S8+TR')
         self.assertEqual((spec, reason), ('S8+TR', 'explicit'))
+
+    def test_auto_ip_puts_every_tuned_configuration_in_place(self):
+        from codegen.length_tuning import inplace
+        options = dict(harness_options(256, 1), task_fusion='off')
+        self.assertEqual(resolve_length_tuning(plan_for(256, 1), options, 'auto-ip'),
+                         ('D1+TR+R8x4x8+IX+PB+IP', 'measured, in place'))
+        self.assertEqual(resolve_length_tuning(plan_for(64, 100), options, 'auto-ip')[0], 'O4+IX+PB+IP')
+        for n, batch in ((256, 1), (16384, 1)):
+            with self.subTest(n=n, batch=batch):
+                auto = generate_recursive_fft_kernels(plan_for(n, batch), **harness_options(n, batch))
+                auto_ip = generate_recursive_fft_kernels(plan_for(n, batch), length_tuning='auto-ip',
+                                                         **harness_options(n, batch))
+                self.assertEqual(auto_ip, inplace.apply(auto))
+        # already in place under 'auto'
+        source = generate_recursive_fft_kernels(plan_for(16384, 8), length_tuning='auto-ip', **harness_options(16384, 8))
+        self.assertEqual(sha(source), MEASURED_SHA256[(16384, 8)])
+        # configurations 'auto' leaves alone stay out of place
+        plan = plan_for(256, 1, mode='worker-wave')
+        self.assertEqual(generate_recursive_fft_kernels(plan, length_tuning='auto-ip', **harness_options(256, 1)),
+                         generate_recursive_fft_kernels(plan, length_tuning='off', **harness_options(256, 1)))
 
 
 if __name__ == '__main__':

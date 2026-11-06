@@ -466,7 +466,7 @@ def make_fft_kernel(
         raise ValueError('leaf phase/schedule requires gpu-vkfft-m2ndp')
     if layout_rewrite != 'off' and planner != 'gpu-vkfft-m2ndp':
         raise ValueError('layout_rewrite requires gpu-vkfft-m2ndp')
-    if length_tuning not in ('auto', 'off') and planner != 'gpu-vkfft-m2ndp':
+    if length_tuning not in ('auto', 'auto-ip', 'off') and planner != 'gpu-vkfft-m2ndp':
         raise ValueError('an explicit length_tuning spec requires gpu-vkfft-m2ndp')
     if boundary_layout == 'grouped' and planner != 'gpu-vkfft-m2ndp':
         raise ValueError('grouped ownership requires gpu-vkfft-m2ndp')
@@ -807,6 +807,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--length-tuning',default='auto',
                         help="per-length kernel tuning (codegen/length_tuning): auto (default; the configuration "
                              "measured fastest for this N and batch when the options match the measured path), "
+                             "auto-ip (auto, with every tuned configuration in place: output over the input buffer), "
                              "off (previous output), or an explicit spec such as D1+TR+R8x4x8 or L+A1x2+F12+B2x+B4")
     parser.add_argument('--far12-codelet',choices=('off','peel','forward1','loop-forward1','loop-forward-packed','native4-control','native4-forward','native4-static-control','native4-static-forward','native4-compact-control','native4-compact-forward','native4-latch-forward'),default='off')
     parser.add_argument('--leaf-phase-policy',choices=('stages','far12-private'),default='stages')

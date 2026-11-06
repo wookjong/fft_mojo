@@ -1303,7 +1303,8 @@ def generate_recursive_fft_kernels(plan: RecursiveFFTPlan, *, layout_rewrite: st
     `length_tuning`: "auto" (the default) rewrites the kernel with the
     configuration measured fastest for the plan's (N, batch) when the
     rendered configuration is the one it was measured on, and leaves every
-    other configuration unchanged; "off" disables it; an explicit spec is
+    other configuration unchanged; "auto-ip" is "auto" with every tuned
+    configuration in place; "off" disables it; an explicit spec is
     applied or rejected with a reason. See codegen.length_tuning.
     """
     import inspect

@@ -1,4 +1,4 @@
-# 변경 기록: 길이별 튜닝을 기본값으로 채택 — 2026-10-31 (2026-11-01 갱신)
+# 변경 기록: 길이별 튜닝을 기본값으로 채택 — 2026-10-31 (2026-11-01 갱신 2회, 2026-11-02 갱신)
 
 `implementations/all_lengths_20261031`에서 측정한 길이별 최적 구성을 생성기 기본 동작으로 채택했다. 이 문서는 무엇을 바꿨는지와 그 근거를 정리한다.
 
@@ -7,14 +7,27 @@
 - 64를 뺀 16개 조건이 round 15 기본값보다 3.3–11.4% 빠르다.
 - 측정에서 손해였거나 시뮬레이터에서 실행되지 않은 토큰(U2, TRH, AOS, SP, four-step)은 옮기지 않았다.
 
+**2026-11-01 두 번째 갱신 (round 22, `report_r22_ko.md`):** recursive 경로에 PBR 단계(fused task의 DRAM 접근에 item당 base pointer)를 추가하고 16384×8에만 기본값으로 켰다.
+- 16384×8: 21.724 → 19.949 µs (−8.2%).
+- 8192×1, 16384×1은 −0.2%(11.184 → 11.167, 13.110 → 13.085)로 1회 측정에서 차이로 볼 수 없어 기본값을 바꾸지 않았다. 명시 spec으로는 쓸 수 있다.
+
+**2026-11-02 갱신 (round 24–25, `report_r24_ko.md`, `report_r25_ko.md`):** 16384×8 기본값에 AL, IP를 추가했다.
+- AL: N=16384 grouped task에서 far leaf가 자기 입력 버퍼(work1)에 결과를 쓴다. IP: 결과를 입력 버퍼에 쓴다(in-place, host가 output을 input에 묶는다). 둘 다 host 바인딩만 바꾸고 커널 코드는 그대로다.
+- 이유: 기존 16384×8은 1 MiB 버퍼 4개 중 3개에 쓴다. 2회차부터 쓰기마다 L2(2.36 MB)의 dirty line을 DRAM으로 내보내서, 2회차(20.608 µs)가 1회차보다 느렸다. AL+IP는 쓰는 버퍼가 input, work1 두 개(2 MiB)라 L2에 남는다.
+- 16384×8: 1회차 19.949 → 19.130 µs (−4.1%), 2회차 20.608 → 13.396 µs (−35.0%). 2회차 DRAM 쓰기 요청은 0건이다.
+- 나머지 17개 조건도 IP가 정확도 검사를 통과했지만 1·2회차 차이가 −1.3%~+0.4%라 기본값을 바꾸지 않았다. 명시 spec(`...+IP`)으로는 쓸 수 있다.
+- 모든 조건을 in-place로 맞춘 버전은 `length_tuning='auto-ip'` / `--length-tuning auto-ip`로 고를 수 있다. `auto`가 고르는 구성에 IP를 붙인다(16384×8은 이미 IP라 `auto`와 같다). `auto`가 건드리지 않는 구성(측정 경로와 옵션이 다른 경우)은 그대로 out-of-place다.
+- IP는 출력이 입력 버퍼를 덮어쓰므로 호출 뒤에는 입력이 남지 않는다. 같은 버퍼로 다시 호출하면 직전 결과를 변환한다.
+
 ## 1. 요약
 
 | 항목 | 내용 |
 |---|---|
 | 새 옵션 | `length_tuning` (API `generate_recursive_fft_kernels`, `make_fft_kernel`) / `--length-tuning` (CLI) |
 | 기본값 | `auto`. plan의 (N, batch)에 대해 측정한 최적 구성으로 커널을 다시 쓴다. 조건은 렌더 구성이 측정한 구성과 같을 때이고, 그 밖의 구성은 출력이 전과 같다 |
+| 모두 in-place | `length_tuning='auto-ip'` / `--length-tuning auto-ip`. `auto`와 같은 구성에 IP를 붙여, 튜닝이 적용되는 모든 (N, batch)가 결과를 입력 버퍼에 쓴다 |
 | 끄기 | `length_tuning='off'` / `--length-tuning off`. 출력이 이전과 바이트 단위로 같다 |
-| 명시 지정 | leaf spec(예: `D1+TR+R8x4x8+IX+PB`) 또는 `L`, slot 토큰, `UX`(예: `L+A1x2+F12+B2x+B4+UX`). 지원하지 않는 구성이면 사유와 함께 거부한다 |
+| 명시 지정 | leaf spec(예: `D1+TR+R8x4x8+IX+PB`) 또는 `L`, slot 토큰, `UX`, `PBR`, `AL`(예: `L+A1x2+F12+B2x+B4+UX`). 둘 다 끝에 `IP`를 붙일 수 있다. 지원하지 않는 구성이면 사유와 함께 거부한다 |
 | 새 측정 | 없음. 기본값으로 만든 소스가 측정한 최적 소스와 바이트 단위로 같다(18개 조건). `off`는 측정한 baseline과 같다 |
 
 ## 2. 기본값이 적용되는 범위
@@ -47,7 +60,7 @@
 | 4096×4 | 32.580 | 9.635 | −70.4% | 10.875 | D4+TR+R8x4x8x4x4+IX+PL+PB |
 | 8192×1 | 21.913 | 11.184 | −49.0% | 12.557 | L+A1x2+F12+B2x+B4+UX |
 | 16384×1 | 19.724 | 13.110 | −33.5% | 14.120 | L+A1x2+F12+B2x+B4+UX |
-| 16384×8 | 46.096 | 21.724 | −52.9% | 22.457 | L+A1x6+F12+B4+B3+UX |
+| 16384×8 | 46.096 | 19.130 | −58.5% | 22.457 | L+A1x6+F12+B4+B3+UX+PBR+AL+IP |
 
 16384의 "이전" 값은 layout_rewrite n8+f8+sp를 쓴 기존 선택 경로다. 그 밖의 "이전" 값은 같은 옵션으로 만든 생성기 출력이다.
 
@@ -59,10 +72,13 @@
 
 | 파일 | 출처 | 내용 |
 |---|---|---|
-| `__init__.py` | 신규 | `MEASURED` 표, `MEASURED_TARGET`, `select_leaf_spec`, `resolve_length_tuning`(적용 여부와 사유), `apply_length_tuning`, UX(fused task 안의 음이 아닌 index 변수 div/mod를 unsigned로) |
+| `__init__.py` | 신규 | `MEASURED` 표, `MEASURED_TARGET`, `select_leaf_spec`, `resolve_length_tuning`(적용 여부와 사유), `apply_length_tuning`(layout → slot → UX → PBR → AL → IP 순서), UX(fused task 안의 음이 아닌 index 변수 div/mod를 unsigned로) |
 | `leaf.py` | `leafgen.py` | N ≤ 4096 leaf task를 다시 생성한다: 8-lane Stockham pass, S<P>/O<P>/D<G>, TR, R(radix 2/4/8), J, IX(shift/mask index), W16(radix ≤ 4 pass 16-lane), PL(pass 0 연속 store + pass 1 strided load), PB(item당 base pointer). 측정에서 손해였거나 효과가 없었던 H, K, U, E, M, radix 16/32, U2, TRH, SP와, 시뮬레이터가 실행하지 못하는 AOS, four-step은 뺐다 |
 | `layout.py` | `layout_general.py` | 토큰 L. n8+f8+sp를 far 길이 N/64로 일반화했다. N=16384에서는 layout_rewrite 결과와 바이트 단위로 같다 |
 | `slots.py` | `slots.py` | A1xG(n/f), F12, B2/B2x, B3, B4(n/f). A3n/A3f/B5/A4(측정에서 손해)는 뺐다 |
+| `alias.py` | `transforms/alias.py` (round 24) | AL. N=16384 grouped task의 far leaf 출력과 transpose 입력을 work0에서 work1로 바꾼다. far leaf는 work1을 모두 SPAD로 읽은 뒤 다음 커널에서 쓰므로 안전하다 |
+| `inplace.py` | `transforms/inplace.py` (round 25) | IP. host의 output 버퍼를 input에 묶고 output 0 채우기를 지운다 |
+| `pbr.py` | `pbr.py` (round 22) | PBR. fused task의 DRAM load/store 인덱스를 상수 + 변수부로 나누고, 같은 블록에서 (버퍼, 변수부)가 같은 접근 2개 이상이 base pointer 하나를 공유한다. SPAD 접근은 그대로 둔다 |
 | `_source.py`, `_codelets.py` | `variants.py`, `far_radix16.py` | phase 탐색, strided store, 상수 twiddle과 radix-4 codelet helper |
 
 변환 단계마다 자기가 바꿀 코드의 모양을 확인한다. 모양이 다르면 `ValueError`로 거부한다.
@@ -88,18 +104,21 @@
 | 미측정 구성 | worker-wave, inverse, 32-unit target, 미측정 recursive batch(16384×4), 기본 옵션 호출은 출력이 `off`와 같다 |
 | spec 선택 규칙 | nearest batch, O 확장, S → D4 fallback을 확인한다 |
 | 명시 spec 검사 | 지원하지 않는 구성과 알 수 없는 토큰을 거부한다 |
+| auto-ip | 측정 조건은 spec 끝에 IP가 붙고, 출력이 `auto` 출력에 IP를 적용한 것과 같다. 16384×8은 `auto`와 같고, `auto`가 건드리지 않는 구성은 `off`와 같다 |
 
 ## 4. 검증 (새 측정 없음)
 
 - **18개 조건:** 기본값 출력이 측정한 최적 소스와 같고, `off`는 측정한 baseline과 같다(`implementations/all_lengths_adoption_20261031/verify_adoption.py`).
-- **leaf 변형:** 정확도 검사를 통과한 leaf 변형 중 남긴 토큰으로만 된 197개(round 1–21)가 모두 같은 소스로 재현된다.
+- **leaf 변형:** 정확도 검사를 통과한 leaf 변형 중 남긴 토큰으로만 된 201개(round 1–22)가 모두 같은 소스로 재현된다.
+- **IP:** round 25에서 측정한 18개 조건의 IP 소스가 명시 spec(`<기본 spec>+IP`, 16384×8은 `+AL+IP`)으로 모두 같은 소스로 재현된다. `auto-ip`의 출력도 18개 모두 이 소스와 같다(`verify_adoption.py`).
 - **미측정 batch:** 기본값이 고르는 구성을 Python 실행 검사기로 확인했다(`verify_unmeasured.py`).
   - 대상은 19개 (N, batch)다. 예: 64×100 → O4+IX+PB, 1024×256 → D4+TR+R8x4x8x4+IX+W16.
   - 모두 상대 오차 2e-7 이하로 PASS했다.
+  - `auto-ip`(같은 구성 + IP)도 같은 19개를 검사했다(`verify_unmeasured.py --auto-ip`). 19개 모두 in-place로 실행되고 상대 오차 1.9e-7 이하로 PASS했다.
 - **기존 테스트:** 모듈 10개, 72개 테스트가 통과한다.
   - boundary_simd 12, leaf_ownership 6, task_fusion 7, batch_windows 5, unit_parallel 11, baseline_codegen_support 8
   - gpu_baseline_vkfft_multipass 7, task_scratchpad 2, boundary_fusion 7, execution_codegen_fixes 7
-- **새 테스트:** `verify_fft_length_tuning` 5개가 통과한다.
+- **새 테스트:** `verify_fft_length_tuning` 6개가 통과한다(auto-ip 1개 추가).
 
 ## 5. 주의
 

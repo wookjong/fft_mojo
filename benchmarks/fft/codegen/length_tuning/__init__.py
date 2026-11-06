@@ -3,18 +3,24 @@
 `generate_recursive_fft_kernels(..., length_tuning=SPEC)` renders the normal
 kernel and then rewrites it with the configuration measured fastest for the
 plan's (N, batch) in implementations/all_lengths_20261031 (report_ko.md
-rounds 1-15, report_r16_ko.md rounds 16-21; one timing per configuration,
-28-unit / 1640 MHz simulator).
+rounds 1-15, report_r16_ko.md rounds 16-21, report_r22_ko.md round 22,
+report_r24_ko.md / report_r25_ko.md rounds 24-25; one timing per
+configuration, 28-unit / 1640 MHz simulator).
 
 SPEC:
   'auto' (default)  the measured configuration for this (N, batch) when the
         rendered configuration is the one it was measured on (see
         `resolve_length_tuning`); otherwise the source is returned unchanged.
+  'auto-ip'         as 'auto', and every tuned configuration also writes its
+        result over the input buffer (IP), so that all (N, batch) pairs are in
+        place, not only 16384x8. Configurations 'auto' leaves untouched stay
+        untouched (out of place).
   'off'             the source unchanged, byte for byte (the previous output).
   explicit spec     a leaf spec for N <= 4096 (codegen.length_tuning.leaf, e.g.
         'D1+TR+R8x4x8+IX+PB') or 'L' / slot tokens / 'UX' for N >= 8192
-        (codegen.length_tuning.slots, e.g. 'L+A1x2+F12+B2x+B4+UX'); rejected
-        with a reason if the configuration does not support it.
+        (codegen.length_tuning.slots, e.g. 'L+A1x2+F12+B2x+B4+UX'), then 'PBR',
+        'AL'; either may end with 'IP'. Rejected with a reason if the
+        configuration does not support it.
 
 N <= 4096 (single leaf, task fusion off): the leaf task is replaced by 8-lane
 Stockham passes (leaf.py). For a batch that was not measured the spec of the
@@ -23,8 +29,13 @@ owners; S<P> falls back to D4 when its SPAD arena would not fit).
 N >= 8192 (fused grouped task): token L is the n8+f8+sp layout generalized to
 far length N/64 (layout.py; with layout_rewrite='n8+f8+sp' already applied it
 is skipped), then the slot tokens (slots.py), then UX (unsigned div/mod of the
-non-negative index variables of the fused task). Only the measured (N, batch)
-pairs are tuned automatically.
+non-negative index variables of the fused task), then PBR (pbr.py: per-item
+base pointers for the fused task's DRAM accesses), then AL (alias.py, N=16384
+grouped task only: the far leaf writes over its input buffer work1). Only the
+measured (N, batch) pairs are tuned automatically.
+
+IP (both paths, inplace.py): the result is written over the input buffer (the
+host binds output to input); applied last, kernels unchanged.
 """
 from __future__ import annotations
 
@@ -51,7 +62,7 @@ MEASURED = {
     (4096, 4): ('D4+TR+R8x4x8x4x4+IX+PL+PB', 9.635, 32.580),
     (8192, 1): ('L+A1x2+F12+B2x+B4+UX', 11.184, 21.913),
     (16384, 1): ('L+A1x2+F12+B2x+B4+UX', 13.110, 19.724),
-    (16384, 8): ('L+A1x6+F12+B4+B3+UX', 21.724, 46.096),
+    (16384, 8): ('L+A1x6+F12+B4+B3+UX+PBR+AL+IP', 19.130, 46.096),
 }
 
 LEAF_MAX_N = 4096
@@ -105,8 +116,20 @@ def select_leaf_spec(n, batch):
     return '+'.join(parts)
 
 
+AUTO_IN_PLACE = 'auto-ip'
+
+
 def resolve_length_tuning(plan, options, spec='auto'):
     """(spec or None, reason). `options` are the full render options (defaults included)."""
+    if spec == AUTO_IN_PLACE:
+        chosen, reason = _resolve(plan, options, 'auto')
+        if chosen is None:
+            return None, reason
+        return (chosen if _strip_ip(chosen)[1] else chosen + '+IP'), reason + ', in place'
+    return _resolve(plan, options, spec)
+
+
+def _resolve(plan, options, spec):
     if spec in (None, 'off', ''):
         return None, 'length_tuning off'
     if not isinstance(spec, str):
@@ -140,7 +163,7 @@ def resolve_length_tuning(plan, options, spec='auto'):
                 return unsupported(f'leaf tuning was measured with {key}={value!r} (got {options.get(key)!r})')
         if explicit:
             from . import leaf
-            leaf.parse(spec)
+            leaf.parse(_strip_ip(spec)[0])
             return spec, 'explicit'
         chosen = select_leaf_spec(n, batch)
         if chosen is None:
@@ -163,22 +186,37 @@ def resolve_length_tuning(plan, options, spec='auto'):
     return MEASURED[(n, batch)][0], 'measured'
 
 
+def _strip_ip(spec):
+    """(spec without a trailing IP, in_place)."""
+    parts = spec.split('+')
+    if parts[-1] == 'IP' and len(parts) > 1:
+        return '+'.join(parts[:-1]), True
+    return spec, False
+
+
 def apply_length_tuning(source, plan, spec, options):
     """Rewrite the rendered source with SPEC; every step proves its own shape."""
+    from . import inplace
     try:
+        spec, in_place = _strip_ip(spec)
         if _is_leaf(plan):
             from . import leaf
-            return leaf.apply(spec, source, plan.n, plan.batch)
-        from . import layout, slots
+            source = leaf.apply(spec, source, plan.n, plan.batch)
+            return inplace.apply(source) if in_place else source
+        from . import alias, layout, pbr, slots
         parts = spec.split('+')
-        ux = 'UX' in parts
-        if ux:
-            parts.remove('UX')
+        ux, base_pointers, aliased = 'UX' in parts, 'PBR' in parts, 'AL' in parts
+        for token in ('UX', 'PBR', 'AL'):
+            if token in parts:
+                parts.remove(token)
         if 'L' in parts:
             parts.remove('L')
             if options.get('layout_rewrite', 'off') == 'off':
                 source = layout.apply(source)
         source = slots.apply('+'.join(parts), source) if parts else source
-        return _unsigned_index(source) if ux else source
+        source = _unsigned_index(source) if ux else source
+        source = pbr.apply(source) if base_pointers else source
+        source = alias.apply(source) if aliased else source
+        return inplace.apply(source) if in_place else source
     except (AssertionError, StopIteration, KeyError, TypeError, IndexError) as error:
         raise ValueError(f'length_tuning {spec!r} does not match the rendered kernel: {error!r}') from None
